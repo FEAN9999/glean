@@ -272,7 +272,7 @@ function Inner() {
           ))}
         </nav>
         <div>
-          <Section id="src" title={t('Nguồn dữ liệu', 'Source')} desc={t('Diễn đàn kiểu XenForo mà Sàng đọc. Mặc định là diễn đàn mẫu chạy sẵn trong máy để thử.', 'The XenForo-style forum Sàng reads. By default this is the built-in sample forum.')}>
+          <Section id="src" title={t('Nguồn dữ liệu', 'Source')} desc={t('Diễn đàn kiểu XenForo mà Glean đọc. Mặc định là diễn đàn mẫu chạy sẵn trong máy để thử.', 'The XenForo-style forum Glean reads. By default this is the built-in sample forum.')}>
             {Text({ p: 'source.baseUrl', label: t('Địa chỉ diễn đàn', 'Forum address'), hint: t('Khi đổi tên miền, địa chỉ cũ được ghi nhớ để cảnh báo link cũ.', 'When the domain changes, the old one is remembered to flag old links.') })}
             {Lines({ p: 'source.previousBaseUrls', label: t('Tên miền cũ', 'Previous domains'), hint: t('Mỗi dòng một địa chỉ.', 'One address per line.') })}
             <div className="field">
@@ -461,7 +461,7 @@ function Inner() {
 
           <fieldset id="broadcast">
             <legend>{t('Thông báo & phiên bản', 'Notices & version')}</legend>
-            <p>{t('Gửi tới mọi thẻ trình duyệt đang mở Sàng.', 'Sent to every browser tab that has Sàng open.')}</p>
+            <p>{t('Gửi tới mọi thẻ trình duyệt đang mở Glean.', 'Sent to every browser tab that has Glean open.')}</p>
             <div className="stack">
               <label className="field">
                 <span>{t('Thông báo hệ thống', 'System notice')}</span>

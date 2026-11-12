@@ -1,4 +1,4 @@
-# Sàng
+# Glean
 
 Công cụ cá nhân (một người dùng) để **tìm lại bài viết và bình luận** trên một diễn đàn kiểu XenForo, **đồng bộ** chúng về kho riêng, và **sàng ảnh / video / liên kết / bình luận** ra khỏi những chủ đề dài. Dữ liệu đã sàng được lưu trên máy nên vẫn xem được khi bài gốc bị xóa.
 
@@ -30,7 +30,9 @@ npm start
 
 Rồi mở http://127.0.0.1:4318.
 
-Biến môi trường: `SANG_PORT` (mặc định 4318), `SANG_HOST` (mặc định 127.0.0.1, đặt `0.0.0.0` để mở ra mạng LAN), `SANG_DATA_DIR` (mặc định `./data`), `SANG_LOG`.
+Biến môi trường: `GLEAN_PORT` (mặc định 4318), `GLEAN_HOST` (mặc định 127.0.0.1, đặt `0.0.0.0` để mở ra mạng LAN), `GLEAN_DATA_DIR` (mặc định `./data`), `GLEAN_LOG`. Tên cũ `SANG_*` vẫn được nhận.
+
+Nâng cấp từ bản tên "Sàng": lần chạy đầu tiên tự đổi `data/sang.db` thành `data/glean.db` và giữ nguyên phiên đăng nhập.
 
 ## Diễn đàn mẫu
 
@@ -40,17 +42,17 @@ Mặc định nguồn dữ liệu là một diễn đàn mẫu chạy ngay trong
 
 ## Dùng với diễn đàn thật
 
-1. **Cài đặt → Nguồn dữ liệu**: đổi "Địa chỉ diễn đàn" (ví dụ `https://xamvn.work`).
+1. **Cài đặt → Nguồn dữ liệu**: đổi "Địa chỉ diễn đàn" (ví dụ `https://forum.example.com`).
 2. Bấm **Lấy chuyên mục từ diễn đàn**, tick các chuyên mục muốn đồng bộ, bấm "Dùng … chuyên mục đã chọn".
 3. Bấm **Lưu cài đặt**. Đồng bộ tự động chạy theo chu kỳ; muốn có dữ liệu ngay thì vào Nhật ký đồng bộ → "Đồng bộ ngay".
-4. Nếu diễn đàn có nhiều tên miền (ví dụ `xamvn.bond`, `xamvn.cyou`), thêm chúng vào "Tên miền cũ" để dán link từ các tên miền đó vẫn sàng được.
+4. Nếu diễn đàn có nhiều tên miền (ví dụ `forum.example.net`, `forum.example.org`), thêm chúng vào "Tên miền cũ" để dán link từ các tên miền đó vẫn sàng được.
 
-Đã chạy thử với xamvn.work (2026-11-08): lấy danh sách chuyên mục, đồng bộ bài viết và bình luận, tìm kiếm, sàng các bài nhiều trang (ảnh i.ibb.co tải về được).
+Đã chạy thử với một diễn đàn XenForo thật (2026-11-08): lấy danh sách chuyên mục, đồng bộ bài viết và bình luận, tìm kiếm, sàng các bài nhiều trang (ảnh i.ibb.co tải về được).
 
 Giới hạn đã biết:
-- Ảnh trên host có lớp chống bot (ví dụ voz.vn qua Cloudflare) không tải về được; Sàng không vượt các lớp này. Giao diện vẫn hiển thị ảnh bằng link gốc, nên chỉ mất khi ảnh gốc biến mất.
+- Ảnh trên host có lớp chống bot (ví dụ voz.vn qua Cloudflare) không tải về được; Glean không vượt các lớp này. Giao diện vẫn hiển thị ảnh bằng link gốc, nên chỉ mất khi ảnh gốc biến mất.
 - Host không kết nối được từ mạng của bạn (ví dụ zpi.cx tại thời điểm thử) cũng chỉ còn link gốc.
-- Bài chỉ dành cho thành viên đăng nhập báo lỗi HTTP 403; Sàng không đăng nhập vào diễn đàn.
+- Bài chỉ dành cho thành viên đăng nhập báo lỗi HTTP 403; Glean không đăng nhập vào diễn đàn.
 
 ## Đối chiếu với FEATURES.md
 
@@ -92,4 +94,4 @@ web/src/           React + Vite
 
 ## Thiết kế
 
-Tên "Sàng" lấy từ cái sàng tre: công việc chính của ứng dụng là sàng một chủ đề dài để giữ lại thứ có giá trị. Điểm nhấn duy nhất là **lưới sàng**: mỗi lỗ là một trang của chủ đề, lấp vàng khi đã quét. Phần còn lại giữ yên: nền xám sương lạnh, chữ chàm, vàng tre chỉ dùng cho tiến trình và vị trí đang đứng. Chữ: Bricolage Grotesque cho tiêu đề và số, Be Vietnam Pro cho nội dung (cả hai có bộ ký tự tiếng Việt, đóng gói sẵn, không tải từ CDN). Có chế độ sáng/tối, hiển thị tốt trên điện thoại, song ngữ Việt/Anh.
+Tên "Glean" nghĩa là mót lúa: nhặt lại những gì còn sót trên ruộng sau mùa gặt, như ứng dụng giữ lại bài viết, ảnh và bình luận trước khi chúng biến mất. "Sàng" vẫn là tên tính năng chính: sàng một chủ đề dài để giữ lại thứ có giá trị. Điểm nhấn duy nhất là **lưới sàng**: mỗi lỗ là một trang của chủ đề, lấp vàng khi đã quét. Phần còn lại giữ yên: nền xám sương lạnh, chữ chàm, vàng tre chỉ dùng cho tiến trình và vị trí đang đứng. Chữ: Bricolage Grotesque cho tiêu đề và số, Be Vietnam Pro cho nội dung (cả hai có bộ ký tự tiếng Việt, đóng gói sẵn, không tải từ CDN). Có chế độ sáng/tối, hiển thị tốt trên điện thoại, song ngữ Việt/Anh.

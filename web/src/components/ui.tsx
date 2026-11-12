@@ -88,7 +88,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={{ toast, confirmExternal: setExternal, maintenance, refreshMaintenance }}>
       {needReload && (
         <div className="banner banner-straw" role="status">
-          {t('Đã có phiên bản mới của Sàng.', 'A new version of Sàng is available.')}
+          {t('Đã có phiên bản mới của Glean.', 'A new version of Glean is available.')}
           <button className="btn btn-sm btn-primary" onClick={() => location.reload()}>
             {t('Tải lại trang', 'Reload page')}
           </button>
@@ -119,7 +119,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       {external && (
         <Dialog title={t('Mở liên kết bên ngoài?', 'Open external link?')} onClose={() => setExternal(null)}>
           <p className="muted" style={{ margin: 0 }}>
-            {t('Liên kết này dẫn ra khỏi Sàng và mở trong thẻ mới.', 'This link leaves Sàng and opens in a new tab.')}
+            {t('Liên kết này dẫn ra khỏi Glean và mở trong thẻ mới.', 'This link leaves Glean and opens in a new tab.')}
           </p>
           <div className="url">{external}</div>
           <div className="dialog-actions">

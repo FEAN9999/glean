@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const API = process.env.SANG_API ?? 'http://127.0.0.1:4318';
+const API = process.env.GLEAN_API ?? process.env.SANG_API ?? 'http://127.0.0.1:4318';
 
 export default defineConfig({
   root: 'web',

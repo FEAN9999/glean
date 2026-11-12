@@ -24,7 +24,9 @@ const MIME: Record<string, string> = {
 
 /* -------- cookie used for <img>/<video> and EventSource, which cannot send Bearer headers -------- */
 
-export const COOKIE = 'sang_session';
+export const COOKIE = 'glean_session';
+/** Pre-rename cookie name; still accepted until the browser receives the new one. */
+const LEGACY_COOKIE = 'sang_session';
 
 export function readCookie(req: FastifyRequest, name = COOKIE) {
   const raw = req.headers.cookie ?? '';
@@ -36,7 +38,7 @@ export function readCookie(req: FastifyRequest, name = COOKIE) {
 }
 
 export function cookieUser(req: FastifyRequest): number | null {
-  const body = verifyJwt<{ sub: number; scope: string }>(readCookie(req));
+  const body = verifyJwt<{ sub: number; scope: string }>(readCookie(req) ?? readCookie(req, LEGACY_COOKIE));
   return body?.scope === 'browser' ? body.sub : null;
 }
 
@@ -62,7 +64,7 @@ export function registerMedia(app: FastifyInstance) {
     return ok(true);
   });
   app.post('/api/auth/browser-session/clear', async (_req, reply) => {
-    reply.header('set-cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+    reply.header('set-cookie', [COOKIE, LEGACY_COOKIE].map((n) => `${n}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`));
     return ok(true);
   });
 

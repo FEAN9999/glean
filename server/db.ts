@@ -2,10 +2,19 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DATA_DIR = path.resolve(process.env.SANG_DATA_DIR ?? 'data');
+// SANG_* is the pre-rename name, still honoured so existing setups keep working.
+export const DATA_DIR = path.resolve(process.env.GLEAN_DATA_DIR ?? process.env.SANG_DATA_DIR ?? 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-export const DB_PATH = path.join(DATA_DIR, 'sang.db');
+export const DB_PATH = path.join(DATA_DIR, 'glean.db');
+
+// One-time move of the pre-rename database (with its WAL/SHM side files) before anything opens it.
+const LEGACY_DB_PATH = path.join(DATA_DIR, 'sang.db');
+if (!fs.existsSync(DB_PATH) && fs.existsSync(LEGACY_DB_PATH)) {
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (fs.existsSync(LEGACY_DB_PATH + suffix)) fs.renameSync(LEGACY_DB_PATH + suffix, DB_PATH + suffix);
+  }
+}
 export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`

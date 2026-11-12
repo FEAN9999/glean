@@ -142,8 +142,8 @@ export function SievePage() {
         <h1 className="page-title">{t('Sàng ảnh & video', 'Sieve images & video')}</h1>
         <p className="page-lede">
           {t(
-            'Đưa một chủ đề vào, Sàng đi qua từng trang, giữ lại ảnh, video, liên kết và bình luận có giá trị. Ảnh được tải về máy nên vẫn xem được khi bài gốc bị xóa.',
-            'Feed in a thread and Sàng walks every page, keeping images, videos, links and worthwhile comments. Images are stored locally, so they survive if the thread is deleted.',
+            'Đưa một chủ đề vào, Glean đi qua từng trang, giữ lại ảnh, video, liên kết và bình luận có giá trị. Ảnh được tải về máy nên vẫn xem được khi bài gốc bị xóa.',
+            'Feed in a thread and Glean walks every page, keeping images, videos, links and worthwhile comments. Images are stored locally, so they survive if the thread is deleted.',
           )}
         </p>
       </header>

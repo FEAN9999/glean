@@ -193,7 +193,7 @@ function layout(title: string, body: string) {
 <style>body{font:15px system-ui;margin:0;background:#f5f5f5;color:#222}main{max-width:900px;margin:0 auto;padding:16px}
 .structItem,.message{background:#fff;border:1px solid #ddd;margin:8px 0;padding:10px}.bbImage{max-width:240px;display:block;margin:6px 0}
 blockquote{border-left:3px solid #ccc;margin:6px 0;padding:4px 8px;color:#666}.pageNav-main{display:flex;gap:6px;list-style:none;padding:0}</style>
-</head><body><header style="background:#2a3a55;color:#fff;padding:10px 16px">Diễn đàn mẫu — dữ liệu giả lập cho Sàng</header><main>${body}</main></body></html>`;
+</head><body><header style="background:#2a3a55;color:#fff;padding:10px 16px">Diễn đàn mẫu — dữ liệu giả lập cho Glean</header><main>${body}</main></body></html>`;
 }
 
 function svgImage(key: string) {

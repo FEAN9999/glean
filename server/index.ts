@@ -14,14 +14,14 @@ import { registerDemoForum } from './demo/forum.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
 
-const PORT = Number(process.env.SANG_PORT ?? 4318);
-const HOST = process.env.SANG_HOST ?? '127.0.0.1';
+const PORT = Number(process.env.GLEAN_PORT ?? process.env.SANG_PORT ?? 4318);
+const HOST = process.env.GLEAN_HOST ?? process.env.SANG_HOST ?? '127.0.0.1';
 
 loadConfig(PORT);
 initNet();
 
 const app = Fastify({
-  logger: { level: process.env.SANG_LOG ?? 'warn' },
+  logger: { level: process.env.GLEAN_LOG ?? process.env.SANG_LOG ?? 'warn' },
   routerOptions: { ignoreTrailingSlash: true },
   bodyLimit: 2 * 1024 * 1024,
 });
@@ -95,7 +95,7 @@ if (fs.existsSync(path.join(webDist, 'index.html'))) {
 }
 
 await app.listen({ port: PORT, host: HOST });
-console.log(`Sàng ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 
 initScraper();
 initAutoSync();

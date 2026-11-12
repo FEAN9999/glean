@@ -59,7 +59,7 @@ function failScrape(id: number, error: string) {
   const sm = summary(id);
   emit(Ev.UpdateScrape, sm, undefined, 'scrape');
   emit(Ev.FinishScrape, sm, error, 'scrape');
-  if (cfg().telegram.notifyScrapeFinished) void telegram(`Sàng: lượt sàng #${id} thất bại — ${error}`);
+  if (cfg().telegram.notifyScrapeFinished) void telegram(`Glean: lượt sàng #${id} thất bại — ${error}`);
 }
 
 const isCancelled = (id: number) => !!get<{ x: number }>('SELECT 1 x FROM scrape WHERE id=? AND (is_marked_deleted=1 OR status<>?)', id, ScrapeStatus.Processing);
@@ -188,7 +188,7 @@ function finish(id: number, extra: { isThreadDeleted?: boolean } = {}) {
   emit(Ev.UpdateScrape, sm, undefined, 'scrape');
   emit(Ev.FinishScrape, sm, undefined, 'scrape');
   if (cfg().telegram.notifyScrapeFinished)
-    void telegram(`Sàng: xong "${sm.threadTitle}" — ${sm.totalImages} ảnh, ${sm.totalVideos} video, ${sm.totalComments} bình luận.`);
+    void telegram(`Glean: xong "${sm.threadTitle}" — ${sm.totalImages} ảnh, ${sm.totalVideos} video, ${sm.totalComments} bình luận.`);
 }
 
 async function processScrape(id: number) {
@@ -251,7 +251,7 @@ function archiveFallback(id: number, threadId: number) {
   const synced = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', threadId)!.n;
   if (!prev && !synced) {
     throw new Error(
-      `Không tìm thấy bài #${threadId} trên ${new URL(cfg().source.baseUrl).host}: bài không tồn tại hoặc đã bị xóa, và Sàng chưa có bản lưu trữ nào của bài này.`,
+      `Không tìm thấy bài #${threadId} trên ${new URL(cfg().source.baseUrl).host}: bài không tồn tại hoặc đã bị xóa, và Glean chưa có bản lưu trữ nào của bài này.`,
     );
   }
   run('UPDATE scrape SET thread_title=?, total_pages=? WHERE id=?', prev?.thread_title ?? t?.title ?? `Bài ${threadId}`, prev?.total_pages ?? 0, id);
@@ -422,7 +422,7 @@ export function createScrape(input: string, source: string) {
     throw new ApiError(
       409,
       'SOURCE_MISMATCH',
-      `Link thuộc ${ref.foreignHost}, nhưng Sàng đang đọc từ ${isDemo ? 'diễn đàn mẫu' : current.host}. ` +
+      `Link thuộc ${ref.foreignHost}, nhưng Glean đang đọc từ ${isDemo ? 'diễn đàn mẫu' : current.host}. ` +
         (isDemo
           ? `Đổi "Địa chỉ diễn đàn" trong Cài đặt → Nguồn dữ liệu thành https://${ref.foreignHost} rồi dán lại link.`
           : `Nếu ${ref.foreignHost} là tên miền khác của cùng diễn đàn, thêm https://${ref.foreignHost} vào "Tên miền cũ" trong Cài đặt → Nguồn dữ liệu; nếu là diễn đàn khác, đổi "Địa chỉ diễn đàn".`),

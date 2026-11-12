@@ -61,7 +61,7 @@ export function defaultConfig(port: number): AppConfig {
         { id: 4, name: 'Đồ chơi công nghệ' },
       ],
       postsPerPage: 20,
-      userAgent: 'Mozilla/5.0 (compatible; SangPersonal/1.0)',
+      userAgent: 'Mozilla/5.0 (compatible; GleanPersonal/1.0)',
       requestTimeoutMs: 15000,
     },
     sync: {
@@ -92,8 +92,8 @@ export function defaultConfig(port: number): AppConfig {
     search: { semanticSearchUrl: '', semanticTopK: 8, pageSize: 20, minKeywordLength: 3 },
     ai: { chatGpt: { enabled: false, apiKey: '' }, gemini: { enabled: false, apiKey: '' } },
     auth: {
-      issuer: 'sang',
-      audience: 'sang-web',
+      issuer: 'glean',
+      audience: 'glean-web',
       secret: crypto.randomBytes(32).toString('hex'),
       accessTokenMinutes: 30,
       refreshTokenDays: 30,
@@ -127,6 +127,11 @@ export function loadConfig(port: number): AppConfig {
   const rows = all<{ key: string; value: string }>('SELECT key, value FROM config');
   const stored: any = {};
   for (const r of rows) stored[r.key] = JSON.parse(r.value);
+  // Pre-rename installs persisted the old product name in the User-Agent sent to the forum.
+  if (typeof stored.source?.userAgent === 'string' && stored.source.userAgent.includes('SangPersonal/')) {
+    stored.source.userAgent = stored.source.userAgent.replace('SangPersonal/', 'GleanPersonal/');
+    saveSection('source', stored.source);
+  }
   const merged = deepMerge(defaults, stored);
   for (const key of Object.keys(merged) as (keyof AppConfig)[]) {
     if (!(key in stored)) saveSection(key, merged[key]);

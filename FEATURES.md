@@ -1,4 +1,4 @@
-# FEATURES — hayho.org (phân tích tính năng)
+# FEATURES — phân tích tính năng của dịch vụ tham chiếu
 
 > Phạm vi: chỉ **tính năng** (luồng nghiệp vụ, dữ liệu, API, realtime, cấu hình). Không phân tích giao diện/CSS.
 > Mục tiêu: app **dùng cá nhân, một người dùng, full tính năng**. Phần kiếm tiền (gói, thanh toán, quota, giới hạn theo hạng) và phần phục vụ nhiều người dùng (chat, phân quyền, tracking, multi-tenant…) đã được loại bỏ, xem §7.
@@ -23,7 +23,7 @@ REA MCP không kết nối được (timeout) nên dùng REA CLI 6.8.0 thay th�
 ## 1. Kiến trúc tổng quát
 
 - **Frontend**: Angular SPA, lưới/form admin dùng DevExtreme, xem ảnh/video bằng Fancybox. Lazy-load theo module.
-- **Backend**: REST `https://api.hayho.org/{controller}/…` (ASP.NET: SignalR, Serilog, ElasticAPM). Response chuẩn: `{ success, data, total?, message?, code? }`.
+- **Backend**: REST `https://api.<dịch-vụ-tham-chiếu>/{controller}/…` (ASP.NET: SignalR, Serilog, ElasticAPM). Response chuẩn: `{ success, data, total?, message?, code? }`.
 - **Realtime**: SignalR hub `/subscribe`, event duy nhất `ReceiveMessage {type, data, message}`; client gọi `JoinGroup/LeaveGroup` theo trang đang mở [QS+TĨNH].
 - **Nguồn dữ liệu**: một diễn đàn bên ngoài (XenForo-like: thread, page, comment `#n`). Backend **đồng bộ định kỳ** bài viết + bình luận vào DB/Elasticsearch, và **cào theo yêu cầu** một bài cụ thể để lấy media.
 - **Đa ngôn ngữ**: `vi-VN`, `en-US` (localStorage `lang`, header `Accept-Language`).
@@ -130,7 +130,7 @@ Admin sửa trên `/quan-tri/cai-dat` → `PUT /systems/config`, `POST /systems/
 
 ---
 
-## 6. Danh mục API giữ lại (base `https://api.hayho.org`)
+## 6. Danh mục API giữ lại (base `https://api.<dịch-vụ-tham-chiếu>`)
 
 ```
 auth:        POST login | logout | refresh/{userId}/{token} ; GET validate-token | me

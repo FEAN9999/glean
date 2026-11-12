@@ -96,13 +96,13 @@ export function Shell({ children }: { children: ReactNode }) {
           </svg>
         </button>
         <img src="/mark.svg" width={26} height={26} alt="" />
-        <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 650 }}>sàng</span>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 650 }}>glean</span>
         {queue > 0 && <span className="rail-badge" style={{ marginLeft: 'auto' }}>{queue}</span>}
       </div>
       <aside className={`rail ${open ? 'open' : ''}`} onClick={(e) => e.target === e.currentTarget && setOpen(false)}>
         <NavLink to="/" className="wordmark">
           <img src="/mark.svg" width={32} height={32} alt="" />
-          <span className="wordmark-text">sàng</span>
+          <span className="wordmark-text">glean</span>
         </NavLink>
         <nav aria-label={t('Điều hướng chính', 'Main navigation')}>
           {groups.map((g, i) => (

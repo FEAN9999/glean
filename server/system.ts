@@ -125,7 +125,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
   });
 
   app.post('/api/systems/test-telegram', async () => {
-    const r = await telegram('Sàng: tin nhắn thử từ trang cài đặt.', true);
+    const r = await telegram('Glean: tin nhắn thử từ trang cài đặt.', true);
     if (!r.ok) throw new ApiError(400, 'TELEGRAM_FAILED', r.error ?? 'Không gửi được.', 'inline');
     return ok(true);
   });

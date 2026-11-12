@@ -223,8 +223,8 @@ export function registerAuth(app: FastifyInstance) {
     if (u.totp_enabled) throw new ApiError(409, 'ALREADY_ENABLED', 'Xác thực 2 lớp đang bật.', 'inline');
     const secret = base32Encode(crypto.randomBytes(20));
     run('UPDATE app_user SET totp_pending_secret=? WHERE id=?', secret, u.id);
-    const label = encodeURIComponent(`Sàng:${u.username}`);
-    const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent('Sàng')}&algorithm=SHA1&digits=6&period=30`;
+    const label = encodeURIComponent(`Glean:${u.username}`);
+    const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent('Glean')}&algorithm=SHA1&digits=6&period=30`;
     const qrDataUrl = await QRCode.toDataURL(otpauthUrl, { margin: 1, width: 220, color: { dark: '#16203a', light: '#ffffff' } });
     return ok({ secret, otpauthUrl, qrDataUrl });
   });

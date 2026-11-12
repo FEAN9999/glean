@@ -66,7 +66,7 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
         <h1 className="page-title">{t('Nhật ký đồng bộ', 'Sync log')}</h1>
         <p className="page-lede">
           {t(
-            'Mỗi dòng là một lần Sàng quét một chuyên mục và nạp bài viết hoặc bình luận mới vào kho. Mở một dòng để xem đúng những bài đã thay đổi.',
+            'Mỗi dòng là một lần Glean quét một chuyên mục và nạp bài viết hoặc bình luận mới vào kho. Mở một dòng để xem đúng những bài đã thay đổi.',
             'Each line is one pass over a forum section that loaded new threads or comments into the archive. Open a line to see exactly what changed.',
           )}
         </p>

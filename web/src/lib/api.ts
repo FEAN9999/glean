@@ -34,9 +34,15 @@ interface Session {
   userId: number;
 }
 
-const SKEY = 'sang.session';
+const SKEY = 'glean.session';
+const LEGACY_SKEY = 'sang.session'; // pre-rename key, moved over once so the user stays signed in
 let session: Session | null = (() => {
   try {
+    const legacy = localStorage.getItem(LEGACY_SKEY);
+    if (legacy !== null) {
+      if (localStorage.getItem(SKEY) === null) localStorage.setItem(SKEY, legacy);
+      localStorage.removeItem(LEGACY_SKEY);
+    }
     return JSON.parse(localStorage.getItem(SKEY) ?? 'null');
   } catch {
     return null;
@@ -138,7 +144,7 @@ export async function request<T = any>(path: string, opts: ReqOpts = {}): Promis
         await new Promise((r) => setTimeout(r, 400 * attempt));
         continue;
       }
-      const err = new ApiErr(0, 'NETWORK', 'Không kết nối được máy chủ. Kiểm tra máy chủ Sàng có đang chạy không.', 'toast');
+      const err = new ApiErr(0, 'NETWORK', 'Không kết nối được máy chủ. Kiểm tra máy chủ Glean có đang chạy không.', 'toast');
       if (!opts.quiet) toastSink(err);
       throw err;
     }

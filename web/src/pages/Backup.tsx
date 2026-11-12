@@ -32,7 +32,7 @@ function Inner() {
   const { toast } = useUi();
   const [data, setData] = useState<Tables | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
-  const [target, setTarget] = useState(() => `sang-${new Date().toISOString().slice(0, 10)}.db`);
+  const [target, setTarget] = useState(() => `glean-${new Date().toISOString().slice(0, 10)}.db`);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [log, setLog] = useState<string[]>([]);

@@ -40,7 +40,7 @@ export function SudoGate({ children, title }: { children: ReactNode; title: stri
       <header className="page-head">
         <h1 className="page-title">{title}</h1>
         <p className="page-lede">
-          {t('Trang này thay đổi cách Sàng hoạt động. Nhập mã xác thực 2 lớp để tiếp tục.', 'This page changes how Sàng runs. Enter your two-factor code to continue.')}
+          {t('Trang này thay đổi cách Glean hoạt động. Nhập mã xác thực 2 lớp để tiếp tục.', 'This page changes how Glean runs. Enter your two-factor code to continue.')}
         </p>
       </header>
       <form onSubmit={submit} className="stack" style={{ maxWidth: 320 }}>

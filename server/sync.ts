@@ -261,7 +261,7 @@ export async function runAutoSync(type: SyncType) {
     emit(Ev.AutoSyncFinished, { type, count: total, finishedAt: lastAuto[type].at });
   } catch (e) {
     lastAuto[type] = { at: now(), error: (e as Error).message };
-    if (cfg().telegram.notifySyncFailed) void telegram(`Sàng: đồng bộ tự động (${type}) lỗi — ${(e as Error).message}`);
+    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ tự động (${type}) lỗi — ${(e as Error).message}`);
   } finally {
     autoRunning[type] = false;
   }
@@ -399,7 +399,7 @@ async function runManual(o: ManualOptions) {
     manual.finishedAt = now();
     mlog(`Lỗi: ${manual.error}`);
     emit(Ev.ManualSyncFailed, manualStatus(), manual.error, 'manual-sync');
-    if (cfg().telegram.notifySyncFailed) void telegram(`Sàng: đồng bộ thủ công lỗi — ${manual.error}`);
+    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ thủ công lỗi — ${manual.error}`);
   } finally {
     manual.running = false;
     manual.stopRequested = false;

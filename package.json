@@ -1,8 +1,8 @@
 {
-  "name": "sang",
+  "name": "glean",
   "version": "1.0.0",
   "private": true,
-  "description": "Sàng — công cụ cá nhân tìm kiếm, đồng bộ và sàng lọc media từ diễn đàn",
+  "description": "Glean — công cụ cá nhân tìm kiếm, đồng bộ và sàng lọc media từ diễn đàn",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,yellow \"npm:dev:server\" \"npm:dev:web\"",

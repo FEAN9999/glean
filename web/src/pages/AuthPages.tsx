@@ -14,7 +14,7 @@ function AuthArt() {
         <img src="/mark.svg" width={34} height={34} alt="" />
       </div>
       <div className="stack" style={{ gap: 28 }}>
-        <h1>sàng</h1>
+        <h1>glean</h1>
         <p style={{ margin: 0, maxWidth: '38ch', fontSize: 16 }}>
           {t(
             'Kho riêng của bạn để tìm lại bài viết, bình luận, và lọc ảnh khỏi những chủ đề dài trên diễn đàn.',
@@ -61,7 +61,7 @@ export function SetupPage() {
               {t('Tạo tài khoản', 'Create your account')}
             </h2>
             <p className="page-lede">
-              {t('Sàng chỉ có một tài khoản: của bạn. Bước này chỉ làm một lần.', 'Sàng has exactly one account: yours. You only do this once.')}
+              {t('Glean chỉ có một tài khoản: của bạn. Bước này chỉ làm một lần.', 'Glean has exactly one account: yours. You only do this once.')}
             </p>
           </div>
           <label className="field">

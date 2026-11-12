@@ -68,12 +68,12 @@ export function useCreateScrape() {
         toast(
           domainWarning.knownOldDomain
             ? t(
-                `Link dùng tên miền cũ ${domainWarning.host}. Diễn đàn đã chuyển sang ${domainWarning.currentHost}; Sàng tự đổi sang tên miền mới.`,
-                `The link uses the old domain ${domainWarning.host}. The forum moved to ${domainWarning.currentHost}; Sàng uses the new one.`,
+                `Link dùng tên miền cũ ${domainWarning.host}. Diễn đàn đã chuyển sang ${domainWarning.currentHost}; Glean tự đổi sang tên miền mới.`,
+                `The link uses the old domain ${domainWarning.host}. The forum moved to ${domainWarning.currentHost}; Glean uses the new one.`,
               )
             : t(
-                `Link thuộc ${domainWarning.host}, khác nguồn đang cấu hình (${domainWarning.currentHost}). Sàng dùng ID bài với nguồn hiện tại.`,
-                `The link belongs to ${domainWarning.host}, not the configured source (${domainWarning.currentHost}). Sàng uses the thread ID with the current source.`,
+                `Link thuộc ${domainWarning.host}, khác nguồn đang cấu hình (${domainWarning.currentHost}). Glean dùng ID bài với nguồn hiện tại.`,
+                `The link belongs to ${domainWarning.host}, not the configured source (${domainWarning.currentHost}). Glean uses the thread ID with the current source.`,
               ),
         );
       }
@@ -131,7 +131,7 @@ export function ScrapeQueue({ compact = false }: { compact?: boolean }) {
       </p>
     ) : (
       <Empty title={t('Hàng đợi trống', 'Nothing queued')}>
-        {t('Dán link bài viết ở trên để bắt đầu sàng. Có thể đưa nhiều bài vào cùng lúc, Sàng xử lý lần lượt.', 'Paste a thread link above to start. You can queue several threads; Sàng works through them in order.')}
+        {t('Dán link bài viết ở trên để bắt đầu sàng. Có thể đưa nhiều bài vào cùng lúc, Glean xử lý lần lượt.', 'Paste a thread link above to start. You can queue several threads; Glean works through them in order.')}
       </Empty>
     );
 
