@@ -212,7 +212,7 @@ export function PausedNotice({ feature }: { feature: keyof Maintenance }) {
   const f = maintenance?.[feature];
   if (!f?.isPaused) return null;
   return (
-    <div className="notice notice-straw" role="status" style={{ marginBottom: 24 }}>
+    <div className="notice notice-straw" role="status" style={{ marginBottom: 20 }}>
       <strong>{t('Tạm dừng.', 'Paused.')}</strong>
       <span>{f.message || t('Tính năng này đang tạm dừng trong cài đặt.', 'This feature is paused in settings.')}</span>
     </div>
@@ -222,12 +222,15 @@ export function PausedNotice({ feature }: { feature: keyof Maintenance }) {
 export function Highlight({ text, q }: { text: string; q: string }) {
   return (
     <>
-      {highlight(text, q).map((seg, i) => (seg.hit ? <mark key={i}>{seg.s}</mark> : <span key={i}>{seg.s}</span>))}
+      {highlight(text ?? '', q ?? '').map((seg, i) => (seg.hit ? <mark key={i}>{seg.s}</mark> : <span key={i}>{seg.s}</span>))}
     </>
   );
 }
 
-/** Pages of a thread drawn as holes in a sieve. */
+/**
+ * Pages of a thread as a strip of bars: scanned, being scanned, still to do.
+ * Up to 20 pages get a number under each bar; longer threads wrap into a dense grid.
+ */
 export function Mesh({
   total,
   done,
@@ -243,16 +246,95 @@ export function Mesh({
   max?: number;
   label?: string;
 }) {
-  const shown = max ? Math.min(total, max) : total;
+  const shown = Math.max(max ? Math.min(total, max) : total, 1);
   const isDone = (p: number) => (typeof done === 'number' ? p <= done : done.has(p));
+  const dense = size === 'sm' || shown > 20;
   return (
-    <div className={`mesh ${size === 'lg' ? 'mesh-lg' : size === 'sm' ? 'mesh-sm' : ''}`} role="img" aria-label={label}>
-      {Array.from({ length: Math.max(shown, 1) }, (_, i) => {
+    <div
+      className={`pages ${dense ? 'dense' : ''}`}
+      style={dense ? undefined : { gridTemplateColumns: `repeat(${shown}, minmax(0, 1fr))` }}
+      role="img"
+      aria-label={label}
+    >
+      {Array.from({ length: shown }, (_, i) => {
         const p = i + 1;
         const cls = isDone(p) ? 'done' : current?.has(p) ? 'now' : '';
-        return <span key={p} className={`mesh-hole ${cls}`} />;
+        return (
+          <span key={p} className={`page-cell ${cls}`}>
+            <i />
+            {!dense && p}
+          </span>
+        );
       })}
     </div>
+  );
+}
+
+/** Ring split into done / in progress / remaining. `done` and `current` are counts out of `total`. */
+export function Donut({
+  total,
+  done,
+  current = 0,
+  size = 'md',
+  label,
+  children,
+}: {
+  total: number;
+  done: number;
+  current?: number;
+  size?: 'sm' | 'md' | 'lg';
+  label?: string;
+  children?: ReactNode;
+}) {
+  const pct = (n: number) => `${total > 0 ? Math.min(100, (100 * n) / total) : 0}%`;
+  const style = { '--a': pct(done), '--b': pct(done + current) } as React.CSSProperties;
+  return (
+    <div className={`donut ${size === 'lg' ? 'donut-lg' : size === 'sm' ? 'donut-sm' : ''}`} style={style} role="img" aria-label={label}>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/** Label + on/off switch on one ruled line. A real checkbox underneath. */
+export function Switch({ label, checked, onChange, disabled }: { label: ReactNode; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <label className="switch-row">
+      <span>{label}</span>
+      <input type="checkbox" role="switch" className="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+/** Six boxes for a one-time code, driven by one numeric input. */
+export function OtpInput({ value, onChange, label, autoFocus }: { value: string; onChange: (v: string) => void; label: string; autoFocus?: boolean }) {
+  return (
+    <div className="otp">
+      {Array.from({ length: 6 }, (_, i) => (
+        <span key={i} className={i === Math.min(value.length, 5) ? 'cur' : ''} aria-hidden="true">
+          {value[i] ?? ''}
+        </span>
+      ))}
+      <input
+        aria-label={label}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        required
+        autoFocus={autoFocus}
+      />
+    </div>
+  );
+}
+
+/** Coloured dot followed by a short status text. */
+export function Status({ tone, children }: { tone: 'ok' | 'bad' | 'off' | 'acc'; children: ReactNode }) {
+  return (
+    <span className={`status ${tone === 'bad' ? 'bad' : ''}`}>
+      <span className={`dot ${tone === 'ok' ? 'dot-ok' : tone === 'bad' ? 'dot-bad' : tone === 'acc' ? 'dot-acc' : ''}`} />
+      {children}
+    </span>
   );
 }
 
@@ -270,11 +352,11 @@ export function Pager({ page, total, size, onPage }: { page: number; total: numb
   const pages = Math.max(1, Math.ceil(total / size));
   if (pages <= 1) return null;
   return (
-    <div className="hstack" style={{ marginTop: 20 }}>
+    <div className="hstack" style={{ paddingTop: 18, gap: 14, fontSize: 13 }}>
       <button className="btn btn-sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
         {t('Trang trước', 'Previous')}
       </button>
-      <span className="muted num" style={{ fontSize: 14 }}>
+      <span className="muted num">
         {page} / {pages}
       </span>
       <button className="btn btn-sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>

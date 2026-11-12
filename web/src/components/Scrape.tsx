@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
-import { fmtAgo, fmtNum } from '../lib/format';
-import { Empty, Mesh, useUi } from './ui';
+import { fmtNum, fmtTime } from '../lib/format';
+import { Donut, Mesh, useUi } from './ui';
 
 export const ScrapeStatus = { None: 0, Waiting: 1, Processing: 2, Completed: 3, Failed: 4, NotProcessed: 5 } as const;
 
@@ -90,15 +90,13 @@ export function useCreateScrape() {
   );
 }
 
-interface LiveProgress {
+export interface LiveProgress {
   downloaded?: number;
   total?: number;
 }
 
-/** Live queue of waiting + processing jobs with page mesh and download progress. */
-export function ScrapeQueue({ compact = false }: { compact?: boolean }) {
-  const { t } = useI18n();
-  const label = useStatusLabel();
+/** Waiting + processing jobs, kept live by realtime events. `items` is null until the first load. */
+export function useScrapeQueue() {
   const [items, setItems] = useState<Scrape[] | null>(null);
   const [live, setLive] = useState<Record<number, LiveProgress>>({});
 
@@ -123,68 +121,67 @@ export function ScrapeQueue({ compact = false }: { compact?: boolean }) {
   );
   useEvent(Ev.UpdateDownloadImageProcess, (m) => setLive((l) => ({ ...l, [m.data.scrapeId]: { downloaded: m.data.downloaded, total: m.data.total } })));
 
-  if (!items) return null;
-  if (!items.length)
-    return compact ? (
-      <p className="muted" style={{ margin: 0 }}>
-        {t('Hàng đợi trống.', 'The queue is empty.')}
-      </p>
-    ) : (
-      <Empty title={t('Hàng đợi trống', 'Nothing queued')}>
-        {t('Dán link bài viết ở trên để bắt đầu sàng. Có thể đưa nhiều bài vào cùng lúc, Glean xử lý lần lượt.', 'Paste a thread link above to start. You can queue several threads; Glean works through them in order.')}
-      </Empty>
-    );
+  const processing = items?.find((x) => x.status === ScrapeStatus.Processing) ?? null;
+  const waiting = items?.filter((x) => x.status === ScrapeStatus.Waiting) ?? [];
+  return { items, processing, waiting, live, reload: load };
+}
 
-  const waiting = items.filter((x) => x.status === ScrapeStatus.Waiting);
+/** Pages scanned / being scanned / left for a running job (for the donut and its legend). */
+export function pageSplit(s: Scrape, lp?: LiveProgress) {
+  const total = s.totalPages;
+  if (lp?.total) return { total, done: total, current: 0, left: 0 };
+  const done = Math.min(s.currentPage, total);
+  const current = done < total ? 1 : 0;
+  return { total, done, current, left: Math.max(0, total - done - current) };
+}
+
+export const scrapeTitle = (s: Pick<Scrape, 'threadTitle' | 'threadId'>, t: (vi: string, en: string) => string) =>
+  s.threadTitle ?? t(`Bài #${s.threadId}`, `Thread #${s.threadId}`);
+
+/** The job Glean is working on right now: donut, page strip and download bar. */
+export function NowSieving({ s, lp }: { s: Scrape; lp?: LiveProgress }) {
+  const { t } = useI18n();
+  const sp = pageSplit(s, lp);
   return (
-    <ul className="rows">
-      {items.map((s) => {
-        const lp = live[s.id];
-        const pos = s.status === ScrapeStatus.Waiting ? waiting.findIndex((w) => w.id === s.id) + 1 : 0;
-        return (
-          <li key={s.id} className="row">
-            <div className="hstack" style={{ justifyContent: 'space-between' }}>
-              <Link to={`/sang/${s.id}`} className="row-title">
-                {s.threadTitle ?? t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}
-              </Link>
-              <span className={`tag ${s.status === ScrapeStatus.Processing ? 'tag-straw' : ''}`}>{label(s.status)}</span>
+    <div className="job-now">
+      <Donut total={sp.total || 1} done={sp.done} current={sp.current} label={t(`${sp.done} trên ${sp.total} trang đã quét`, `${sp.done} of ${sp.total} pages scanned`)}>
+        {sp.total ? `${sp.done}/${sp.total}` : '…'}
+      </Donut>
+      <div className="job-now-text">
+        <Link to={`/sang/${s.id}`} className="result-title">
+          {scrapeTitle(s, t)}
+        </Link>
+        <span className="row-meta plain">
+          {t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}
+          {s.startedAt && t(` · bắt đầu ${fmtTime(s.startedAt)}`, ` · started ${fmtTime(s.startedAt)}`)}
+          {t(` · đã thấy ${fmtNum(s.totalImages)} ảnh`, ` · ${fmtNum(s.totalImages)} images found`)}
+        </span>
+        {s.totalPages > 0 ? (
+          <Mesh total={s.totalPages} done={sp.done} current={new Set(sp.current ? [sp.done + 1] : [])} max={200} label={t(`Trang ${sp.done} / ${sp.total}`, `Page ${sp.done} of ${sp.total}`)} />
+        ) : (
+          <span className="muted" style={{ fontSize: 13 }}>
+            {t('Đang mở trang đầu…', 'Opening the first page…')}
+          </span>
+        )}
+        {lp?.total ? (
+          <div className="progress">
+            <div>
+              <span>{t('Tải ảnh', 'Downloading images')}</span>
+              <span className="muted num">
+                {fmtNum(lp.downloaded)} / {fmtNum(lp.total)}
+              </span>
             </div>
-            {s.status === ScrapeStatus.Waiting ? (
-              <div className="row-meta">
-                <span>{t(`Thứ tự ${pos} / ${waiting.length} đang chờ`, `Position ${pos} of ${waiting.length} queued`)}</span>
-                <span>{t('Thêm', 'Added')} {fmtAgo(s.createdAt)}</span>
-              </div>
-            ) : (
-              <div className="stack" style={{ gap: 8 }}>
-                {s.totalPages > 0 && !(lp && lp.total) && (
-                  <>
-                    <Mesh total={s.totalPages} done={s.currentPage} current={new Set([s.currentPage + 1])} size={compact ? 'sm' : 'md'} max={compact ? 60 : 200} />
-                    <span className="row-meta">
-                      {t(`Quét trang ${s.currentPage}/${s.totalPages}`, `Scanned page ${s.currentPage} of ${s.totalPages}`)}
-                    </span>
-                  </>
-                )}
-                {lp?.total ? (
-                  <>
-                    <div className="bar" aria-hidden="true">
-                      <span style={{ width: `${(100 * (lp.downloaded ?? 0)) / lp.total}%` }} />
-                    </div>
-                    <span className="row-meta">
-                      {t(`Tải ảnh ${fmtNum(lp.downloaded)}/${fmtNum(lp.total)}`, `Downloading image ${fmtNum(lp.downloaded)} of ${fmtNum(lp.total)}`)}
-                    </span>
-                  </>
-                ) : null}
-                {s.totalPages === 0 && <span className="row-meta">{t('Đang mở trang đầu…', 'Opening the first page…')}</span>}
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+            <div className="bar" aria-hidden="true">
+              <span style={{ width: `${(100 * (lp.downloaded ?? 0)) / lp.total}%` }} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-/** Sieve input used on the sieve page. */
+/** Sieve input used on the queue page. */
 export function SieveForm({ autoFocus }: { autoFocus?: boolean }) {
   const { t } = useI18n();
   const create = useCreateScrape();
@@ -207,24 +204,32 @@ export function SieveForm({ autoFocus }: { autoFocus?: boolean }) {
   };
   return (
     <form onSubmit={submit}>
-      <div className="sieve-box">
+      <div className="sieve-form">
         <label htmlFor="sieve-input" className="sr-only">
           {t('Link hoặc ID bài viết', 'Thread link or ID')}
         </label>
         <input
           id="sieve-input"
+          className="input input-lg"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={t('Dán link bài viết hoặc nhập ID', 'Paste a thread link or type its ID')}
           autoFocus={autoFocus}
           autoComplete="off"
         />
-        <button className="btn btn-primary" disabled={busy || !value.trim()}>
+        <button className="btn btn-primary btn-xl" disabled={busy || !value.trim()}>
           {busy ? t('Đang thêm…', 'Adding…') : t('Sàng bài này', 'Sieve thread')}
         </button>
       </div>
       <div className="sieve-hint" role={error ? 'alert' : undefined}>
-        {error ? <span style={{ color: 'var(--rust)' }}>{error}</span> : t('Ví dụ: …/threads/ten-bai-viet.12345/ hoặc 12345', 'Example: …/threads/thread-title.12345/ or 12345')}
+        {error ? (
+          <span style={{ color: 'var(--bad-ink)' }}>{error}</span>
+        ) : (
+          t(
+            'Ví dụ: …/threads/ten-bai-viet.12345/ hoặc 12345. Có thể đưa nhiều bài vào, Glean xử lý lần lượt.',
+            'Example: …/threads/thread-title.12345/ or 12345. You can queue several threads; Glean works through them in order.',
+          )
+        )}
       </div>
     </form>
   );

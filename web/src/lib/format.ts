@@ -17,6 +17,11 @@ export function fmtDate(iso: string | null | undefined, withTime = true) {
   }).format(d);
 }
 
+export function fmtTime(iso: string | null | undefined) {
+  if (!iso) return '—';
+  return new Intl.DateTimeFormat(loc(), { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
+
 export function fmtAgo(iso: string | null | undefined) {
   if (!iso) return '—';
   const diff = (Date.parse(iso) - Date.now()) / 1000;

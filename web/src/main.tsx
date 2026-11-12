@@ -9,7 +9,7 @@ import { Shell, initTheme } from './components/Shell';
 import { LoginPage, SetupPage } from './pages/AuthPages';
 import { HomePage } from './pages/Home';
 import { SearchPage } from './pages/Search';
-import { SievePage } from './pages/Sieve';
+import { QueuePage, SievePage } from './pages/Sieve';
 import { SieveDetailPage } from './pages/SieveDetail';
 import { SyncLogDetailPage, SyncLogPage } from './pages/Logs';
 import { ManualSyncPage } from './pages/ManualSync';
@@ -44,11 +44,12 @@ function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/bai-viet" element={<Navigate to="/bai-viet/tu-khoa" replace />} />
-          <Route path="/bai-viet/:mode" element={<SearchPage scope="posts" />} />
+          <Route path="/bai-viet/:mode" element={<SearchPage key="posts" scope="posts" />} />
           <Route path="/binh-luan" element={<Navigate to="/binh-luan/tu-khoa" replace />} />
-          <Route path="/binh-luan/:mode" element={<SearchPage scope="comments" />} />
+          <Route path="/binh-luan/:mode" element={<SearchPage key="comments" scope="comments" />} />
           <Route path="/sang" element={<SievePage />} />
           <Route path="/sang/:id" element={<SieveDetailPage />} />
+          <Route path="/hang-doi" element={<QueuePage />} />
           <Route path="/nhat-ky" element={<Navigate to="/nhat-ky/bai-viet" replace />} />
           <Route path="/nhat-ky/bai-viet" element={<SyncLogPage kind="posts" />} />
           <Route path="/nhat-ky/bai-viet/:id" element={<SyncLogDetailPage kind="posts" />} />

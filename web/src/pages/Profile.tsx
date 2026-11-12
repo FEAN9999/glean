@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
 import { fmtDate } from '../lib/format';
 import { useTheme } from '../components/Shell';
-import { useUi } from '../components/ui';
+import { OtpInput, useUi } from '../components/ui';
 
 function PasswordForm() {
   const { t } = useI18n();
@@ -33,7 +33,7 @@ function PasswordForm() {
     }
   };
   return (
-    <form onSubmit={submit} className="stack" style={{ maxWidth: 380 }}>
+    <form onSubmit={submit} className="stack" style={{ maxWidth: 360 }}>
       <label className="field">
         <span>{t('Mật khẩu hiện tại', 'Current password')}</span>
         <input className="input" type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" required />
@@ -46,9 +46,9 @@ function PasswordForm() {
         <span>{t('Nhập lại mật khẩu mới', 'Repeat new password')}</span>
         <input className="input" type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
       </label>
-      {error && <p className="error-text">{error}</p>}
+      {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
       <div>
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn" disabled={busy}>
           {t('Đổi mật khẩu', 'Change password')}
         </button>
       </div>
@@ -98,39 +98,39 @@ function TwoFactor() {
   };
 
   const codeInput = (
-    <label className="field" style={{ maxWidth: 220 }}>
-      <span>{t('Mã 6 số từ ứng dụng', '6-digit code from the app')}</span>
-      <input
-        className="input num"
-        style={{ fontSize: 20, letterSpacing: '0.25em' }}
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        maxLength={6}
-        value={code}
-        onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-        required
-        autoFocus
-      />
-    </label>
+    <div className="stack" style={{ gap: 10 }}>
+      <span style={{ fontSize: 13 }}>{t('Mã 6 số từ ứng dụng', '6-digit code from the app')}</span>
+      <OtpInput value={code} onChange={setCode} label={t('Mã 6 số từ ứng dụng', '6-digit code from the app')} autoFocus />
+    </div>
+  );
+  const intro = (
+    <p className="muted" style={{ margin: 0, padding: '4px 0 14px', maxWidth: '60ch' }}>
+      {t(
+        'Thêm một lớp bảo vệ bằng ứng dụng như Google Authenticator, Aegis hoặc 1Password. Sau khi bật, đăng nhập và các trang Đồng bộ, Cài đặt, Sao lưu sẽ hỏi mã.',
+        'Add a second layer with an app such as Google Authenticator, Aegis or 1Password. Once on, sign-in and the Sync, Settings and Backup pages ask for a code.',
+      )}
+    </p>
   );
 
   if (user?.twoFactorEnabled) {
     return (
-      <div className="stack">
+      <div className="stack" style={{ gap: 16, paddingTop: 10 }}>
         <div className="notice notice-moss">{t('Xác thực 2 lớp đang bật. Đăng nhập và các trang quản trị sẽ hỏi mã.', 'Two-factor is on. Sign-in and admin pages ask for a code.')}</div>
         {!disabling ? (
           <div>
-            <button className="btn btn-danger" onClick={() => setDisabling(true)}>
+            <button className="btn-danger" onClick={() => setDisabling(true)}>
               {t('Tắt xác thực 2 lớp', 'Turn off two-factor')}
             </button>
           </div>
         ) : (
-          <form onSubmit={disable} className="stack">
+          <form onSubmit={disable} className="stack" style={{ gap: 14 }}>
             {codeInput}
-            {error && <p className="error-text">{error}</p>}
+            {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
             <div className="hstack">
-              <button className="btn btn-danger">{t('Xác nhận tắt', 'Confirm turning off')}</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setDisabling(false)}>
+              <button className="btn" style={{ color: 'var(--bad-ink)' }} disabled={code.length !== 6}>
+                {t('Xác nhận tắt', 'Confirm turning off')}
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => (setDisabling(false), setCode(''))}>
                 {t('Hủy', 'Cancel')}
               </button>
             </div>
@@ -142,59 +142,51 @@ function TwoFactor() {
 
   if (!setup)
     return (
-      <div className="stack">
-        <p className="muted" style={{ margin: 0, maxWidth: '60ch' }}>
-          {t(
-            'Thêm một lớp bảo vệ bằng ứng dụng như Google Authenticator, Aegis hoặc 1Password. Sau khi bật, đăng nhập và các trang cài đặt, đồng bộ, sao lưu sẽ hỏi mã.',
-            'Add a second layer with an app such as Google Authenticator, Aegis or 1Password. Once on, sign-in and the settings, sync and backup pages ask for a code.',
-          )}
-        </p>
-        <div>
-          <button className="btn btn-primary" onClick={() => void begin()}>
-            {t('Bật xác thực 2 lớp', 'Turn on two-factor')}
-          </button>
-        </div>
+      <div>
+        {intro}
+        <button className="btn btn-primary btn-lg" onClick={() => void begin()}>
+          {t('Bật xác thực 2 lớp', 'Turn on two-factor')}
+        </button>
       </div>
     );
 
   return (
-    <form onSubmit={enable} className="stack">
-      <div className="hstack" style={{ alignItems: 'flex-start', gap: 24 }}>
-        <img src={setup.qrDataUrl} width={180} height={180} alt={t('Mã QR để quét bằng ứng dụng xác thực', 'QR code to scan with your authenticator app')} style={{ borderRadius: 10, background: '#fff', padding: 6 }} />
-        <div className="stack" style={{ gap: 8, maxWidth: 360 }}>
-          <span>{t('1. Quét mã QR bằng ứng dụng xác thực.', '1. Scan the QR code with your authenticator app.')}</span>
-          <span className="muted" style={{ fontSize: 14 }}>
-            {t('Không quét được? Nhập khóa này thủ công:', 'Cannot scan? Enter this key manually:')}
-          </span>
-          <code className="num" style={{ wordBreak: 'break-all', background: 'var(--sheet-2)', padding: '6px 10px', borderRadius: 8, fontSize: 14 }}>
-            {setup.secret.match(/.{1,4}/g)?.join(' ')}
-          </code>
-          <span>{t('2. Nhập mã 6 số ứng dụng hiển thị.', '2. Enter the 6-digit code it shows.')}</span>
+    <form onSubmit={enable}>
+      {intro}
+      <div className="hstack" style={{ gap: 20, alignItems: 'center' }}>
+        <img className="qr" src={setup.qrDataUrl} alt={t('Mã QR để quét bằng ứng dụng xác thực', 'QR code to scan with your authenticator app')} />
+        <div className="stack" style={{ gap: 12 }}>
+          {codeInput}
+          <div className="hstack" style={{ gap: 8 }}>
+            <button className="btn btn-primary btn-lg" disabled={code.length !== 6}>
+              {t('Bật xác thực 2 lớp', 'Turn on two-factor')}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => (setSetup(null), setCode(''))}>
+              {t('Hủy', 'Cancel')}
+            </button>
+          </div>
         </div>
       </div>
-      {codeInput}
+      <p className="section-sub" style={{ paddingTop: 14, maxWidth: '60ch' }}>
+        {t('Không quét được? Nhập khóa này thủ công:', 'Cannot scan? Enter this key manually:')}{' '}
+        <code className="num" style={{ wordBreak: 'break-all', color: 'var(--ink)' }}>
+          {setup.secret.match(/.{1,4}/g)?.join(' ')}
+        </code>
+      </p>
       {error && <p className="error-text">{error}</p>}
-      <div className="hstack">
-        <button className="btn btn-primary" disabled={code.length !== 6}>
-          {t('Bật xác thực 2 lớp', 'Turn on two-factor')}
-        </button>
-        <button type="button" className="btn btn-ghost" onClick={() => setSetup(null)}>
-          {t('Hủy', 'Cancel')}
-        </button>
-      </div>
     </form>
   );
 }
 
 export function ProfilePage() {
   const { t, lang, setLang } = useI18n();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [theme, setTheme] = useTheme();
   void getSession;
   return (
     <div className="page">
       <header className="page-head">
-        <h1 className="page-title">{t('Hồ sơ & bảo mật', 'Profile & security')}</h1>
+        <h1 className="page-title">{t('Bảo mật & hiển thị', 'Security & display')}</h1>
         {user && (
           <p className="page-lede">
             {t(`Đăng nhập với tên ${user.username}, tạo ngày ${fmtDate(user.createdAt, false)}.`, `Signed in as ${user.username}, created ${fmtDate(user.createdAt, false)}.`)}
@@ -202,48 +194,61 @@ export function ProfilePage() {
         )}
       </header>
 
-      <section>
-        <h2 className="section-title">{t('Xác thực 2 lớp', 'Two-factor authentication')}</h2>
-        <TwoFactor />
-      </section>
+      <div className="cols">
+        <div className="col-main">
+          <section aria-labelledby="h-2fa" className="rule-below" style={{ paddingBottom: 26 }}>
+            <h2 id="h-2fa" className="section-title">
+              {t('Xác thực 2 lớp', 'Two-factor authentication')}
+            </h2>
+            <TwoFactor />
+          </section>
 
-      <section className="section">
-        <h2 className="section-title">{t('Mật khẩu', 'Password')}</h2>
-        <PasswordForm />
-      </section>
+          <section aria-labelledby="h-pw">
+            <h2 id="h-pw" className="section-title" style={{ padding: '24px 0 12px' }}>
+              {t('Mật khẩu', 'Password')}
+            </h2>
+            <PasswordForm />
+          </section>
+        </div>
 
-      <section className="section">
-        <h2 className="section-title">{t('Hiển thị', 'Display')}</h2>
-        <div className="stack">
-          <div className="hstack">
-            <span style={{ minWidth: 100 }}>{t('Ngôn ngữ', 'Language')}</span>
-            <div className="seg">
-              <button className={lang === 'vi-VN' ? 'on' : ''} onClick={() => setLang('vi-VN')}>
-                Tiếng Việt
-              </button>
-              <button className={lang === 'en-US' ? 'on' : ''} onClick={() => setLang('en-US')}>
-                English
-              </button>
-            </div>
-          </div>
-          <div className="hstack">
-            <span style={{ minWidth: 100 }}>{t('Giao diện', 'Theme')}</span>
-            <div className="seg">
+        <section className="col-side" aria-labelledby="h-display" style={{ gap: 4 }}>
+          <h2 id="h-display" className="section-title" style={{ paddingBottom: 6 }}>
+            {t('Hiển thị', 'Display')}
+          </h2>
+          <div className="kv" style={{ alignItems: 'center', padding: '12px 0' }}>
+            <span style={{ color: 'var(--ink)' }}>{t('Giao diện', 'Theme')}</span>
+            <div className="seg" role="group" aria-label={t('Giao diện', 'Theme')}>
               {(
                 [
-                  ['auto', t('Theo máy', 'System')],
+                  ['auto', t('Tự động', 'Auto')],
                   ['light', t('Sáng', 'Light')],
                   ['dark', t('Tối', 'Dark')],
                 ] as const
               ).map(([k, l]) => (
-                <button key={k} className={theme === k ? 'on' : ''} onClick={() => setTheme(k)}>
+                <button key={k} className={theme === k ? 'on' : ''} aria-pressed={theme === k} onClick={() => setTheme(k)}>
                   {l}
                 </button>
               ))}
             </div>
           </div>
-        </div>
-      </section>
+          <div className="kv" style={{ alignItems: 'center', padding: '12px 0' }}>
+            <span style={{ color: 'var(--ink)' }}>{t('Ngôn ngữ', 'Language')}</span>
+            <div className="seg" role="group" aria-label={t('Ngôn ngữ', 'Language')}>
+              <button className={lang === 'vi-VN' ? 'on' : ''} aria-pressed={lang === 'vi-VN'} onClick={() => setLang('vi-VN')}>
+                Tiếng Việt
+              </button>
+              <button className={lang === 'en-US' ? 'on' : ''} aria-pressed={lang === 'en-US'} onClick={() => setLang('en-US')}>
+                English
+              </button>
+            </div>
+          </div>
+          <div style={{ paddingTop: 22 }}>
+            <button className="btn-danger" onClick={() => void logout()}>
+              {t('Đăng xuất', 'Sign out')}
+            </button>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

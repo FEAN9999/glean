@@ -1,29 +1,40 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, ApiErr } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
-import { Mesh } from '../components/ui';
+import { OtpInput } from '../components/ui';
+import { Mark } from '../components/Icons';
 
 function AuthArt() {
   const { t } = useI18n();
-  // a static sieve: a few holes already "caught" something
-  const done = useMemo(() => new Set([3, 4, 11, 17, 18, 19, 26, 34, 41, 42, 50, 57, 58, 65, 73, 74]), []);
   return (
-    <aside className="auth-art" aria-hidden="false">
-      <div className="hstack">
-        <img src="/mark.svg" width={34} height={34} alt="" />
+    <aside className="auth-art">
+      <div className="auth-brand">
+        <Mark size={28} />
+        <span className="wordmark">GLEAN</span>
       </div>
-      <div className="stack" style={{ gap: 28 }}>
-        <h1>glean</h1>
-        <p style={{ margin: 0, maxWidth: '38ch', fontSize: 16 }}>
+      <div className="stack" style={{ maxWidth: 420 }}>
+        <h1>{t('Kho riêng để tìm lại những gì đã trôi qua.', 'A private archive for finding what has scrolled away.')}</h1>
+        <p>
           {t(
-            'Kho riêng của bạn để tìm lại bài viết, bình luận, và lọc ảnh khỏi những chủ đề dài trên diễn đàn.',
-            'Your own archive for finding posts and comments again, and sieving images out of long forum threads.',
+            'Tìm lại bài viết và bình luận, sàng ảnh và video khỏi những chủ đề dài. Bản lưu vẫn còn khi bài gốc bị xóa.',
+            'Find threads and comments again, and sieve images and videos out of long threads. Your copy stays when the original is deleted.',
           )}
         </p>
-        <Mesh total={84} done={done} size="lg" />
       </div>
+      <span className="muted" style={{ fontSize: 13 }}>
+        {t('Dữ liệu nằm trên máy chạy Glean.', 'Your data stays on the machine running Glean.')}
+      </span>
     </aside>
+  );
+}
+
+function FormHead({ title, sub }: { title: string; sub: ReactNode }) {
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <h2 className="page-title">{title}</h2>
+      <span className="muted">{sub}</span>
+    </div>
   );
 }
 
@@ -55,15 +66,11 @@ export function SetupPage() {
     <div className="auth">
       <AuthArt />
       <div className="auth-form">
-        <form onSubmit={submit} className="stack">
-          <div>
-            <h2 className="page-title" style={{ fontSize: 32 }}>
-              {t('Tạo tài khoản', 'Create your account')}
-            </h2>
-            <p className="page-lede">
-              {t('Glean chỉ có một tài khoản: của bạn. Bước này chỉ làm một lần.', 'Glean has exactly one account: yours. You only do this once.')}
-            </p>
-          </div>
+        <form onSubmit={submit}>
+          <FormHead
+            title={t('Tạo tài khoản', 'Create your account')}
+            sub={t('Glean chỉ có một tài khoản: của bạn. Bước này chỉ làm một lần.', 'Glean has exactly one account: yours. You only do this once.')}
+          />
           <label className="field">
             <span>{t('Tên đăng nhập', 'Username')}</span>
             <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required autoFocus />
@@ -77,8 +84,8 @@ export function SetupPage() {
             <span>{t('Nhập lại mật khẩu', 'Repeat password')}</span>
             <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
           </label>
-          {error && <p className="error-text">{error}</p>}
-          <button className="btn btn-primary" disabled={busy}>
+          {error && <p className="error-text" role="alert" style={{ margin: 0 }}>{error}</p>}
+          <button className="btn btn-primary btn-xl" disabled={busy}>
             {busy ? t('Đang tạo…', 'Creating…') : t('Tạo tài khoản', 'Create account')}
           </button>
         </form>
@@ -126,17 +133,15 @@ export function LoginPage() {
     <div className="auth">
       <AuthArt />
       <div className="auth-form">
-        <form onSubmit={submit} className="stack">
-          <div>
-            <h2 className="page-title" style={{ fontSize: 32 }}>
-              {challenge ? t('Mã xác thực', 'Authentication code') : t('Đăng nhập', 'Sign in')}
-            </h2>
-            <p className="page-lede">
-              {challenge
+        <form onSubmit={submit}>
+          <FormHead
+            title={challenge ? t('Mã xác thực', 'Authentication code') : t('Đăng nhập', 'Sign in')}
+            sub={
+              challenge
                 ? t('Mở ứng dụng xác thực và nhập mã 6 số đang hiển thị.', 'Open your authenticator app and enter the 6-digit code.')
-                : t('Đăng nhập để mở kho của bạn.', 'Sign in to open your archive.')}
-            </p>
-          </div>
+                : t('Đăng nhập để mở kho của bạn.', 'Sign in to open your archive.')
+            }
+          />
           {!challenge ? (
             <>
               <label className="field">
@@ -149,29 +154,23 @@ export function LoginPage() {
               </label>
             </>
           ) : (
-            <label className="field">
+            <div className="field">
               <span>{t('Mã 6 số', '6-digit code')}</span>
-              <input
-                className="input num"
-                style={{ fontSize: 22, letterSpacing: '0.3em', height: 52 }}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                required
-                autoFocus
-              />
-            </label>
+              <OtpInput value={code} onChange={setCode} label={t('Mã 6 số', '6-digit code')} autoFocus />
+            </div>
           )}
-          {error && <p className="error-text">{error}</p>}
-          <button className="btn btn-primary" disabled={busy}>
+          {error && <p className="error-text" role="alert" style={{ margin: 0 }}>{error}</p>}
+          <button className="btn btn-primary btn-xl" disabled={busy || (!!challenge && code.length !== 6)}>
             {busy ? t('Đang kiểm tra…', 'Checking…') : challenge ? t('Xác nhận', 'Verify') : t('Đăng nhập', 'Sign in')}
           </button>
-          {challenge && (
-            <button type="button" className="link-btn" onClick={() => (setChallenge(null), setCode(''))}>
+          {challenge ? (
+            <button type="button" className="link-btn" style={{ fontSize: 13 }} onClick={() => (setChallenge(null), setCode(''))}>
               {t('Quay lại đăng nhập', 'Back to sign in')}
             </button>
+          ) : (
+            <span className="muted" style={{ fontSize: 13 }}>
+              {t('Nếu đã bật xác thực 2 lớp, bước sau sẽ hỏi mã 6 số.', 'If two-factor is on, the next step asks for a 6-digit code.')}
+            </span>
           )}
         </form>
       </div>

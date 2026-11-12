@@ -4,8 +4,8 @@ import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Empty, ExternalLink, Mesh, Pager, Spinner, useConfirm, useUi } from '../components/ui';
-import { ScrapeStatus, useStatusLabel, type Scrape } from '../components/Scrape';
+import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, useConfirm, useUi } from '../components/ui';
+import { ScrapeStatus, scrapeTitle, useStatusLabel, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 
 interface Img {
@@ -122,60 +122,119 @@ function Lightbox({ items, index, onClose, onIndex }: { items: Img[]; index: num
   );
 }
 
-function ImageTile({ img, onOpen }: { img: Img; onOpen: () => void }) {
+const pageLabel = (t: (vi: string, en: string) => string, page: number, postNo: number | null) =>
+  t(`Trang ${page}${postNo ? ` · bình luận #${postNo}` : ''}`, `Page ${page}${postNo ? ` · post #${postNo}` : ''}`);
+
+const isViewable = (i: Img) => !!(i.currentUrl || (i.displayByOriginUrl && !i.isBin));
+
+function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onOpen: () => void }) {
   const { t } = useI18n();
   const [broken, setBroken] = useState(false);
   const pending = !img.currentUrl && !img.isBin && !img.isDownloadFailed && !img.displayByOriginUrl;
   if (pending) {
     return (
-      <div className="tile" style={{ cursor: 'default' }}>
-        <div className="tile-broken" style={{ borderStyle: 'solid' }}>
-          {t('Đang chờ tải về', 'Waiting to download')}
-        </div>
-        <span className="tile-cap">{t(`Trang ${img.page}`, `Page ${img.page}`)}</span>
+      <div className="tile" style={{ cursor: 'default' }} title={pageLabel(t, img.page, img.postNo)}>
+        <div className="tile-broken waiting">{t('Đang chờ tải về', 'Waiting to download')}</div>
       </div>
     );
   }
   const src = img.currentUrl ?? (img.displayByOriginUrl && !img.isBin ? img.originUrl : null);
   if (!src || broken) {
     return (
-      <div className="tile" style={{ cursor: 'default' }}>
+      <div className="tile" style={{ cursor: 'default' }} title={pageLabel(t, img.page, img.postNo)}>
         <div className="tile-broken">
-          <div className="stack" style={{ gap: 6, alignItems: 'center' }}>
+          <div className="stack" style={{ gap: 4, alignItems: 'center' }}>
             <span>{img.isBin ? t('Không phải ảnh', 'Not an image') : t('Không tải được', 'Could not download')}</span>
-            <ExternalLink href={img.originUrl} className="link-btn" style={{ fontSize: 12.5 }}>
+            <ExternalLink href={img.originUrl} className="link-btn" style={{ fontSize: 12 }}>
               {t('Mở link gốc', 'Open source link')}
             </ExternalLink>
           </div>
         </div>
-        <span className="tile-cap">{t(`Trang ${img.page}`, `Page ${img.page}`)}</span>
       </div>
     );
   }
   return (
-    <button className="tile" onClick={onOpen} aria-label={t(`Phóng to ảnh ở trang ${img.page}`, `Enlarge image on page ${img.page}`)}>
+    <button
+      className={`tile ${selected ? 'on' : ''}`}
+      onClick={onOpen}
+      title={pageLabel(t, img.page, img.postNo)}
+      aria-label={t(`Phóng to ảnh ở trang ${img.page}`, `Enlarge image on page ${img.page}`)}
+      aria-pressed={selected}
+    >
       <img src={src} loading="lazy" alt="" onError={() => setBroken(true)} />
-      <span className="tile-cap">{t(`Trang ${img.page}`, `Page ${img.page}`)}</span>
     </button>
   );
 }
 
-function ImagesTab({ id }: { id: number }) {
+interface Picked {
+  img: Img;
+  list: Img[];
+}
+
+function ImagesTab({ id, selectedId, onPick }: { id: number; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
   const { t } = useI18n();
   const { data, page, setPage } = usePaged<Img>(`/scrapes/${id}/images`, 48);
-  const [open, setOpen] = useState<number | null>(null);
   if (!data) return <Spinner label={t('Đang tải ảnh', 'Loading images')} />;
   if (!data.total) return <Empty title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</Empty>;
-  const viewable = data.items.filter((i) => i.currentUrl || (i.displayByOriginUrl && !i.isBin));
+  const viewable = data.items.filter(isViewable);
   return (
     <>
       <div className="gallery">
         {data.items.map((img) => (
-          <ImageTile key={img.id} img={img} onOpen={() => setOpen(viewable.findIndex((v) => v.id === img.id))} />
+          <ImageTile key={img.id} img={img} selected={img.id === selectedId} onOpen={() => onPick({ img, list: viewable }, true)} />
         ))}
       </div>
       <Pager page={page} total={data.total} size={48} onPage={setPage} />
-      {open != null && open >= 0 && <Lightbox items={viewable} index={open} onIndex={setOpen} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
+/** Facts about the image last opened, with zoom and source actions. */
+function PickedImage({ picked, onZoom }: { picked: Picked | null; onZoom: () => void }) {
+  const { t } = useI18n();
+  if (!picked)
+    return (
+      <p className="section-sub" style={{ paddingTop: 2 }}>
+        {t('Bấm một ảnh để phóng to; vị trí và nguồn của ảnh hiện ở đây.', 'Click an image to enlarge it; its position and source show here.')}
+      </p>
+    );
+  const { img } = picked;
+  let host = img.originUrl;
+  try {
+    host = new URL(img.originUrl).host;
+  } catch {
+    /* keep raw */
+  }
+  return (
+    <>
+      <div className="kv">
+        <span>{t('Vị trí', 'Position')}</span>
+        <span>{pageLabel(t, img.page, img.postNo)}</span>
+      </div>
+      <div className="kv">
+        <span>{t('Nguồn', 'Source')}</span>
+        <span>{host}</span>
+      </div>
+      <div className="kv">
+        <span>{t('Bản lưu', 'Copy')}</span>
+        <span>
+          {img.currentUrl
+            ? t('Đã tải về máy', 'Downloaded')
+            : img.isBin
+              ? t('Không phải ảnh', 'Not an image')
+              : img.isDownloadFailed
+                ? t('Không tải được', 'Download failed')
+                : t('Dùng link gốc', 'Uses the original link')}
+        </span>
+      </div>
+      <div className="hstack" style={{ paddingTop: 14, gap: 10, flexWrap: 'nowrap' }}>
+        <button className="btn btn-primary" style={{ flex: 1, height: 36 }} onClick={onZoom} disabled={!isViewable(img)}>
+          {t('Phóng to', 'Enlarge')}
+        </button>
+        <ExternalLink href={img.originUrl} className="btn" style={{ flex: 1, height: 36 }}>
+          {t('Mở ảnh gốc', 'Open original')}
+        </ExternalLink>
+      </div>
     </>
   );
 }
@@ -281,7 +340,7 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
             {data.items.map((c) => (
               <li key={c.id} className="row">
                 <div className="row-meta">
-                  <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{c.author}</strong>
+                  <strong style={{ color: 'var(--ink)', fontWeight: 400 }}>{c.author}</strong>
                   {c.createdAt && <span>{fmtDate(c.createdAt)}</span>}
                   <span>
                     {t(`Ở trang ${c.page}`, `On page ${c.page}`)}
@@ -356,22 +415,37 @@ export function SieveDetailPage() {
     setDl(null);
   });
 
+
+  const [picked, setPicked] = useState<Picked | null>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
+  useEffect(() => {
+    setPicked(null);
+    setZoom(null);
+  }, [id, version]);
+
   if (notFound)
     return (
       <div className="page">
         <Empty title={t('Không tìm thấy lượt sàng này', 'Sieve job not found')}>
           <Link to="/sang" className="link-btn">
-            {t('Về danh sách lượt sàng', 'Back to sieve jobs')}
+            {t('Về Kho', 'Back to the archive')}
           </Link>
         </Empty>
       </div>
     );
-  if (!s) return <div className="page"><Spinner label={t('Đang tải', 'Loading')} /></div>;
+  if (!s)
+    return (
+      <div className="page">
+        <Spinner label={t('Đang tải', 'Loading')} />
+      </div>
+    );
 
   const processing = s.status === ScrapeStatus.Processing;
   const finished = s.status === ScrapeStatus.Completed || s.status === ScrapeStatus.Failed;
   const nextPages = new Set<number>();
   if (processing) for (let p = 1; p <= s.totalPages && nextPages.size < 3; p++) if (!done.has(p)) nextPages.add(p);
+  const pagesDone = finished && !s.isThreadDeleted ? s.totalPages : Math.min(done.size, s.totalPages);
+  const failed = s.failedImages ?? 0;
 
   const retry = async () => {
     await api.post(`/scrapes/${id}/retry`);
@@ -383,7 +457,7 @@ export function SieveDetailPage() {
     const yes = await ask(
       t('Xóa lượt sàng này?', 'Delete this sieve job?'),
       t('Ảnh đã tải về của lượt này sẽ bị xóa khỏi máy. Bình luận đã đồng bộ vẫn giữ trong kho.', 'Downloaded images of this job are removed from disk. Synced comments stay in the archive.'),
-      t('Xóa lượt sàng', 'Delete job'),
+      t('Xóa khỏi kho', 'Remove from archive'),
       true,
     );
     if (!yes) return;
@@ -399,128 +473,169 @@ export function SieveDetailPage() {
     { key: 'comments', label: t('Bình luận', 'Comments'), count: s.totalComments },
     { key: 'synced-comments', label: t('Bình luận lưu trữ', 'Archived comments'), count: s.syncedCommentCount },
   ];
+  const zoomIndex = picked ? picked.list.findIndex((v) => v.id === picked.img.id) : -1;
 
   return (
-    <div className="page">
-      <Link to="/sang" className="link-btn muted" style={{ fontSize: 14 }}>
-        {t('Tất cả lượt sàng', 'All sieve jobs')}
-      </Link>
-      <header className="page-head" style={{ marginTop: 12 }}>
-        <h1 className="page-title" style={{ fontSize: 'clamp(26px, 3.4vw, 38px)' }}>
-          {s.threadTitle ?? t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}
-        </h1>
-        <div className="row-meta" style={{ fontSize: 14 }}>
-          <span className={`tag ${processing ? 'tag-straw' : s.status === ScrapeStatus.Failed ? 'tag-rust' : s.status === ScrapeStatus.Completed ? 'tag-moss' : ''}`}>{label(s.status)}</span>
-          <span>{t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}</span>
-          <ExternalLink href={s.threadUrl} className="link-btn" style={{ fontSize: 14 }}>
-            {t('Mở bài gốc', 'Open thread')}
-          </ExternalLink>
-          <span>
-            {t('Tạo', 'Created')} {fmtDate(s.createdAt)}
-          </span>
-        </div>
-      </header>
-
-      <ProxyNotice />
-
-      {s.isThreadDeleted && (
-        <div className="notice notice-rust" style={{ marginBottom: 20 }}>
-          <strong>{t('Đã bị xóa trên diễn đàn.', 'Deleted on the forum.')}</strong>
-          <span>{t('Bạn đang xem bản lưu trữ: ảnh đã tải và bình luận đã đồng bộ trước đó.', 'You are viewing the archived copy: previously downloaded images and synced comments.')}</span>
-        </div>
-      )}
-      {s.error && (
-        <div className="notice notice-rust" style={{ marginBottom: 20 }}>
-          {s.error}
-        </div>
-      )}
-
-      {s.status === ScrapeStatus.Waiting && (
-        <div className="notice notice-straw" style={{ marginBottom: 20 }}>
-          {rank?.rank
-            ? t(`Số thứ tự: ${rank.rank} / đang chờ: ${rank.waiting}`, `Position ${rank.rank} of ${rank.waiting} queued`)
-            : t('Đang chờ đến lượt.', 'Waiting for its turn.')}
-        </div>
-      )}
-
-      {s.totalPages > 0 && (
-        <section aria-label={t('Tiến độ theo trang', 'Progress by page')} style={{ marginBottom: 28 }}>
-          <Mesh
-            total={s.totalPages}
-            done={finished && !s.isThreadDeleted ? s.totalPages : done}
-            current={nextPages}
-            size="lg"
-            label={t(`${done.size} trên ${s.totalPages} trang đã quét`, `${done.size} of ${s.totalPages} pages scanned`)}
-          />
-          <p className="muted" style={{ fontSize: 14, margin: '12px 0 0' }}>
-            {processing && !dl
-              ? t(`Scan bài ${s.currentPage}/${s.totalPages}`, `Scanning page ${s.currentPage} of ${s.totalPages}`)
-              : processing && dl
-                ? t(`Download ảnh ${fmtNum(dl.downloaded)}/${fmtNum(dl.total)}`, `Downloading image ${fmtNum(dl.downloaded)} of ${fmtNum(dl.total)}`)
-                : t(`Mỗi chấm là một trang của chủ đề, ${fmtNum(s.totalPages)} trang.`, `Each dot is one page of the thread, ${fmtNum(s.totalPages)} pages.`)}
-          </p>
-          {processing && dl && (
-            <div className="bar" style={{ marginTop: 8, maxWidth: 520 }}>
-              <span style={{ width: `${(100 * dl.downloaded) / Math.max(1, dl.total)}%` }} />
-            </div>
-          )}
-        </section>
-      )}
-
-      <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 32 }}>
-        <div className="figures">
-          <div className="figure">
-            <span className="num">{fmtNum(s.totalImages)}</span>
-            <span>{t('ảnh', 'images')}{s.failedImages ? t(`, ${s.failedImages} lỗi`, `, ${s.failedImages} failed`) : ''}</span>
-          </div>
-          <div className="figure">
-            <span className="num">{fmtNum(s.totalVideos)}</span>
-            <span>video</span>
-          </div>
-          <div className="figure">
-            <span className="num">{fmtNum(s.totalComments)}</span>
-            <span>{t('bình luận', 'comments')}</span>
-          </div>
-          <div className="figure">
-            <span className="num">{fmtDuration(s.handlingSeconds)}</span>
-            <span>{t('thời gian xử lý', 'processing time')}</span>
-          </div>
-        </div>
-        <div className="hstack">
-          <button className="btn btn-sm" onClick={() => (load(), setVersion((v) => v + 1))}>
+    <div className="page cols">
+      <div className="col-main">
+        <nav className="crumbs" aria-label={t('Vị trí', 'Breadcrumb')}>
+          <Link to="/sang">{t('Kho', 'Archive')}</Link> › {t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}
+        </nav>
+        <div className="hstack" style={{ gap: '10px 12px', padding: '4px 0 2px' }}>
+          <h1 className="page-title" style={{ flex: 1, minWidth: 240 }}>
+            {scrapeTitle(s, t)}
+          </h1>
+          <button className="btn btn-ghost" onClick={() => (load(), setVersion((v) => v + 1))}>
             {t('Làm mới', 'Refresh')}
           </button>
           {finished && (
-            <button className="btn btn-sm" onClick={() => void retry()}>
+            <button className="btn" onClick={() => void retry()}>
               {t('Sàng lại', 'Sieve again')}
             </button>
           )}
-          <button className="btn btn-sm btn-danger" onClick={() => void remove()}>
-            {t('Xóa', 'Delete')}
-          </button>
+          <ExternalLink href={s.threadUrl} className="btn">
+            {t('Mở bài gốc', 'Open thread')}
+          </ExternalLink>
+        </div>
+        <p className="row-meta" style={{ margin: 0, paddingBottom: 14, fontSize: 14 }}>
+          <span style={processing ? { color: 'var(--acc-ink)' } : s.status === ScrapeStatus.Failed ? { color: 'var(--bad-ink)' } : undefined}>{label(s.status)}</span>
+          {s.totalPages > 0 && <span>{t(`${fmtNum(s.totalPages)} trang`, `${fmtNum(s.totalPages)} pages`)}</span>}
+          <span>{s.finishedAt ? t(`sàng lúc ${fmtDate(s.finishedAt)}`, `sieved ${fmtDate(s.finishedAt)}`) : t(`thêm lúc ${fmtDate(s.createdAt)}`, `added ${fmtDate(s.createdAt)}`)}</span>
+        </p>
+
+        <ProxyNotice />
+        {s.isThreadDeleted && (
+          <div className="notice notice-rust" style={{ marginBottom: 20 }}>
+            <strong>{t('Đã bị xóa trên diễn đàn.', 'Deleted on the forum.')}</strong>
+            <span>{t('Bạn đang xem bản lưu trữ: ảnh đã tải và bình luận đã đồng bộ trước đó.', 'You are viewing the archived copy: previously downloaded images and synced comments.')}</span>
+          </div>
+        )}
+        {s.error && (
+          <div className="notice notice-rust" style={{ marginBottom: 20 }}>
+            {s.error}
+          </div>
+        )}
+        {s.status === ScrapeStatus.Waiting && (
+          <div className="notice notice-straw" style={{ marginBottom: 20 }}>
+            {rank?.rank
+              ? t(`Số thứ tự: ${rank.rank} / đang chờ: ${rank.waiting}`, `Position ${rank.rank} of ${rank.waiting} queued`)
+              : t('Đang chờ đến lượt.', 'Waiting for its turn.')}
+          </div>
+        )}
+
+        {processing && s.totalPages > 0 && (
+          <section aria-label={t('Tiến độ theo trang', 'Progress by page')} className="stack" style={{ gap: 8, paddingBottom: 20, maxWidth: 560 }}>
+            <Mesh total={s.totalPages} done={done} current={nextPages} label={t(`${done.size} trên ${s.totalPages} trang đã quét`, `${done.size} of ${s.totalPages} pages scanned`)} />
+            {dl ? (
+              <div className="progress">
+                <div>
+                  <span>{t('Tải ảnh', 'Downloading images')}</span>
+                  <span className="muted num">
+                    {fmtNum(dl.downloaded)} / {fmtNum(dl.total)}
+                  </span>
+                </div>
+                <div className="bar">
+                  <span style={{ width: `${(100 * dl.downloaded) / Math.max(1, dl.total)}%` }} />
+                </div>
+              </div>
+            ) : (
+              <span className="muted" style={{ fontSize: 13 }}>
+                {t(`Quét trang ${s.currentPage}/${s.totalPages}`, `Scanning page ${s.currentPage} of ${s.totalPages}`)}
+              </span>
+            )}
+          </section>
+        )}
+
+        <div className="tabs" id="tabs" role="tablist" style={{ marginBottom: 20 }}>
+          {tabs.map((x) => (
+            <button key={x.key} role="tab" aria-selected={tab === x.key} className={tab === x.key ? 'on' : ''} onClick={() => setTab(x.key)}>
+              {x.label}
+              {x.count != null && <span className="count">{fmtNum(x.count)}</span>}
+            </button>
+          ))}
+        </div>
+        <div key={`${tab}-${version}`}>
+          {tab === 'images' && (
+            <ImagesTab
+              id={id}
+              selectedId={picked?.img.id ?? null}
+              onPick={(p, open) => {
+                setPicked(p);
+                if (open) setZoom(p.list.findIndex((v) => v.id === p.img.id));
+              }}
+            />
+          )}
+          {tab === 'videos' && <VideosTab id={id} />}
+          {tab === 'links' && <LinksTab id={id} />}
+          {tab === 'comments' && <CommentsTab id={id} />}
+          {tab === 'synced-comments' && <CommentsTab id={id} synced />}
         </div>
       </div>
-      {s.expiresAt && (
-        <p className="muted" style={{ fontSize: 13.5, marginTop: -16 }}>
-          {t(`Dữ liệu sẽ bị xóa lúc ${fmtDate(s.expiresAt)}.`, `Data will be deleted at ${fmtDate(s.expiresAt)}.`)}
-        </p>
-      )}
 
-      <div className="tabs" id="tabs" role="tablist">
-        {tabs.map((x) => (
-          <button key={x.key} role="tab" aria-selected={tab === x.key} className={tab === x.key ? 'on' : ''} onClick={() => setTab(x.key)}>
-            {x.label}
-            {x.count != null && <span className="count">{fmtNum(x.count)}</span>}
+      <aside className="col-side" aria-label={t('Lượt sàng', 'Sieve job')}>
+        <h2 className="section-title">{t('Lượt sàng', 'Sieve job')}</h2>
+        <p className="section-sub">
+          {finished
+            ? s.status === ScrapeStatus.Failed
+              ? t('Thất bại', 'Failed')
+              : t(`Xong trong ${fmtDuration(s.handlingSeconds)}`, `Finished in ${fmtDuration(s.handlingSeconds)}`)
+            : processing
+              ? t('Đang sàng…', 'Sieving…')
+              : t('Đang chờ đến lượt', 'Waiting for its turn')}
+        </p>
+        <div className="hstack" style={{ gap: 20, padding: '16px 0 20px', borderBottom: '1px solid var(--line)', flexWrap: 'nowrap' }}>
+          <Donut
+            size="sm"
+            total={s.totalPages || 1}
+            done={pagesDone}
+            current={processing ? nextPages.size : 0}
+            label={t(`${pagesDone} trên ${s.totalPages} trang đã quét`, `${pagesDone} of ${s.totalPages} pages scanned`)}
+          >
+            {s.totalPages ? `${pagesDone}/${s.totalPages}` : '—'}
+          </Donut>
+          <div className="stack" style={{ gap: 4, fontSize: 13 }}>
+            <Status tone="ok">{t(`${fmtNum(Math.max(0, s.totalImages - failed))} ảnh đã lưu`, `${fmtNum(Math.max(0, s.totalImages - failed))} images kept`)}</Status>
+            {failed > 0 && <Status tone="bad">{t(`${fmtNum(failed)} ảnh không tải được`, `${fmtNum(failed)} images failed`)}</Status>}
+            {finished && (
+              <span className="muted" style={{ paddingLeft: 17 }}>
+                {s.isThreadDeleted ? t('Bài gốc đã bị xóa trên diễn đàn', 'The thread was deleted on the forum') : t('Bài gốc còn trên diễn đàn', 'The thread is still on the forum')}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {tab === 'images' && (
+          <>
+            <h2 className="section-title" style={{ padding: '20px 0 4px' }}>
+              {t('Ảnh đang chọn', 'Selected image')}
+            </h2>
+            <PickedImage picked={picked} onZoom={() => zoomIndex >= 0 && setZoom(zoomIndex)} />
+          </>
+        )}
+
+        {s.expiresAt && (
+          <p className="section-sub" style={{ paddingTop: 18 }}>
+            {t(`Dữ liệu sẽ tự xóa lúc ${fmtDate(s.expiresAt)}.`, `Data will be deleted at ${fmtDate(s.expiresAt)}.`)}
+          </p>
+        )}
+        <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <button className="btn-danger" onClick={() => void remove()}>
+            {t('Xóa khỏi kho', 'Remove from archive')}
           </button>
-        ))}
-      </div>
-      <div key={`${tab}-${version}`}>
-        {tab === 'images' && <ImagesTab id={id} />}
-        {tab === 'videos' && <VideosTab id={id} />}
-        {tab === 'links' && <LinksTab id={id} />}
-        {tab === 'comments' && <CommentsTab id={id} />}
-        {tab === 'synced-comments' && <CommentsTab id={id} synced />}
-      </div>
+        </div>
+      </aside>
+
+      {picked && zoom != null && zoom >= 0 && (
+        <Lightbox
+          items={picked.list}
+          index={zoom}
+          onIndex={(i) => {
+            setZoom(i);
+            setPicked({ img: picked.list[i], list: picked.list });
+          }}
+          onClose={() => setZoom(null)}
+        />
+      )}
       {node}
     </div>
   );

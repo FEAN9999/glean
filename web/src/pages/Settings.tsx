@@ -3,7 +3,7 @@ import { api, ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { fmtBytes } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
-import { useUi } from '../components/ui';
+import { Switch, useUi } from '../components/ui';
 
 type Cfg = any;
 
@@ -92,7 +92,7 @@ function ForumPicker({
       </div>
       {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
       {nodes && (
-        <div className="panel" style={{ padding: 16 }}>
+        <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 16 }}>
           <div className="hstack" style={{ marginBottom: 12 }}>
             <button type="button" className="link-btn" style={{ fontSize: 13.5 }} onClick={() => setPicked(new Set(nodes.map((n) => n.id)))}>
               {t('Chọn tất cả', 'Select all')}
@@ -167,6 +167,13 @@ function Inner() {
     api.get('/systems/environment', { quiet: true }).then((r) => setEnv(r.data)).catch(() => {});
   }, []);
 
+  // Deep links such as /cai-dat#sync: scroll once the form exists.
+  const ready = !!cfg;
+  useEffect(() => {
+    if (!ready || !location.hash) return;
+    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+  }, [ready]);
+
   if (!cfg) return null;
   const dirty = JSON.stringify(cfg) !== saved;
   const set = (p: string, v: unknown) => setCfg((c: Cfg) => setPath(c, p, v));
@@ -185,12 +192,7 @@ function Inner() {
       {hint && <small>{hint}</small>}
     </label>
   );
-  const Bool = ({ p, label }: { p: string; label: string }) => (
-    <label className="check">
-      <input type="checkbox" checked={!!getPath(cfg, p)} onChange={(e) => set(p, e.target.checked)} />
-      {label}
-    </label>
-  );
+  const Bool = ({ p, label }: { p: string; label: string }) => <Switch key={p} label={label} checked={!!getPath(cfg, p)} onChange={(v) => set(p, v)} />;
   const Lines = ({ p, label, hint, placeholder }: { p: string; label: string; hint?: string; placeholder?: string }) => (
     <label className="field">
       <span>{label}</span>
@@ -258,7 +260,7 @@ function Inner() {
   ];
 
   return (
-    <div className="page" style={{ maxWidth: 1120 }}>
+    <div className="page">
       <header className="page-head">
         <h1 className="page-title">{t('Cài đặt', 'Settings')}</h1>
         <p className="page-lede">{t('Mọi thay đổi được lưu vào cơ sở dữ liệu và áp dụng ngay, không cần khởi động lại.', 'Every change is stored in the database and applied at once, no restart needed.')}</p>
@@ -271,7 +273,7 @@ function Inner() {
             </a>
           ))}
         </nav>
-        <div>
+        <div className="settings-body">
           <Section id="src" title={t('Nguồn dữ liệu', 'Source')} desc={t('Diễn đàn kiểu XenForo mà Glean đọc. Mặc định là diễn đàn mẫu chạy sẵn trong máy để thử.', 'The XenForo-style forum Glean reads. By default this is the built-in sample forum.')}>
             {Text({ p: 'source.baseUrl', label: t('Địa chỉ diễn đàn', 'Forum address'), hint: t('Khi đổi tên miền, địa chỉ cũ được ghi nhớ để cảnh báo link cũ.', 'When the domain changes, the old one is remembered to flag old links.') })}
             {Lines({ p: 'source.previousBaseUrls', label: t('Tên miền cũ', 'Previous domains'), hint: t('Mỗi dòng một địa chỉ.', 'One address per line.') })}
@@ -497,7 +499,7 @@ function Inner() {
           </fieldset>
 
           <div className="savebar">
-            <button className="btn btn-primary" disabled={!dirty || busy} onClick={() => void save()}>
+            <button className="btn btn-primary btn-lg" disabled={!dirty || busy} onClick={() => void save()}>
               {busy ? t('Đang lưu…', 'Saving…') : t('Lưu cài đặt', 'Save settings')}
             </button>
             {dirty && (

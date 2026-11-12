@@ -80,94 +80,92 @@ function Inner() {
         <h1 className="page-title">{t('Sao lưu', 'Backup')}</h1>
         <p className="page-lede">
           {t(
-            'Chép toàn bộ kho, hoặc từng bảng, sang một tệp cơ sở dữ liệu khác để cất giữ hay chuyển sang máy mới. Ảnh nằm trong thư mục lưu trữ, cần chép riêng.',
-            'Copy the whole archive, or single tables, into another database file to keep or move to a new machine. Images live in the storage folder and need copying separately.',
+            'Chép kho sang một tệp cơ sở dữ liệu khác. Ảnh nằm trong thư mục lưu trữ, cần chép riêng.',
+            'Copy the archive into another database file. Images live in the storage folder and need copying separately.',
           )}
         </p>
       </header>
 
-      <div className="stack" style={{ maxWidth: 560 }}>
-        <label className="field">
-          <span>{t('Tệp đích', 'Target file')}</span>
-          <input className="input" value={target} onChange={(e) => setTarget(e.target.value)} />
-          <small>{data ? t(`Lưu trong ${data.backupDir}`, `Saved in ${data.backupDir}`) : ''}</small>
-        </label>
-        <div className="hstack">
-          <button className="btn btn-primary" onClick={() => void full()} disabled={!!busy}>
-            {busy === 'full' ? t('Đang sao lưu…', 'Backing up…') : t('Sao lưu toàn bộ', 'Back up everything')}
-          </button>
+      <div className="cols">
+        <div className="col-main">
+          <h2 className="section-title" style={{ paddingBottom: 10 }}>
+            {t('Sao lưu toàn bộ', 'Full backup')}
+          </h2>
+          <div className="rule-below stack" style={{ gap: 6, paddingBottom: 26 }}>
+            <div className="hstack" style={{ gap: 10, alignItems: 'flex-end' }}>
+              <label className="field" style={{ flex: 1, minWidth: 220, maxWidth: 420 }}>
+                <span>{t('Tệp đích', 'Target file')}</span>
+                <input className="input" value={target} onChange={(e) => setTarget(e.target.value)} />
+              </label>
+              <button className="btn btn-primary btn-lg" onClick={() => void full()} disabled={!!busy || !target.trim()}>
+                {busy === 'full' ? t('Đang sao lưu…', 'Backing up…') : t('Sao lưu toàn bộ', 'Back up everything')}
+              </button>
+            </div>
+            {data && (
+              <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
+                {t(`Lưu trong ${data.backupDir}`, `Saved in ${data.backupDir}`)}
+              </small>
+            )}
+            {error && (
+              <p className="error-text" role="alert" style={{ margin: 0 }}>
+                {error}
+              </p>
+            )}
+          </div>
+
+          <div className="section-head" style={{ alignItems: 'center', padding: '24px 0 4px' }}>
+            <h2 className="section-title">{t('Chép từng bảng', 'Copy single tables')}</h2>
+            <button className="btn" disabled={!picked.length || !!busy || !target.trim()} onClick={() => void cloneSelected()}>
+              {busy === 'tables'
+                ? t('Đang chép…', 'Copying…')
+                : picked.length
+                  ? t(`Chép ${picked.length} bảng đã chọn`, `Copy ${picked.length} selected tables`)
+                  : t('Chép bảng đã chọn', 'Copy selected tables')}
+            </button>
+          </div>
+          {data?.tables.map((tb) => (
+            <label key={tb.name} className="table-row">
+              <input
+                type="checkbox"
+                className="cb"
+                checked={picked.includes(tb.name)}
+                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, tb.name] : p.filter((x) => x !== tb.name)))}
+              />
+              <span style={{ fontWeight: 400 }}>{t(...(TABLE_LABEL[tb.name] ?? [tb.name, tb.name]))}</span>
+              <span className="muted" style={{ fontSize: 13 }}>
+                {tb.name}
+              </span>
+              <span className="r num">{fmtNum(tb.rows)}</span>
+            </label>
+          ))}
+          {log.length > 0 && (
+            <div className="log" style={{ marginTop: 16 }} role="log">
+              {log.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </div>
+          )}
         </div>
-        {error && <p className="error-text">{error}</p>}
+
+        <aside className="col-side" style={{ gap: 4 }}>
+          <h2 className="section-title" style={{ paddingBottom: 2 }}>
+            {t('Các tệp sao lưu', 'Backup files')}
+          </h2>
+          {data && !data.backups.length && <p className="section-sub">{t('Chưa có tệp sao lưu nào.', 'No backup files yet.')}</p>}
+          {data?.backups.map((b) => (
+            <div key={b.name} className="line" style={{ padding: '10px 0' }}>
+              <span className="line-text">
+                <span className="line-title ellipsis">{b.name}</span>
+                <span className="line-sub">{fmtDate(b.modifiedAt)}</span>
+              </span>
+              <span className="line-value">{fmtBytes(b.sizeBytes)}</span>
+            </div>
+          ))}
+        </aside>
       </div>
-
-      <section className="section">
-        <h2 className="section-title">{t('Chép từng bảng', 'Copy single tables')}</h2>
-        {data && (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}>
-                    <span className="sr-only">{t('Chọn', 'Select')}</span>
-                  </th>
-                  <th>{t('Dữ liệu', 'Data')}</th>
-                  <th>{t('Bảng', 'Table')}</th>
-                  <th className="r">{t('Số dòng', 'Rows')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.tables.map((tb) => (
-                  <tr key={tb.name}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        aria-label={tb.name}
-                        checked={picked.includes(tb.name)}
-                        onChange={(e) => setPicked((p) => (e.target.checked ? [...p, tb.name] : p.filter((x) => x !== tb.name)))}
-                      />
-                    </td>
-                    <td>{t(...(TABLE_LABEL[tb.name] ?? [tb.name, tb.name]))}</td>
-                    <td className="muted">{tb.name}</td>
-                    <td className="r num">{fmtNum(tb.rows)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <button className="btn" style={{ marginTop: 16 }} disabled={!picked.length || !!busy} onClick={() => void cloneSelected()}>
-          {busy === 'tables' ? t('Đang chép…', 'Copying…') : t(`Chép ${picked.length || ''} bảng đã chọn`, `Copy ${picked.length || ''} selected tables`)}
-        </button>
-        {log.length > 0 && (
-          <div className="log" style={{ marginTop: 16 }} role="log">
-            {log.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {data && data.backups.length > 0 && (
-        <section className="section">
-          <h2 className="section-title">{t('Các tệp sao lưu', 'Backup files')}</h2>
-          <ul className="rows">
-            {data.backups.map((b) => (
-              <li key={b.name} className="row" style={{ padding: '10px 0' }}>
-                <div className="hstack" style={{ justifyContent: 'space-between' }}>
-                  <span style={{ fontWeight: 500 }}>{b.name}</span>
-                  <span className="muted" style={{ fontSize: 13.5 }}>
-                    {fmtBytes(b.sizeBytes)}, {fmtDate(b.modifiedAt)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 }
-
 export function BackupPage() {
   const { t } = useI18n();
   return (

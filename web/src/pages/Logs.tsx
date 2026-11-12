@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Empty, ExternalLink, Pager, Spinner, useUi } from '../components/ui';
+import { Empty, ExternalLink, Pager, Spinner, Status, useUi } from '../components/ui';
 
 type Kind = 'posts' | 'comments';
 
@@ -20,17 +20,17 @@ interface History {
   error: string | null;
 }
 
-function KindSwitch({ kind }: { kind: Kind }) {
+function KindTabs({ kind }: { kind: Kind }) {
   const { t } = useI18n();
   return (
-    <div className="seg" style={{ marginBottom: 20 }}>
-      <Link className={kind === 'posts' ? 'on' : ''} to="/nhat-ky/bai-viet">
+    <nav className="tabs" aria-label={t('Loại dữ liệu', 'Data type')}>
+      <Link className={kind === 'posts' ? 'on' : ''} aria-current={kind === 'posts' ? 'page' : undefined} to="/nhat-ky/bai-viet">
         {t('Bài viết', 'Threads')}
       </Link>
-      <Link className={kind === 'comments' ? 'on' : ''} to="/nhat-ky/binh-luan">
+      <Link className={kind === 'comments' ? 'on' : ''} aria-current={kind === 'comments' ? 'page' : undefined} to="/nhat-ky/binh-luan">
         {t('Bình luận', 'Comments')}
       </Link>
-    </div>
+    </nav>
   );
 }
 
@@ -59,65 +59,58 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
     await api.post(`/sync/auto/${kind}/run-now`);
     toast(t('Đã bắt đầu một lượt đồng bộ. Nhật ký sẽ tự cập nhật khi xong.', 'A sync run started. The log updates when it finishes.'));
   };
+  const base = `/nhat-ky/${kind === 'posts' ? 'bai-viet' : 'binh-luan'}`;
 
   return (
     <div className="page">
-      <header className="page-head">
+      <header className="page-head tight" style={{ alignItems: 'center' }}>
         <h1 className="page-title">{t('Nhật ký đồng bộ', 'Sync log')}</h1>
-        <p className="page-lede">
-          {t(
-            'Mỗi dòng là một lần Glean quét một chuyên mục và nạp bài viết hoặc bình luận mới vào kho. Mở một dòng để xem đúng những bài đã thay đổi.',
-            'Each line is one pass over a forum section that loaded new threads or comments into the archive. Open a line to see exactly what changed.',
-          )}
+        <p className="page-lede" style={{ flex: 1, minWidth: 200 }}>
+          {data
+            ? t(`${fmtNum(data.total)} lần · mỗi dòng là một lần quét một chuyên mục`, `${fmtNum(data.total)} runs · each line is one pass over one section`)
+            : t('Mỗi dòng là một lần quét một chuyên mục', 'Each line is one pass over one section')}
         </p>
-      </header>
-      <div className="hstack" style={{ justifyContent: 'space-between' }}>
-        <KindSwitch kind={kind} />
-        <button className="btn btn-sm" onClick={() => void runNow()} style={{ marginBottom: 20 }}>
+        <button className="btn" onClick={() => void runNow()}>
           {t('Đồng bộ ngay', 'Sync now')}
         </button>
-      </div>
+      </header>
+      <KindTabs kind={kind} />
       {!data ? (
         <Spinner label={t('Đang tải', 'Loading')} />
       ) : !data.items.length ? (
         <Empty title={t('Chưa có lần đồng bộ nào', 'No sync runs yet')}>{t('Bật đồng bộ tự động trong Cài đặt hoặc chạy Đồng bộ thủ công.', 'Turn on auto-sync in Settings or run Manual sync.')}</Empty>
       ) : (
         <>
-          <p className="muted" style={{ fontSize: 14 }}>{t(`${fmtNum(data.total)} lần đồng bộ`, `${fmtNum(data.total)} runs`)}</p>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t('Chuyên mục', 'Section')}</th>
-                  <th>{t('Bắt đầu', 'Started')}</th>
-                  <th>{t('Thời lượng', 'Duration')}</th>
-                  <th>{t('Cách chạy', 'Trigger')}</th>
-                  <th className="r">{kind === 'posts' ? t('Bài mới / đổi', 'New / changed') : t('Bình luận mới', 'New comments')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((h) => (
-                  <tr key={h.id}>
-                    <td>
-                      <Link to={`/nhat-ky/${kind === 'posts' ? 'bai-viet' : 'binh-luan'}/${h.id}`} style={{ fontWeight: 500 }}>
-                        {h.forumName}
-                      </Link>
-                      {h.error && (
-                        <div className="error-text" style={{ margin: '2px 0 0', fontSize: 13 }}>
-                          {h.error}
-                        </div>
-                      )}
-                    </td>
-                    <td className="muted">{fmtDate(h.syncStartedAt)}</td>
-                    <td className="muted">
-                      {h.syncFinishedAt ? fmtDuration((Date.parse(h.syncFinishedAt) - Date.parse(h.syncStartedAt)) / 1000) : t('đang chạy', 'running')}
-                    </td>
-                    <td className="muted">{h.trigger === 'auto' ? t('Tự động', 'Auto') : t('Thủ công', 'Manual')}</td>
-                    <td className="r num">{fmtNum(h.syncCount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="gtable-scroll">
+            <div className="gtable log-table">
+              <div className="gtr log-row head" aria-hidden="true">
+                <span>{t('Chuyên mục', 'Section')}</span>
+                <span>{t('Bắt đầu', 'Started')}</span>
+                <span>{t('Thời lượng', 'Duration')}</span>
+                <span>{t('Cách chạy', 'Trigger')}</span>
+                <span className="r">{kind === 'posts' ? t('Bài mới / đổi', 'New / changed') : t('Bình luận mới', 'New comments')}</span>
+              </div>
+              {data.items.map((h) => (
+                <Link key={h.id} to={`${base}/${h.id}`} className="gtr log-row">
+                  <span style={{ minWidth: 0 }}>
+                    <span className="gt-title">{h.forumName}</span>
+                    {h.error && (
+                      <span className="error-text" style={{ display: 'block', margin: '2px 0 0' }}>
+                        {h.error}
+                      </span>
+                    )}
+                  </span>
+                  <span className="muted">{fmtDate(h.syncStartedAt)}</span>
+                  <span className="muted">
+                    {h.syncFinishedAt ? fmtDuration((Date.parse(h.syncFinishedAt) - Date.parse(h.syncStartedAt)) / 1000) : t('đang chạy', 'running')}
+                  </span>
+                  <span className="muted">{h.trigger === 'auto' ? t('Tự động', 'Auto') : t('Thủ công', 'Manual')}</span>
+                  <span className="r num" style={{ fontWeight: 400 }}>
+                    {fmtNum(h.syncCount)}
+                  </span>
+                </Link>
+              ))}
+            </div>
           </div>
           <Pager
             page={page}
@@ -133,7 +126,6 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
     </div>
   );
 }
-
 interface Item {
   id: number;
   threadId: number;
@@ -167,47 +159,52 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   const h = data.history;
   return (
     <div className="page">
-      <Link to={`/nhat-ky/${kind === 'posts' ? 'bai-viet' : 'binh-luan'}`} className="link-btn muted" style={{ fontSize: 14 }}>
-        {t('Nhật ký đồng bộ', 'Sync log')}
-      </Link>
-      <header className="page-head" style={{ marginTop: 12 }}>
-        <h1 className="page-title" style={{ fontSize: 34 }}>
-          {h.forumName}
-        </h1>
+      <nav className="crumbs" aria-label={t('Vị trí', 'Breadcrumb')}>
+        <Link to={`/nhat-ky/${kind === 'posts' ? 'bai-viet' : 'binh-luan'}`}>{t('Nhật ký đồng bộ', 'Sync log')}</Link> › {kind === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments')}
+      </nav>
+      <header className="page-head tight" style={{ paddingTop: 4 }}>
+        <h1 className="page-title">{h.forumName}</h1>
         <p className="page-lede">
-          {fmtDate(h.syncStartedAt)}, {h.trigger === 'auto' ? t('tự động', 'automatic') : t('thủ công', 'manual')}.{' '}
+          {fmtDate(h.syncStartedAt)} · {h.trigger === 'auto' ? t('tự động', 'automatic') : t('thủ công', 'manual')} ·{' '}
           {kind === 'posts'
-            ? t(`${fmtNum(h.syncCount)} bài mới hoặc được cập nhật.`, `${fmtNum(h.syncCount)} new or updated threads.`)
-            : t(`${fmtNum(h.syncCount)} bình luận mới.`, `${fmtNum(h.syncCount)} new comments.`)}
+            ? t(`${fmtNum(h.syncCount)} bài mới hoặc được cập nhật`, `${fmtNum(h.syncCount)} new or updated threads`)
+            : t(`${fmtNum(h.syncCount)} bình luận mới`, `${fmtNum(h.syncCount)} new comments`)}
         </p>
       </header>
+      {h.error && (
+        <div className="notice notice-rust" style={{ marginBottom: 16 }}>
+          {h.error}
+        </div>
+      )}
       {!data.items.length ? (
         <Empty title={t('Lần này không có gì thay đổi', 'Nothing changed in this run')} />
       ) : (
-        <ul className="rows">
+        <ul className="rows" style={{ borderTop: '1px solid var(--line)' }}>
           {data.items.map((it) => (
-            <li key={it.id} className="row" style={{ gap: 4 }}>
-              <div className="hstack" style={{ justifyContent: 'space-between' }}>
+            <li key={it.id} className="result" style={{ padding: '12px 0' }}>
+              <div className="result-text">
                 {it.url ? (
-                  <ExternalLink href={it.url} className="row-title" style={{ fontSize: 15.5 }}>
+                  <ExternalLink href={it.url} className="result-title" style={{ fontSize: 14 }}>
                     {it.title}
                   </ExternalLink>
                 ) : (
-                  <span className="row-title">{it.title}</span>
+                  <span className="result-title" style={{ fontSize: 14 }}>
+                    {it.title}
+                  </span>
                 )}
-                <span className={`tag ${it.action === 'new' ? 'tag-moss' : it.action === 'comments' ? 'tag-straw' : ''}`}>
-                  {it.action === 'new'
-                    ? t('Bài mới', 'New')
-                    : it.action === 'updated'
-                      ? t('Cập nhật', 'Updated')
-                      : t(`+${fmtNum(it.commentDelta)} bình luận`, `+${fmtNum(it.commentDelta)} comments`)}
+                <span className="row-meta">
+                  <span>{it.author}</span>
+                  {it.action === 'updated' && it.commentDelta !== 0 && <span>{t(`${it.commentDelta > 0 ? '+' : ''}${it.commentDelta} trả lời`, `${it.commentDelta > 0 ? '+' : ''}${it.commentDelta} replies`)}</span>}
                 </span>
               </div>
-              <div className="row-meta">
-                <span>{it.author}</span>
-                {it.action === 'updated' && it.commentDelta !== 0 && <span>{t(`${it.commentDelta > 0 ? '+' : ''}${it.commentDelta} trả lời`, `${it.commentDelta > 0 ? '+' : ''}${it.commentDelta} replies`)}</span>}
-                {!!it.isDeleted && <span className="tag tag-rust">{t('Đã bị xóa trên diễn đàn', 'Deleted on the forum')}</span>}
-              </div>
+              {!!it.isDeleted && <Status tone="bad">{t('Đã bị xóa trên diễn đàn', 'Deleted on the forum')}</Status>}
+              <span className={`tag ${it.action === 'new' ? 'tag-moss' : it.action === 'comments' ? 'tag-straw' : ''}`}>
+                {it.action === 'new'
+                  ? t('Bài mới', 'New')
+                  : it.action === 'updated'
+                    ? t('Cập nhật', 'Updated')
+                    : t(`+${fmtNum(it.commentDelta)} bình luận`, `+${fmtNum(it.commentDelta)} comments`)}
+              </span>
             </li>
           ))}
         </ul>
