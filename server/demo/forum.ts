@@ -174,7 +174,17 @@ const slugify = (s: string) =>
 const manualDeleted = new Set<number>();
 const visible = (t: DemoThread, nowMs: number) =>
   t.createdAt <= nowMs && !(t.deletedAt && t.deletedAt <= nowMs) && !manualDeleted.has(t.id);
-const visiblePosts = (t: DemoThread, nowMs: number) => t.posts.filter((p) => p.at <= nowMs);
+/** Posts edited or deleted by hand through the demo control routes (to try edit/deletion tracking). */
+const editedPosts = new Map<number, { html: string; at: number }>();
+const deletedPosts = new Set<number>();
+const visiblePosts = (t: DemoThread, nowMs: number) => t.posts.filter((p) => p.at <= nowMs && !deletedPosts.has(p.id));
+function findPost(id: number) {
+  for (const t of threads) {
+    const p = t.posts.find((x) => x.id === id);
+    if (p) return { t, p };
+  }
+  return null;
+}
 const timeTag = (ms: number) => `<time class="u-dt" datetime="${new Date(ms).toISOString()}" data-time="${Math.floor(ms / 1000)}">${new Date(ms).toLocaleString('vi-VN')}</time>`;
 
 function pageNav(baseHref: string, page: number, total: number) {
@@ -267,7 +277,9 @@ export function registerDemoForum(app: FastifyInstance) {
       <ul class="message-attribution-main"><li><a href="${base}post-${p.id}" class="u-concealed">${timeTag(p.at)}</a></li></ul>
       <ul class="message-attribution-opposite"><li><a href="${base}post-${p.id}">#${p.no}</a></li></ul>
     </header>
-    <div class="message-content"><div class="message-body"><div class="bbWrapper">${p.html}</div></div></div>
+    <div class="message-content"><div class="message-body"><div class="bbWrapper">${editedPosts.get(p.id)?.html ?? p.html}</div></div>${
+      editedPosts.has(p.id) ? `<div class="message-lastEdit">Sửa lần cuối: ${timeTag(editedPosts.get(p.id)!.at)}</div>` : ''
+    }</div>
   </div>
 </article>`,
       )
@@ -293,6 +305,25 @@ export function registerDemoForum(app: FastifyInstance) {
     if (manualDeleted.has(id)) manualDeleted.delete(id);
     else manualDeleted.add(id);
     return { threadId: id, deleted: manualDeleted.has(id) };
+  });
+  // Demo-only: simulate a member editing a post. Without `text`, " (đã sửa)" is appended.
+  app.post<{ Params: { id: string }; Body: { text?: string } | undefined }>('/demo-forum/_edit-post/:id', async (req, reply) => {
+    const found = findPost(Number(req.params.id));
+    if (!found) return reply.code(404).send({ error: 'post not found' });
+    const at = Date.now();
+    const text = req.body?.text;
+    const html = typeof text === 'string' && text.trim() ? esc(text.trim()) : `${editedPosts.get(found.p.id)?.html ?? found.p.html} (đã sửa)`;
+    editedPosts.set(found.p.id, { html, at });
+    return { postId: found.p.id, threadId: found.t.id, editedAt: new Date(Math.floor(at / 1000) * 1000).toISOString() };
+  });
+  // Demo-only: simulate a moderator deleting (or restoring) a single post.
+  app.post<{ Params: { id: string } }>('/demo-forum/_toggle-post-delete/:id', async (req, reply) => {
+    const found = findPost(Number(req.params.id));
+    if (!found) return reply.code(404).send({ error: 'post not found' });
+    if (found.p.no === 1) return reply.code(400).send({ error: 'delete the thread instead (/demo-forum/_toggle-delete/:threadId)' });
+    if (deletedPosts.has(found.p.id)) deletedPosts.delete(found.p.id);
+    else deletedPosts.add(found.p.id);
+    return { postId: found.p.id, threadId: found.t.id, deleted: deletedPosts.has(found.p.id) };
   });
   app.get('/demo-forum/video/:file', async (_req, reply) => reply.code(404).send('video not available in demo'));
 }

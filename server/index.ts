@@ -9,6 +9,7 @@ import { registerSearch } from './search.ts';
 import { registerSync, initAutoSync } from './sync.ts';
 import { registerScraper, initScraper } from './scraper.ts';
 import { registerSystem, APP_VERSION } from './system.ts';
+import { registerBackup, initBackup } from './backup.ts';
 import { registerMedia, cookieUser } from './media.ts';
 import { registerDemoForum } from './demo/forum.ts';
 import { initNet } from './net.ts';
@@ -82,6 +83,7 @@ registerSearch(app);
 registerSync(app);
 registerScraper(app);
 registerSystem(app, PORT);
+registerBackup(app);
 registerDemoForum(app);
 
 /* ---- built web app (production) ---- */
@@ -99,3 +101,4 @@ console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' 
 
 initScraper();
 initAutoSync();
+initBackup();

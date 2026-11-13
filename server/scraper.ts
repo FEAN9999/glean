@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { FastifyInstance } from 'fastify';
+import type { SQLInputValue } from 'node:sqlite';
 import { all, get, run, now, tx, camel, camelAll } from './db.ts';
 import { cfg, onConfigChange } from './config.ts';
 import { emit, Ev } from './events.ts';
@@ -9,6 +10,7 @@ import { ApiError, assertNotPaused, intParam, ok } from './http.ts';
 import { fetchRaw, pool, proxyStatus, checkProxies, sleep } from './net.ts';
 import { fetchThreadPage, parseThreadRef, threadUrl, ThreadGoneError, type ParsedPost } from './source/xenforo.ts';
 import { ensureForum, upsertComments } from './sync.ts';
+import { reconcileDeletions } from './archive.ts';
 import { telegram } from './notify.ts';
 
 export const ScrapeStatus = { None: 0, Waiting: 1, Processing: 2, Completed: 3, Failed: 4, NotProcessed: 5 } as const;
@@ -66,24 +68,117 @@ const isCancelled = (id: number) => !!get<{ x: number }>('SELECT 1 x FROM scrape
 
 class Cancelled extends Error {}
 
-function savePageItems(scrapeId: number, page: number, posts: ParsedPost[]) {
+const ITEM_TABLES = ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'] as const;
+type ItemTable = (typeof ITEM_TABLES)[number];
+
+/**
+ * Inserts an item of a sieve job, or refreshes the one already kept from an earlier run.
+ * Items are matched by `key` within the same post (post id, or #n for rows saved without one).
+ */
+function upsertItem(
+  table: ItemTable,
+  scrapeId: number,
+  page: number,
+  p: ParsedPost,
+  runNo: number,
+  key: Record<string, SQLInputValue>,
+  data: Record<string, SQLInputValue>,
+) {
+  const postId = p.postId || null;
+  const keyCols = Object.keys(key);
+  const keyWhere = keyCols.map((c) => `AND ${c}=? `).join('');
+  // Two lookups rather than one OR, so each uses its own index.
+  const ex =
+    (postId != null
+      ? get<{ id: number }>(`SELECT id FROM ${table} WHERE scrape_id=? AND post_id=? ${keyWhere}ORDER BY id LIMIT 1`, scrapeId, postId, ...Object.values(key))
+      : undefined) ??
+    get<{ id: number }>(
+      `SELECT id FROM ${table} WHERE scrape_id=? AND post_no=? AND post_id IS NULL ${keyWhere}ORDER BY id LIMIT 1`,
+      scrapeId,
+      p.postNo,
+      ...Object.values(key),
+    );
+  const dataCols = Object.keys(data);
+  if (ex) {
+    run(
+      `UPDATE ${table} SET page=?, post_no=?, post_id=COALESCE(?, post_id), last_seen_run=?${dataCols.map((c) => `, ${c}=?`).join('')} WHERE id=?`,
+      page,
+      p.postNo,
+      postId,
+      runNo,
+      ...Object.values(data),
+      ex.id,
+    );
+    return;
+  }
+  const cols = ['scrape_id', 'page', 'post_no', 'post_id', 'last_seen_run', ...keyCols, ...dataCols];
+  run(
+    `INSERT INTO ${table}(${cols.join(', ')}) VALUES(${cols.map(() => '?').join(',')})`,
+    scrapeId,
+    page,
+    p.postNo,
+    postId,
+    runNo,
+    ...Object.values(key),
+    ...Object.values(data),
+  );
+}
+
+/** Saves what one thread page holds; items kept from earlier runs are refreshed, not duplicated. */
+export function savePageItems(scrapeId: number, page: number, posts: ParsedPost[], runNo: number) {
   tx(() => {
     for (const p of posts) {
-      for (const u of p.images) run('INSERT INTO scrape_image(scrape_id, page, post_no, origin_url) VALUES(?,?,?,?)', scrapeId, page, p.postNo, u);
-      for (const v of p.videos)
-        run('INSERT INTO scrape_video(scrape_id, page, post_no, origin_url, kind) VALUES(?,?,?,?,?)', scrapeId, page, p.postNo, v.url, v.kind);
-      for (const l of p.links) run('INSERT INTO scrape_link(scrape_id, page, post_no, url, text) VALUES(?,?,?,?,?)', scrapeId, page, p.postNo, l.url, l.text);
-      run(
-        'INSERT INTO scrape_comment(scrape_id, page, post_no, author, content, created_at, url) VALUES(?,?,?,?,?,?,?)',
-        scrapeId,
-        page,
-        p.postNo,
-        p.author,
-        p.text,
-        p.createdAt,
-        p.url,
-      );
+      for (const u of p.images) upsertItem('scrape_image', scrapeId, page, p, runNo, { origin_url: u }, {});
+      for (const v of p.videos) upsertItem('scrape_video', scrapeId, page, p, runNo, { origin_url: v.url }, { kind: v.kind });
+      for (const l of p.links) upsertItem('scrape_link', scrapeId, page, p, runNo, { url: l.url }, { text: l.text });
+      upsertItem('scrape_comment', scrapeId, page, p, runNo, {}, { author: p.author, content: p.text, created_at: p.createdAt, url: p.url });
     }
+  });
+}
+
+/**
+ * After a complete run: items not seen in it are kept and marked missing; items seen again are unmarked.
+ * When more than 2 items and more than half of the job went unseen, the forum more likely served
+ * broken pages than deleted that much, so nothing new is marked.
+ */
+export function markMissing(scrapeId: number, runNo: number) {
+  const at = now();
+  let missing = 0;
+  tx(() => {
+    let unseen = 0;
+    let total = 0;
+    for (const t of ITEM_TABLES) {
+      const c = get<{ n: number; u: number }>(`SELECT COUNT(*) n, COALESCE(SUM(last_seen_run<?),0) u FROM ${t} WHERE scrape_id=?`, runNo, scrapeId)!;
+      unseen += c.u;
+      total += c.n;
+    }
+    const markUnseen = !(unseen > 2 && unseen * 2 > total);
+    for (const t of ITEM_TABLES) {
+      if (markUnseen) run(`UPDATE ${t} SET missing_since=COALESCE(missing_since, ?) WHERE scrape_id=? AND last_seen_run<?`, at, scrapeId, runNo);
+      run(`UPDATE ${t} SET missing_since=NULL WHERE scrape_id=? AND last_seen_run=? AND missing_since IS NOT NULL`, scrapeId, runNo);
+      missing += get<{ n: number }>(`SELECT COUNT(*) n FROM ${t} WHERE scrape_id=? AND missing_since IS NOT NULL`, scrapeId)!.n;
+    }
+  });
+  return missing;
+}
+
+/**
+ * Queues a job to run again without discarding what it already holds. A job the user deleted
+ * has lost its files, so its rows are dropped and it starts over.
+ */
+export function prepareRerun(id: number) {
+  const s = get<{ is_marked_deleted: number }>('SELECT is_marked_deleted FROM scrape WHERE id=?', id);
+  tx(() => {
+    if (s?.is_marked_deleted) {
+      for (const t of ITEM_TABLES) run(`DELETE FROM ${t} WHERE scrape_id=?`, id);
+      run('UPDATE scrape SET total_images=0, total_videos=0, total_links=0, total_comments=0 WHERE id=?', id);
+    }
+    run(
+      `UPDATE scrape SET status=?, run_no=run_no+1, current_page=0, downloaded_images=0, error=NULL, is_thread_deleted=0,
+         finished_at=NULL, started_at=NULL, handling_seconds=NULL, is_marked_deleted=0 WHERE id=?`,
+      ScrapeStatus.Waiting,
+      id,
+    );
   });
 }
 
@@ -115,15 +210,19 @@ function ensureThreadRecord(threadId: number, title: string, forumId: number | n
 function copyArchive(fromId: number, toId: number) {
   tx(() => {
     run(
-      `INSERT INTO scrape_image(scrape_id, page, post_no, origin_url, current_url, external_url, is_bin, is_download_failed, display_by_origin_url)
-       SELECT ?, page, post_no, origin_url, current_url, external_url, is_bin, is_download_failed, display_by_origin_url FROM scrape_image WHERE scrape_id=?`,
+      `INSERT INTO scrape_image(scrape_id, page, post_no, post_id, origin_url, current_url, external_url, is_bin, is_download_failed, display_by_origin_url)
+       SELECT ?, page, post_no, post_id, origin_url, current_url, external_url, is_bin, is_download_failed, display_by_origin_url FROM scrape_image WHERE scrape_id=?`,
       toId,
       fromId,
     );
-    run('INSERT INTO scrape_video(scrape_id, page, post_no, origin_url, kind, current_url, hls_url) SELECT ?, page, post_no, origin_url, kind, current_url, hls_url FROM scrape_video WHERE scrape_id=?', toId, fromId);
-    run('INSERT INTO scrape_link(scrape_id, page, post_no, url, text) SELECT ?, page, post_no, url, text FROM scrape_link WHERE scrape_id=?', toId, fromId);
     run(
-      'INSERT INTO scrape_comment(scrape_id, page, post_no, author, content, created_at, url) SELECT ?, page, post_no, author, content, created_at, url FROM scrape_comment WHERE scrape_id=?',
+      'INSERT INTO scrape_video(scrape_id, page, post_no, post_id, origin_url, kind, current_url, hls_url) SELECT ?, page, post_no, post_id, origin_url, kind, current_url, hls_url FROM scrape_video WHERE scrape_id=?',
+      toId,
+      fromId,
+    );
+    run('INSERT INTO scrape_link(scrape_id, page, post_no, post_id, url, text) SELECT ?, page, post_no, post_id, url, text FROM scrape_link WHERE scrape_id=?', toId, fromId);
+    run(
+      'INSERT INTO scrape_comment(scrape_id, page, post_no, post_id, author, content, created_at, url) SELECT ?, page, post_no, post_id, author, content, created_at, url FROM scrape_comment WHERE scrape_id=?',
       toId,
       fromId,
     );
@@ -191,26 +290,34 @@ function finish(id: number, extra: { isThreadDeleted?: boolean } = {}) {
     void telegram(`Glean: xong "${sm.threadTitle}" — ${sm.totalImages} ảnh, ${sm.totalVideos} video, ${sm.totalComments} bình luận.`);
 }
 
-async function processScrape(id: number) {
-  const s = get<{ thread_id: number }>('SELECT thread_id FROM scrape WHERE id=?', id)!;
+/** Sieves one job. `fetchPage` reads a thread page; tests pass a fake forum. */
+export async function processScrape(id: number, fetchPage: typeof fetchThreadPage = fetchThreadPage) {
+  const s = get<{ thread_id: number; run_no: number }>('SELECT thread_id, run_no FROM scrape WHERE id=?', id)!;
   run('UPDATE scrape SET status=?, started_at=?, current_page=0, downloaded_images=0, error=NULL WHERE id=?', ScrapeStatus.Processing, now(), id);
   emit(Ev.UpdateScrape, summary(id), undefined, 'scrape');
 
   let first;
   try {
-    first = await fetchThreadPage(s.thread_id, 1);
+    first = await fetchPage(s.thread_id, 1);
   } catch (e) {
     if (!(e instanceof ThreadGoneError)) throw e;
     return archiveFallback(id, s.thread_id);
   }
+  // A thread page always holds at least one post: an empty one is an error page, so stop before
+  // anything (title, page count, missing marks) is overwritten from it.
+  const emptyPage = (page: number) =>
+    new Error(`Trang ${page} của bài #${s.thread_id} không có bài viết nào, có thể diễn đàn trả về trang lỗi. Lượt sàng dừng lại, dữ liệu đã có được giữ nguyên.`);
+  if (first.posts.length === 0) throw emptyPage(1);
   const totalPages = first.totalPages;
   run('UPDATE scrape SET thread_title=?, total_pages=? WHERE id=?', first.title, totalPages, id);
   ensureThreadRecord(s.thread_id, first.title, first.forumId, first.posts[0], totalPages);
 
   let done = 0;
+  const read = new Map<number, ParsedPost[]>();
   const onPage = (page: number, posts: ParsedPost[]) => {
-    savePageItems(id, page, posts);
+    savePageItems(id, page, posts, s.run_no);
     tx(() => upsertComments(s.thread_id, page, posts));
+    read.set(page, posts);
     done++;
     run('UPDATE scrape SET current_page=? WHERE id=?', done, id);
     emit(Ev.UpdateScrapeProcess, { scrapeId: id, page, currentPage: done, totalPages }, undefined, 'scrape');
@@ -224,12 +331,17 @@ async function processScrape(id: number) {
     const batch = rest.slice(i, i + sc.concurrentPages);
     await Promise.all(
       batch.map(async (page) => {
-        const r = await fetchThreadPage(s.thread_id, page);
+        const r = await fetchPage(s.thread_id, page);
+        if (r.posts.length === 0) throw emptyPage(page);
         onPage(page, r.posts);
       }),
     );
     if (sc.batchDelayMs) await sleep(sc.batchDelayMs);
   }
+  // Every page was read: comments gone from the forum can be marked, and so can sieved items.
+  const pages = [...read.keys()].sort((a, b) => a - b).map((p) => read.get(p)!);
+  tx(() => reconcileDeletions(s.thread_id, pages, { startsAtFirstPage: true, endsAtLastPage: true }));
+  markMissing(id, s.run_no);
   computeTotals(id, totalPages);
   emit(Ev.UpdateScrape, summary(id), undefined, 'scrape');
 
@@ -239,8 +351,16 @@ async function processScrape(id: number) {
   finish(id);
 }
 
-function archiveFallback(id: number, threadId: number) {
+/** The thread is gone from the forum: finish the job from what is archived. */
+export function archiveFallback(id: number, threadId: number) {
   run('UPDATE thread SET is_deleted=1 WHERE id=?', threadId);
+  // A job sieved before keeps its own items; nothing is copied over them.
+  const own = ITEM_TABLES.reduce((n, t) => n + get<{ n: number }>(`SELECT COUNT(*) n FROM ${t} WHERE scrape_id=?`, id)!.n, 0);
+  if (own > 0) {
+    computeTotals(id, get<{ total_pages: number }>('SELECT total_pages FROM scrape WHERE id=?', id)!.total_pages);
+    finish(id, { isThreadDeleted: true });
+    return;
+  }
   const t = get<{ title: string }>('SELECT title FROM thread WHERE id=?', threadId);
   const prev = get<{ id: number; thread_title: string; total_pages: number }>(
     `SELECT id, thread_title, total_pages FROM scrape WHERE thread_id=? AND id<>? AND status=? AND is_marked_deleted=0 ORDER BY id DESC LIMIT 1`,
@@ -288,7 +408,7 @@ function looksLikeImage(buf: Buffer, type: string) {
 
 async function downloadImages(id: number) {
   const referer = get<{ thread_url: string }>('SELECT thread_url FROM scrape WHERE id=?', id)?.thread_url;
-  const rows = all<{ id: number; origin_url: string }>('SELECT id, origin_url FROM scrape_image WHERE scrape_id=? AND current_url IS NULL ORDER BY id', id);
+  const rows = all<{ id: number; origin_url: string }>('SELECT id, origin_url FROM scrape_image WHERE scrape_id=? AND current_url IS NULL AND is_bin=0 ORDER BY id', id);
   const dir = scrapeDir(id);
   fs.mkdirSync(dir, { recursive: true });
   const maxBytes = cfg().storage.maxFileSizeMb * 1024 * 1024;
@@ -531,8 +651,20 @@ export function registerScraper(app: FastifyInstance) {
     const sm: any = camel(s);
     sm.syncedCommentCount = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', sm.threadId)!.n;
     sm.failedImages = get<{ n: number }>('SELECT COUNT(*) n FROM scrape_image WHERE scrape_id=? AND (is_download_failed=1 OR is_bin=1)', sm.id)!.n;
-    const pages = all<{ page: number }>('SELECT DISTINCT page FROM scrape_comment WHERE scrape_id=?', sm.id).map((r) => r.page);
-    sm.donePages = pages;
+    // While a job runs, only pages read in this run count as done (earlier runs' items are kept).
+    const running = sm.status === ScrapeStatus.Waiting || sm.status === ScrapeStatus.Processing;
+    sm.donePages = all<{ page: number }>(
+      `SELECT DISTINCT page FROM scrape_comment WHERE scrape_id=?${running ? ' AND last_seen_run=?' : ''}`,
+      sm.id,
+      ...(running ? [sm.runNo] : []),
+    ).map((r) => r.page);
+    const missing = (t: ItemTable) => get<{ n: number }>(`SELECT COUNT(*) n FROM ${t} WHERE scrape_id=? AND missing_since IS NOT NULL`, sm.id)!.n;
+    sm.missingCounts = {
+      images: missing('scrape_image'),
+      videos: missing('scrape_video'),
+      links: missing('scrape_link'),
+      comments: missing('scrape_comment'),
+    };
     return ok(sm);
   });
 
@@ -583,17 +715,8 @@ export function registerScraper(app: FastifyInstance) {
     if (!s) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lượt sàng.');
     if (s.status === ScrapeStatus.Processing || s.status === ScrapeStatus.Waiting)
       throw new ApiError(409, 'IN_QUEUE', 'Lượt sàng này đang trong hàng đợi.', 'toast');
-    tx(() => {
-      for (const t of ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment']) run(`DELETE FROM ${t} WHERE scrape_id=?`, id);
-      run(
-        `UPDATE scrape SET status=?, current_page=0, total_images=0, total_videos=0, total_links=0, total_comments=0,
-          downloaded_images=0, error=NULL, is_thread_deleted=0, finished_at=NULL, started_at=NULL, handling_seconds=NULL,
-          is_marked_deleted=0 WHERE id=?`,
-        ScrapeStatus.Waiting,
-        id,
-      );
-    });
-    removeMedia(id);
+    // Re-running keeps everything already archived; see prepareRerun.
+    prepareRerun(id);
     emit(Ev.NewScrape, summary(id), undefined, 'scrape');
     kick();
     return ok(summary(id));

@@ -19,7 +19,16 @@ export interface AppConfig {
   };
   sync: {
     posts: { enabled: boolean; pagesPerRun: number; intervalMs: number };
-    comments: { enabled: boolean; pagesPerRun: number; intervalMs: number; maxThreadsPerRun: number };
+    comments: {
+      enabled: boolean;
+      pagesPerRun: number;
+      intervalMs: number;
+      maxThreadsPerRun: number;
+      /** Last stored pages re-read each run to catch edits and deletions (0 = off). */
+      recheckPages: number;
+      /** Threads with a post this recent are re-read even when no new comments are expected. */
+      recheckWithinHours: number;
+    };
     commentServiceUrl: string;
   };
   scraper: {
@@ -47,6 +56,16 @@ export interface AppConfig {
   auth: { issuer: string; audience: string; secret: string; accessTokenMinutes: number; refreshTokenDays: number };
   telegram: { enabled: boolean; botToken: string; chatId: string; notifyScrapeFinished: boolean; notifySyncFailed: boolean };
   maintenance: { scrape: PauseFlag; searchPost: PauseFlag; searchComment: PauseFlag };
+  backup: {
+    enabled: boolean;
+    intervalHours: number;
+    /** Automatic copies kept; older glean-auto-* files are deleted. */
+    keep: number;
+    /** Empty = data/backups; relative paths are under the data folder. */
+    targetDir: string;
+    includeMedia: boolean;
+    notifyOnFail: boolean;
+  };
 }
 
 export function defaultConfig(port: number): AppConfig {
@@ -66,7 +85,7 @@ export function defaultConfig(port: number): AppConfig {
     },
     sync: {
       posts: { enabled: true, pagesPerRun: 2, intervalMs: 5 * 60_000 },
-      comments: { enabled: true, pagesPerRun: 2, intervalMs: 10 * 60_000, maxThreadsPerRun: 40 },
+      comments: { enabled: true, pagesPerRun: 2, intervalMs: 10 * 60_000, maxThreadsPerRun: 40, recheckPages: 2, recheckWithinHours: 48 },
       commentServiceUrl: '',
     },
     scraper: {
@@ -104,6 +123,7 @@ export function defaultConfig(port: number): AppConfig {
       searchPost: { isPaused: false, message: '' },
       searchComment: { isPaused: false, message: '' },
     },
+    backup: { enabled: true, intervalHours: 24, keep: 7, targetDir: '', includeMedia: true, notifyOnFail: true },
   };
 }
 

@@ -21,6 +21,8 @@ export interface ParsedPost {
   author: string;
   createdAt: string;
   text: string;
+  /** When the forum shows a "last edited" time for the post. */
+  editedAt: string | null;
   url: string;
   images: string[];
   videos: { url: string; kind: 'file' | 'embed' }[];
@@ -296,6 +298,7 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
       author: (art.attr('data-author') ?? art.find('.message-name .username').first().text()).trim() || 'Ẩn danh',
       createdAt: timeOf($, art.find('.message-attribution-main')) ?? new Date().toISOString(),
       text,
+      editedAt: timeOf($, art.find('.message-lastEdit')),
       url: abs(permalink, pageUrl) ?? `${pageUrl}#post-${postId}`,
       images: [...images],
       videos: [...videos].map(([u, kind]) => ({ url: u, kind })),

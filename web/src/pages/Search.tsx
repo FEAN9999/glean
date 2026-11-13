@@ -6,6 +6,7 @@ import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDate, fmtNum, parseThreadInput } from '../lib/format';
 import { Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Spinner, Status, useUi } from '../components/ui';
 import { useCreateScrape } from '../components/Scrape';
+import { CommentChanges } from '../components/CommentHistory';
 
 type Scope = 'posts' | 'comments';
 type Mode = 'tu-khoa' | 'nguoi-dang-bai';
@@ -34,6 +35,9 @@ interface CommentItem {
   url: string;
   threadTitle: string | null;
   threadIsDeleted: number | null;
+  editCount: number;
+  editedAt: string | null;
+  deletedAt: string | null;
 }
 interface HistoryItem {
   id: number;
@@ -143,6 +147,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const exact = params.get('exact') === '1';
   const sort: 'createdAt' | 'commentCount' = scope === 'posts' && params.get('sort') === 'commentCount' ? 'commentCount' : 'createdAt';
   const thread = scope === 'comments' ? (params.get('thread') ?? '') : '';
+  const changed = scope === 'comments' && params.get('changed') === '1';
 
   const [inThread, setInThread] = useState(!!thread);
   const [threadDraft, setThreadDraft] = useState(thread);
@@ -178,7 +183,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const lastRun = useRef({ key: '', at: 0 });
   const run = useCallback(
     async (page: number) => {
-      const key = `${q}|${page}|${byAuthor}|${scope}|${exact}|${sort}|${thread}`;
+      const key = `${q}|${page}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}`;
       if (lastRun.current.key === key && Date.now() - lastRun.current.at < 600) return;
       lastRun.current = { key, at: Date.now() };
       setError('');
@@ -201,7 +206,11 @@ export function SearchPage({ scope }: { scope: Scope }) {
         const r =
           scope === 'posts'
             ? await api.post<PostItem[]>('/posts/search', { page, keyword: q, isSearchByAuthor: byAuthor, sortDescendingField: sort, isExactMatch: exact }, { quiet: true })
-            : await api.post<CommentItem[]>(byAuthor ? '/comments/search-by-author' : '/comments/search', { page, keyword: q, isExactMatch: exact, threadId }, { quiet: true });
+            : await api.post<CommentItem[]>(
+                byAuthor ? '/comments/search-by-author' : '/comments/search',
+                { page, keyword: q, isExactMatch: exact, threadId, onlyChanged: changed },
+                { quiet: true },
+              );
         setItems((xs) => (page === 1 ? r.data : [...xs, ...r.data]));
         setTotal(r.total ?? 0);
         setNextPage((r.nextPage as number | null) ?? null);
@@ -215,7 +224,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
           if (!r.total) {
             const c = await api.post<{ total: number }>(
               scope === 'posts' ? '/posts/search/count' : '/comments/search/count',
-              { keyword: q, isSearchByAuthor: !byAuthor, isExactMatch: exact, threadId },
+              { keyword: q, isSearchByAuthor: !byAuthor, isExactMatch: exact, threadId, onlyChanged: changed },
               { quiet: true },
             );
             setOther(c.data.total);
@@ -233,7 +242,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
         setBusy(false);
       }
     },
-    [byAuthor, exact, q, scope, sort, t, thread],
+    [byAuthor, changed, exact, q, scope, sort, t, thread],
   );
 
   // Run whenever the query or a filter in the URL changes.
@@ -270,6 +279,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
     if (s === scope) {
       if (sort === 'commentCount') p.set('sort', sort);
       if (thread) p.set('thread', thread);
+      if (changed) p.set('changed', '1');
     }
     const str = p.toString();
     return str ? `?${str}` : '';
@@ -338,6 +348,12 @@ export function SearchPage({ scope }: { scope: Scope }) {
                 }}
               />
               {t('Chỉ trong một bài', 'Within one thread')}
+            </label>
+          )}
+          {scope === 'comments' && (
+            <label className="check pick" style={{ backgroundImage: 'none', paddingRight: 14, display: 'inline-flex' }}>
+              <input type="checkbox" checked={changed} onChange={(e) => setParam('changed', e.target.checked ? '1' : null)} />
+              {t('Chỉ bình luận đã sửa/xóa', 'Only edited/deleted comments')}
             </label>
           )}
         </div>
@@ -461,6 +477,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       </span>
                       {!!c.threadIsDeleted && <span style={{ color: 'var(--bad-ink)' }}>{t('bài đã bị xóa', 'thread deleted')}</span>}
                     </span>
+                    <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} />
                     <span className="row-actions" style={{ paddingTop: 2 }}>
                       <ExternalLink href={c.url} className="link-btn">
                         {t('Xem bình luận', 'View comment')}

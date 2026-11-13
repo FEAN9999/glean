@@ -11,6 +11,7 @@ import { telegram } from './notify.ts';
 import { ffmpegStatus } from './scraper.ts';
 import { demoStats } from './demo/forum.ts';
 import { fetchForumIndex } from './source/xenforo.ts';
+import { validateBackupDir } from './backup.ts';
 
 /** Identifies the running build; clients compare it to decide whether to reload. */
 export const APP_VERSION = (() => {
@@ -34,6 +35,8 @@ const CLONABLE = [
   'scrape_comment',
   'sync_history',
   'sync_history_item',
+  'comment_revision',
+  'backup_run',
 ];
 
 function resolveTarget(p: string) {
@@ -70,6 +73,10 @@ export function registerSystem(app: FastifyInstance, port: number) {
   app.put<{ Body: any }>('/api/systems/config', async (req) => {
     requireSudo(req);
     const patch = unmaskPatch(structuredClone(req.body ?? {}));
+    if (patch.backup && 'targetDir' in patch.backup) {
+      patch.backup.targetDir = String(patch.backup.targetDir ?? '').trim();
+      validateBackupDir(patch.backup.targetDir);
+    }
     if (patch.source?.baseUrl) {
       try {
         new URL(patch.source.baseUrl);

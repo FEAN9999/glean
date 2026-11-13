@@ -7,6 +7,7 @@ import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, useConfirm, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, useStatusLabel, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
+import { CommentChanges } from '../components/CommentHistory';
 
 interface Img {
   id: number;
@@ -17,6 +18,7 @@ interface Img {
   isBin: boolean;
   isDownloadFailed: boolean;
   displayByOriginUrl: boolean;
+  missingSince?: string | null;
 }
 interface Vid {
   id: number;
@@ -26,6 +28,7 @@ interface Vid {
   kind: 'file' | 'embed';
   currentUrl: string | null;
   hlsUrl: string | null;
+  missingSince?: string | null;
 }
 interface Lnk {
   id: number;
@@ -33,6 +36,7 @@ interface Lnk {
   postNo: number | null;
   url: string;
   text: string | null;
+  missingSince?: string | null;
 }
 interface Cmt {
   id: number;
@@ -42,6 +46,12 @@ interface Cmt {
   content: string;
   createdAt: string | null;
   url: string | null;
+  /** Archived (synced) comments only. */
+  editCount?: number;
+  editedAt?: string | null;
+  deletedAt?: string | null;
+  /** Sieved comments only: set when the post was gone in a later run. */
+  missingSince?: string | null;
 }
 
 type Tab = 'images' | 'videos' | 'links' | 'comments' | 'synced-comments';
@@ -122,6 +132,16 @@ function Lightbox({ items, index, onClose, onIndex }: { items: Img[]; index: num
   );
 }
 
+/** An item kept from an earlier run whose post is no longer on the forum. */
+function MissingTag({ since }: { since: string }) {
+  const { t } = useI18n();
+  return (
+    <span className="tag tag-rust" title={t(`Không thấy trên diễn đàn từ ${fmtDate(since)}; vẫn giữ trong bản lưu`, `Gone from the forum since ${fmtDate(since)}; kept in the archive`)}>
+      {t('Không còn trên diễn đàn', 'No longer on the forum')}
+    </span>
+  );
+}
+
 const pageLabel = (t: (vi: string, en: string) => string, page: number, postNo: number | null) =>
   t(`Trang ${page}${postNo ? ` · bình luận #${postNo}` : ''}`, `Page ${page}${postNo ? ` · post #${postNo}` : ''}`);
 
@@ -162,6 +182,7 @@ function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onO
       aria-pressed={selected}
     >
       <img src={src} loading="lazy" alt="" onError={() => setBroken(true)} />
+      {img.missingSince && <span className="tile-flag">{t('Không còn trên diễn đàn', 'No longer on the forum')}</span>}
     </button>
   );
 }
@@ -227,6 +248,12 @@ function PickedImage({ picked, onZoom }: { picked: Picked | null; onZoom: () => 
                 : t('Dùng link gốc', 'Uses the original link')}
         </span>
       </div>
+      {img.missingSince && (
+        <div className="kv">
+          <span>{t('Trên diễn đàn', 'On the forum')}</span>
+          <span style={{ color: 'var(--bad-ink)' }}>{t(`Không còn, từ ${fmtDate(img.missingSince)}`, `Gone since ${fmtDate(img.missingSince)}`)}</span>
+        </div>
+      )}
       <div className="hstack" style={{ paddingTop: 14, gap: 10, flexWrap: 'nowrap' }}>
         <button className="btn btn-primary" style={{ flex: 1, height: 36 }} onClick={onZoom} disabled={!isViewable(img)}>
           {t('Phóng to', 'Enlarge')}
@@ -259,6 +286,7 @@ function VideosTab({ id }: { id: number }) {
                 {v.postNo ? `, #${v.postNo}` : ''}
               </span>
               {v.hlsUrl && <span className="tag tag-moss">HLS</span>}
+              {v.missingSince && <MissingTag since={v.missingSince} />}
             </div>
             <ExternalLink href={v.originUrl} className="link-btn" style={{ wordBreak: 'break-all', fontSize: 14 }}>
               {v.originUrl}
@@ -290,6 +318,7 @@ function LinksTab({ id }: { id: number }) {
                 {t(`Ở trang ${l.page}`, `On page ${l.page}`)}
                 {l.postNo ? `, #${l.postNo}` : ''}
               </span>
+              {l.missingSince && <MissingTag since={l.missingSince} />}
             </div>
           </li>
         ))}
@@ -348,6 +377,11 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
                   </span>
                 </div>
                 <div className="row-body">{c.content || <span className="muted">{t('(chỉ có ảnh hoặc trích dẫn)', '(images or quotes only)')}</span>}</div>
+                {synced ? (
+                  <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} />
+                ) : (
+                  c.missingSince && <MissingTag since={c.missingSince} />
+                )}
                 {c.url && (
                   <div>
                     <ExternalLink href={c.url} className="link-btn" style={{ fontSize: 13.5 }}>
@@ -446,6 +480,8 @@ export function SieveDetailPage() {
   if (processing) for (let p = 1; p <= s.totalPages && nextPages.size < 3; p++) if (!done.has(p)) nextPages.add(p);
   const pagesDone = finished && !s.isThreadDeleted ? s.totalPages : Math.min(done.size, s.totalPages);
   const failed = s.failedImages ?? 0;
+  const mc = s.missingCounts;
+  const missingTotal = mc ? mc.images + mc.videos + mc.links + mc.comments : 0;
 
   const retry = async () => {
     await api.post(`/scrapes/${id}/retry`);
@@ -508,6 +544,14 @@ export function SieveDetailPage() {
           <div className="notice notice-rust" style={{ marginBottom: 20 }}>
             <strong>{t('Đã bị xóa trên diễn đàn.', 'Deleted on the forum.')}</strong>
             <span>{t('Bạn đang xem bản lưu trữ: ảnh đã tải và bình luận đã đồng bộ trước đó.', 'You are viewing the archived copy: previously downloaded images and synced comments.')}</span>
+          </div>
+        )}
+        {!s.isThreadDeleted && missingTotal > 0 && (
+          <div className="notice notice-straw" style={{ marginBottom: 20 }}>
+            {t(
+              `${fmtNum(missingTotal)} mục không còn trên diễn đàn, vẫn được giữ trong bản lưu (nhãn "Không còn trên diễn đàn").`,
+              `${fmtNum(missingTotal)} items are no longer on the forum and are kept in the archive (tagged "No longer on the forum").`,
+            )}
           </div>
         )}
         {s.error && (

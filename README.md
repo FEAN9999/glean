@@ -40,6 +40,27 @@ Mặc định nguồn dữ liệu là một diễn đàn mẫu chạy ngay trong
 
 Để thử tính năng lưu trữ khi bài bị xóa: `POST /demo-forum/_toggle-delete/<threadId>` rồi sàng lại bài đó.
 
+Để thử theo dõi sửa/xóa từng bình luận (ID bài lấy từ link "Xem bình luận gốc", phần `post-<id>`):
+
+- `POST /demo-forum/_edit-post/<postId>`: sửa bài (thêm " (đã sửa)" vào cuối; gửi `{"text": "..."}` để thay toàn bộ nội dung).
+- `POST /demo-forum/_toggle-post-delete/<postId>`: xóa bài, gọi lần nữa để khôi phục. Không xóa được bài #1 (xóa cả chủ đề bằng `_toggle-delete`).
+
+Rồi bấm "Đồng bộ ngay" bình luận ở Nhật ký đồng bộ, hoặc sàng lại chủ đề.
+
+## Giữ dữ liệu
+
+- **Bình luận bị sửa**: bản cũ được giữ lại; bình luận mang nhãn "đã sửa · N lần", bấm vào để xem các bản trước.
+- **Bình luận bị xóa trên diễn đàn**: vẫn còn trong kho, mang nhãn "đã xóa trên diễn đàn". Glean nhận ra nhờ đọc lại vài trang cuối của các chủ đề có hoạt động gần đây (Cài đặt → Đồng bộ: mặc định 2 trang, bài có hoạt động trong 48 giờ) và khi sàng cả chủ đề. Nếu một trang đọc về trống, có bài không có ID, hoặc quá nhiều bình luận cùng biến mất, Glean bỏ qua bước đánh dấu và ghi lý do vào nhật ký thay vì báo nhầm.
+- **Sàng lại** không xóa gì: ảnh, video, liên kết và bình luận không còn trên diễn đàn vẫn được giữ, mang nhãn "Không còn trên diễn đàn"; ảnh đã tải được dùng lại. Chủ đề bị xóa hẳn thì lượt sàng giữ nguyên bản đã có.
+- **Sao lưu tự động** (trang Sao lưu): mặc định mỗi 24 giờ, giữ 7 bản `glean-auto-YYYYMMDD-HHmmss.db` gần nhất. Khi đã chọn thư mục sao lưu riêng (nên ở ổ đĩa khác), Glean chép thêm thư mục ảnh vào đó (chỉ chép tệp mới, không bao giờ xóa); để trống thì chỉ sao lưu kho dữ liệu vào `data/backups`. Tệp ảnh nào không chép được thì bỏ qua và báo lại, bản sao kho dữ liệu vẫn được tính là thành công. Bản sao lưu tay không bị xóa tự động. Lỗi sao lưu được báo qua Telegram nếu đã cấu hình.
+
+Khôi phục từ bản sao lưu:
+
+1. Dừng Glean.
+2. Chép tệp `glean-auto-….db` muốn dùng thành `data/glean.db`, rồi xóa `data/glean.db-wal` và `data/glean.db-shm` nếu có.
+3. Chép thư mục `media/` trong thư mục sao lưu vào `data/media`.
+4. Chạy lại Glean.
+
 ## Dùng với diễn đàn thật
 
 1. **Cài đặt → Nguồn dữ liệu**: đổi "Địa chỉ diễn đàn" (ví dụ `https://forum.example.com`).

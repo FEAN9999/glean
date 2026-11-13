@@ -339,6 +339,13 @@ function Inner() {
               {Num({ p: 'sync.comments.pagesPerRun', label: t('Số trang mỗi bài mỗi lượt', 'Pages per thread per run'), min: 1 })}
               {Num({ p: 'sync.comments.intervalMs', label: t('Chu kỳ (phút)', 'Every (minutes)'), scale: 60000, min: 1 })}
               {Num({ p: 'sync.comments.maxThreadsPerRun', label: t('Số bài tối đa mỗi lượt', 'Max threads per run'), min: 1 })}
+              {Num({
+                p: 'sync.comments.recheckPages',
+                label: t('Đọc lại số trang cuối (0 = tắt)', 'Re-read last pages (0 = off)'),
+                hint: t('Để phát hiện bình luận bị sửa/xóa; mỗi trang thêm một lượt tải.', 'Catches edited/deleted comments; each page is one more request.'),
+                min: 0,
+              })}
+              {Num({ p: 'sync.comments.recheckWithinHours', label: t('Đọc lại bài có hoạt động trong (giờ)', 'Re-read threads active within (hours)'), min: 1 })}
             </div>
             {Text({ p: 'sync.commentServiceUrl', label: t('Địa chỉ dịch vụ bình luận (tùy chọn)', 'Comment service URL (optional)'), placeholder: 'http://…' })}
           </Section>

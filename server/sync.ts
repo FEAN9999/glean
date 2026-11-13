@@ -7,6 +7,7 @@ import { fetchForumPage, fetchThreadPage, ThreadGoneError, type ListedThread, ty
 import { requireSudo } from './auth.ts';
 import { telegram } from './notify.ts';
 import { sleep } from './net.ts';
+import { normalizeText, reconcileDeletions, type ReconcileSkip } from './archive.ts';
 
 type SyncType = 'posts' | 'comments';
 
@@ -57,15 +58,22 @@ export function upsertThread(t: ListedThread, forumId: number): { action: 'new' 
   return { action: 'updated', delta: t.replies - ex.comment_count };
 }
 
-/** Upserts posts of a thread page into the comment store. Returns number of new rows. */
-export function upsertComments(threadId: number, page: number, posts: ParsedPost[]) {
+/**
+ * Upserts posts of a thread page into the comment store. A changed text keeps the earlier version
+ * in comment_revision (whitespace-only changes do not count); a post seen again loses any
+ * "deleted on the forum" mark.
+ */
+export function upsertComments(threadId: number, page: number, posts: ParsedPost[]): { added: number; edited: number } {
   let added = 0;
+  let edited = 0;
   for (const p of posts) {
     const id = p.postId || threadId * 100000 + p.postNo;
-    const ex = get<{ content: string }>('SELECT content FROM comment WHERE id=?', id);
+    const at = now();
+    const ex = get<{ content: string; updated_at: string }>('SELECT content, updated_at FROM comment WHERE id=?', id);
     if (!ex) {
       run(
-        `INSERT INTO comment(id, thread_id, post_no, page, author, content, content_lc, created_at, url, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO comment(id, thread_id, post_no, page, author, content, content_lc, created_at, url, updated_at, edited_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
         id,
         threadId,
         p.postNo,
@@ -75,15 +83,40 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
         p.text.toLowerCase(),
         p.createdAt,
         p.url,
-        now(),
+        at,
+        p.editedAt,
       );
       added++;
-    } else if (ex.content !== p.text) {
-      run('UPDATE comment SET content=?, content_lc=?, page=?, updated_at=? WHERE id=?', p.text, p.text.toLowerCase(), page, now(), id);
+      continue;
     }
+    if (ex.content !== p.text) {
+      const isEdit = normalizeText(ex.content) !== normalizeText(p.text);
+      if (isEdit) {
+        run('INSERT INTO comment_revision(comment_id, content, captured_at, replaced_at) VALUES(?,?,?,?)', id, ex.content, ex.updated_at, at);
+        edited++;
+      }
+      run(
+        'UPDATE comment SET content=?, content_lc=?, edit_count=edit_count+?, updated_at=? WHERE id=?',
+        p.text,
+        p.text.toLowerCase(),
+        isEdit ? 1 : 0,
+        at,
+        id,
+      );
+    }
+    run(
+      `UPDATE comment SET page=?, deleted_at=NULL, edited_at=COALESCE(?, edited_at)
+       WHERE id=? AND (page<>? OR deleted_at IS NOT NULL OR (? IS NOT NULL AND edited_at IS NOT ?))`,
+      page,
+      p.editedAt,
+      id,
+      page,
+      p.editedAt,
+      p.editedAt,
+    );
   }
   run('UPDATE thread SET synced_comment_count=(SELECT COUNT(*) FROM comment WHERE thread_id=?) WHERE id=?', threadId, threadId);
-  return added;
+  return { added, edited };
 }
 
 function startHistory(type: SyncType, trigger: string, forum: number, forumName: string) {
@@ -109,13 +142,15 @@ function addItem(historyId: number, threadId: number, title: string, author: str
 
 /* ---------------- core runners ---------------- */
 
-interface RunCtx {
+export interface RunCtx {
   trigger: 'auto' | 'manual';
   shouldStop: () => boolean;
   onPage?: (info: { forum: number; forumName: string; page: number; totalPages: number; synced: number }) => void;
   onSaving?: (n: number) => void;
   log?: (line: string) => void;
   batchSize?: number;
+  /** Page reader; defaults to the live forum (tests pass a fake). */
+  fetchPage?: typeof fetchThreadPage;
 }
 
 async function syncPostsForum(forum: { id: number; name: string }, from: number, to: number | 'all', ctx: RunCtx) {
@@ -161,38 +196,77 @@ async function syncPostsForum(forum: { id: number; name: string }, from: number,
   }
 }
 
-/** Fetches comment pages of a thread starting where the local copy ends. */
-async function syncThreadComments(threadId: number, maxPages: number, ctx: RunCtx) {
+/**
+ * First comment page to read for a thread: where the local copy ends, moved back by
+ * `recheckPages` stored pages so recent edits and deletions are seen.
+ */
+export function commentSyncStartPage(o: { syncedCount: number; perPage: number; storedMaxPage: number; recheckPages: number }) {
+  const forward = Math.floor(o.syncedCount / o.perPage) + 1;
+  if (o.recheckPages <= 0 || o.storedMaxPage <= 0) return forward;
+  return Math.max(1, Math.min(forward, o.storedMaxPage - o.recheckPages + 1));
+}
+
+const SKIP_REASON: Record<Exclude<ReconcileSkip, null>, string> = {
+  'empty-page': 'có trang trả về không có bài nào',
+  'missing-id': 'có bài không đọc được ID',
+  'too-many': 'quá nhiều bình luận cùng biến mất, có thể do lỗi đọc trang',
+};
+
+/**
+ * Re-reads the last stored pages of a thread, then fetches up to `maxPages` new ones.
+ * Stored pages do not count toward `maxPages`.
+ */
+export async function syncThreadComments(threadId: number, maxPages: number, ctx: RunCtx) {
+  const out: { added: number; edited: number; deleted: number; skipped: ReconcileSkip } = { added: 0, edited: 0, deleted: 0, skipped: null };
   const t = get<{ comment_count: number; synced_comment_count: number }>('SELECT comment_count, synced_comment_count FROM thread WHERE id=?', threadId);
-  if (!t) return 0;
+  if (!t) return out;
+  const fetchPage = ctx.fetchPage ?? fetchThreadPage;
   const per = cfg().source.postsPerPage;
-  let page = Math.floor(t.synced_comment_count / per) + 1;
-  let added = 0;
-  let fetched = 0;
-  let totalPages = Math.max(1, Math.ceil((t.comment_count + 1) / per));
-  while (page <= totalPages && fetched < maxPages && !ctx.shouldStop()) {
+  const storedMaxPage = get<{ p: number | null }>('SELECT MAX(page) p FROM comment WHERE thread_id=?', threadId)!.p ?? 0;
+  const start = commentSyncStartPage({
+    syncedCount: t.synced_comment_count,
+    perPage: per,
+    storedMaxPage,
+    recheckPages: cfg().sync.comments.recheckPages,
+  });
+  let page = start;
+  let newPages = 0;
+  let totalPages = Math.max(1, Math.ceil((t.comment_count + 1) / per), storedMaxPage);
+  const read: ParsedPost[][] = [];
+  while (page <= totalPages && !ctx.shouldStop()) {
+    const isNew = page > storedMaxPage;
+    if (isNew && newPages >= maxPages) break;
     try {
-      const r = await fetchThreadPage(threadId, page);
+      const r = await fetchPage(threadId, page);
       totalPages = r.totalPages;
       const n = tx(() => upsertComments(threadId, page, r.posts));
-      added += n;
+      out.added += n.added;
+      out.edited += n.edited;
+      read.push(r.posts);
       ctx.onSaving?.(r.posts.length);
     } catch (e) {
       if (e instanceof ThreadGoneError) {
         run('UPDATE thread SET is_deleted=1, updated_at=? WHERE id=?', now(), threadId);
         ctx.log?.(`Bài ${threadId} không còn trên diễn đàn (HTTP ${e.status}) — giữ bản lưu trữ.`);
-        return added;
+        return out;
       }
       throw e;
     }
-    fetched++;
+    if (isNew) newPages++;
     page++;
     if (cfg().scraper.batchDelayMs) await sleep(cfg().scraper.batchDelayMs);
   }
-  return added;
+  if (read.length) {
+    const lastRead = start + read.length - 1;
+    const r = tx(() => reconcileDeletions(threadId, read, { startsAtFirstPage: start === 1, endsAtLastPage: lastRead >= totalPages }));
+    out.deleted = r.deleted;
+    out.skipped = r.skipped;
+    if (r.skipped) ctx.log?.(`Bài ${threadId}: bỏ qua kiểm tra bình luận bị xóa (${SKIP_REASON[r.skipped]}).`);
+  }
+  return out;
 }
 
-async function syncCommentsForum(
+export async function syncCommentsForum(
   forum: { id: number; name: string },
   threadIds: number[],
   pagesPerThread: number,
@@ -207,13 +281,19 @@ async function syncCommentsForum(
       if (ctx.shouldStop()) break;
       i++;
       const n = await syncThreadComments(id, pagesPerThread, ctx);
-      if (n > 0) {
+      if (n.added || n.edited || n.deleted || n.skipped) {
         const t = get<{ title: string; author: string }>('SELECT title, author FROM thread WHERE id=?', id)!;
-        addItem(hid, id, t.title, t.author, 'comments', n);
-        count += n;
+        if (n.added) addItem(hid, id, t.title, t.author, 'comments', n.added);
+        if (n.edited) addItem(hid, id, t.title, t.author, 'edited', n.edited);
+        if (n.deleted) addItem(hid, id, t.title, t.author, 'deleted', n.deleted);
+        // The deletion check could not run safely: say so, so a quiet log does not read as "nothing deleted".
+        if (n.skipped) addItem(hid, id, t.title, t.author, 'check-skipped', 0);
+        count += n.added;
       }
       ctx.onPage?.({ forum: forum.id, forumName: forum.name, page: i, totalPages: threadIds.length, synced: count });
-      ctx.log?.(`[${forum.name}] bài ${id}: +${n} bình luận (${i}/${threadIds.length})`);
+      ctx.log?.(
+        `[${forum.name}] bài ${id}: +${n.added} bình luận${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
+      );
     }
     finishHistory(hid, count);
     return count;
@@ -223,11 +303,17 @@ async function syncCommentsForum(
   }
 }
 
-function threadsNeedingComments(forumId: number, limit: number) {
+/** Threads with comments still to fetch, plus recently active ones whose last pages get re-read. */
+export function threadsNeedingComments(forumId: number, limit: number, at = new Date()) {
+  const c = cfg().sync.comments;
+  const since = new Date(at.getTime() - c.recheckWithinHours * 3600_000).toISOString();
   return all<{ id: number }>(
-    `SELECT id FROM thread WHERE forum_id=? AND is_deleted=0 AND synced_comment_count < comment_count + 1
-     ORDER BY last_post_at DESC LIMIT ?`,
+    `SELECT id FROM thread WHERE forum_id=? AND is_deleted=0
+       AND (synced_comment_count < comment_count + 1 OR (? > 0 AND last_post_at >= ?))
+     ORDER BY (synced_comment_count < comment_count + 1) DESC, last_post_at DESC LIMIT ?`,
     forumId,
+    c.recheckPages,
+    since,
     limit,
   ).map((r) => r.id);
 }

@@ -1,9 +1,181 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
-import { fmtBytes, fmtDate, fmtNum } from '../lib/format';
+import { fmtAgo, fmtBytes, fmtDate, fmtNum } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
-import { useUi } from '../components/ui';
+import { Status, Switch, useUi } from '../components/ui';
+
+interface BackupRun {
+  id: number;
+  trigger: 'auto' | 'manual';
+  startedAt: string;
+  finishedAt: string | null;
+  file: string | null;
+  sizeBytes: number | null;
+  mediaCopied: number;
+  mediaBytes: number;
+  mediaError: string | null;
+  error: string | null;
+}
+interface AutoStatus {
+  running: boolean;
+  last: BackupRun | null;
+  lastSuccessAt: string | null;
+  nextDueAt: string | null;
+  dir: string;
+}
+interface BackupCfg {
+  enabled: boolean;
+  intervalHours: number;
+  keep: number;
+  targetDir: string;
+  includeMedia: boolean;
+  notifyOnFail: boolean;
+}
+
+/** Scheduled backups: last run, next run, settings and "back up now". */
+function AutoBackup({ onRan }: { onRan: () => void }) {
+  const { t } = useI18n();
+  const { toast } = useUi();
+  const [st, setSt] = useState<AutoStatus | null>(null);
+  const [form, setForm] = useState<BackupCfg | null>(null);
+  const [saved, setSaved] = useState<BackupCfg | null>(null);
+  const [busy, setBusy] = useState<'run' | 'save' | null>(null);
+  const [error, setError] = useState('');
+
+  const loadStatus = useCallback(() => {
+    api.get<AutoStatus>('/backups/status', { quiet: true }).then((r) => setSt(r.data)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadStatus();
+    api
+      .get('/systems/config', { quiet: true })
+      .then((r) => {
+        setForm(r.data.backup);
+        setSaved(r.data.backup);
+      })
+      .catch(() => {});
+  }, [loadStatus]);
+
+  const runNow = async () => {
+    setBusy('run');
+    setError('');
+    try {
+      const r = await api.post<BackupRun>('/backups/run', {}, { quiet: true });
+      if (r.data.error) setError(r.data.error);
+      else toast(t(`Đã sao lưu vào ${r.data.file}.`, `Backed up to ${r.data.file}.`));
+      loadStatus();
+      onRan();
+    } catch (e) {
+      setError((e as ApiErr).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const save = async () => {
+    if (!form) return;
+    setBusy('save');
+    setError('');
+    try {
+      const r = await api.put('/systems/config', { backup: form }, { quiet: true });
+      setForm(r.data.backup);
+      setSaved(r.data.backup);
+      toast(t('Đã lưu cài đặt sao lưu.', 'Backup settings saved.'));
+      loadStatus();
+    } catch (e) {
+      setError((e as ApiErr).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const set = <K extends keyof BackupCfg>(k: K, v: BackupCfg[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+
+  const last = st?.last;
+  // Media is mirrored only into a folder the user chose (server/backup.ts).
+  const mediaOn = !!saved?.includeMedia && !!saved?.targetDir.trim();
+  const [tone, text] = st?.running
+    ? (['acc', t('Đang sao lưu…', 'Backing up…')] as const)
+    : last?.error
+      ? (['bad', t(`Lần gần nhất lỗi (${fmtAgo(last.finishedAt)}): ${last.error}`, `Last run failed (${fmtAgo(last.finishedAt)}): ${last.error}`)] as const)
+      : last?.file
+        ? ([
+            'ok',
+            t(
+              `Lần gần nhất ${fmtAgo(last.finishedAt)} · ${fmtBytes(last.sizeBytes ?? 0)}${mediaOn ? ` · chép ${fmtNum(last.mediaCopied)} ảnh mới` : ''}`,
+              `Last run ${fmtAgo(last.finishedAt)} · ${fmtBytes(last.sizeBytes ?? 0)}${mediaOn ? ` · ${fmtNum(last.mediaCopied)} new media files copied` : ''}`,
+            ),
+          ] as const)
+        : (['off', t('Chưa có bản sao lưu tự động nào', 'No automatic backup yet')] as const);
+  const next = !saved?.enabled
+    ? t('Sao lưu tự động đang tắt.', 'Automatic backup is off.')
+    : st?.nextDueAt
+      ? t(`Lượt kế tiếp khoảng ${fmtDate(st.nextDueAt)}.`, `Next run around ${fmtDate(st.nextDueAt)}.`)
+      : t('Lượt kế tiếp sẽ chạy trong vài phút.', 'The next run starts within minutes.');
+
+  return (
+    <>
+      <h2 className="section-title" style={{ paddingBottom: 10 }}>
+        {t('Sao lưu tự động', 'Automatic backup')}
+      </h2>
+      <div className="rule-below stack" style={{ gap: 12, paddingBottom: 26 }}>
+        <div className="stack" style={{ gap: 4 }}>
+          <Status tone={tone}>{text}</Status>
+          <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
+            {next} {st && t(`Thư mục: ${st.dir}`, `Folder: ${st.dir}`)}
+          </small>
+          {!st?.running && !last?.error && last?.mediaError && (
+            <p className="error-text" role="alert" style={{ margin: 0, fontSize: 12.5 }}>
+              {t(`Kho dữ liệu đã sao lưu, nhưng ${last.mediaError}`, `The database was backed up, but media failed: ${last.mediaError}`)}
+            </p>
+          )}
+        </div>
+        {form && (
+          <>
+            <Switch label={t('Tự động sao lưu', 'Back up automatically')} checked={form.enabled} onChange={(v) => set('enabled', v)} />
+            <div className="form-grid">
+              <label className="field">
+                <span>{t('Mỗi (giờ)', 'Every (hours)')}</span>
+                <input className="input" type="number" min={1} value={form.intervalHours} onChange={(e) => set('intervalHours', Math.max(1, Number(e.target.value)))} />
+              </label>
+              <label className="field">
+                <span>{t('Giữ số bản gần nhất', 'Copies to keep')}</span>
+                <input className="input" type="number" min={1} value={form.keep} onChange={(e) => set('keep', Math.max(1, Number(e.target.value)))} />
+              </label>
+            </div>
+            <label className="field">
+              <span>{t('Thư mục sao lưu', 'Backup folder')}</span>
+              <input className="input" value={form.targetDir} placeholder="data/backups" onChange={(e) => set('targetDir', e.target.value)} />
+              <small>{t('Nên chọn thư mục ở ổ đĩa khác, ví dụ E:\\Glean-backup. Để trống = data/backups.', 'Prefer a folder on another drive, e.g. E:\\Glean-backup. Empty = data/backups.')}</small>
+            </label>
+            <div className="stack" style={{ gap: 4 }}>
+              <Switch label={t('Chép cả ảnh và video đã tải (chỉ chép tệp mới)', 'Also copy downloaded media (new files only)')} checked={form.includeMedia} onChange={(v) => set('includeMedia', v)} />
+              {form.includeMedia && !form.targetDir.trim() && (
+                <small className="muted" style={{ fontSize: 12.5 }}>
+                  {t('Ảnh và video chỉ được chép khi bạn chọn thư mục sao lưu ở trên (để trống thì chỉ sao lưu kho dữ liệu).', 'Media is copied only when you choose a backup folder above (empty backs up the database only).')}
+                </small>
+              )}
+            </div>
+            <Switch label={t('Báo qua Telegram khi sao lưu lỗi', 'Notify via Telegram when a backup fails')} checked={form.notifyOnFail} onChange={(v) => set('notifyOnFail', v)} />
+          </>
+        )}
+        <div className="hstack" style={{ gap: 10 }}>
+          <button className="btn" onClick={() => void save()} disabled={!dirty || !!busy}>
+            {busy === 'save' ? t('Đang lưu…', 'Saving…') : t('Lưu cài đặt', 'Save settings')}
+          </button>
+          <button className="btn btn-primary" onClick={() => void runNow()} disabled={!!busy || !!st?.running || dirty}>
+            {busy === 'run' ? t('Đang sao lưu…', 'Backing up…') : t('Sao lưu ngay', 'Back up now')}
+          </button>
+        </div>
+        {error && (
+          <p className="error-text" role="alert" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
 
 interface Tables {
   tables: { name: string; rows: number }[];
@@ -25,6 +197,8 @@ const TABLE_LABEL: Record<string, [string, string]> = {
   scrape_comment: ['Bình luận đã sàng', 'Sieved comments'],
   sync_history: ['Nhật ký đồng bộ', 'Sync log'],
   sync_history_item: ['Chi tiết nhật ký', 'Sync log items'],
+  comment_revision: ['Bản sửa bình luận', 'Comment revisions'],
+  backup_run: ['Lịch sử sao lưu', 'Backup history'],
 };
 
 function Inner() {
@@ -80,16 +254,18 @@ function Inner() {
         <h1 className="page-title">{t('Sao lưu', 'Backup')}</h1>
         <p className="page-lede">
           {t(
-            'Chép kho sang một tệp cơ sở dữ liệu khác. Ảnh nằm trong thư mục lưu trữ, cần chép riêng.',
-            'Copy the archive into another database file. Images live in the storage folder and need copying separately.',
+            'Sao lưu tự động chép kho và ảnh theo lịch. Sao lưu tay bên dưới chỉ chép kho sang một tệp cơ sở dữ liệu khác, không kèm ảnh.',
+            'Automatic backup copies the archive and media on a schedule. The manual backup below copies only the archive into another database file, without media.',
           )}
         </p>
       </header>
 
       <div className="cols">
         <div className="col-main">
+          <AutoBackup onRan={load} />
+          <div style={{ height: 24 }} />
           <h2 className="section-title" style={{ paddingBottom: 10 }}>
-            {t('Sao lưu toàn bộ', 'Full backup')}
+            {t('Sao lưu tay (chỉ kho)', 'Manual backup (archive only)')}
           </h2>
           <div className="rule-below stack" style={{ gap: 6, paddingBottom: 26 }}>
             <div className="hstack" style={{ gap: 10, alignItems: 'flex-end' }}>

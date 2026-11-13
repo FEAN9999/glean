@@ -230,7 +230,73 @@ CREATE TABLE IF NOT EXISTS upload_session (
   received INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+
+-- Earlier text of a comment, saved each time the forum version changes.
+CREATE TABLE IF NOT EXISTS comment_revision (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  comment_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  replaced_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_comment_revision ON comment_revision(comment_id, id);
+
+CREATE TABLE IF NOT EXISTS backup_run (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trigger TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  file TEXT,
+  size_bytes INTEGER,
+  media_copied INTEGER NOT NULL DEFAULT 0,
+  media_bytes INTEGER NOT NULL DEFAULT 0,
+  media_error TEXT,
+  error TEXT
+);
 `);
+
+/** Adds a column when the table lacks it (CREATE TABLE IF NOT EXISTS never alters existing tables). */
+export function ensureColumn(d: DatabaseSync, table: string, column: string, ddl: string): boolean {
+  const info = d.prepare(`PRAGMA table_info(${table})`).all();
+  if (info.length === 0 || info.some((c: any) => c.name === column)) return false;
+  d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  return true;
+}
+
+const POST_ID_IN_URL = /(?:post-|\/posts\/)(\d+)/;
+
+/** In-place upgrade of databases created by earlier versions. Safe to run on every start. */
+export function migrate(d: DatabaseSync) {
+  ensureColumn(d, 'comment', 'edit_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(d, 'comment', 'edited_at', 'TEXT');
+  ensureColumn(d, 'comment', 'deleted_at', 'TEXT');
+  ensureColumn(d, 'scrape', 'run_no', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(d, 'backup_run', 'media_error', 'TEXT');
+  const items = ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'];
+  for (const t of items) {
+    ensureColumn(d, t, 'post_id', 'INTEGER');
+    ensureColumn(d, t, 'last_seen_run', 'INTEGER NOT NULL DEFAULT 1');
+    ensureColumn(d, t, 'missing_since', 'TEXT');
+    d.exec(`CREATE INDEX IF NOT EXISTS ix_${t}_post ON ${t}(scrape_id, post_id);
+            CREATE INDEX IF NOT EXISTS ix_${t}_postno ON ${t}(scrape_id, post_no, post_id);`);
+  }
+  // Rows sieved before post ids were kept: take the id from the comment's link, then give it to
+  // the media of the same post, so a later re-sieve matches them even when #n has shifted.
+  const legacy = d.prepare('SELECT id, url FROM scrape_comment WHERE post_id IS NULL AND url IS NOT NULL').all() as { id: number; url: string }[];
+  if (legacy.length) {
+    const set = d.prepare('UPDATE scrape_comment SET post_id=? WHERE id=?');
+    d.exec('BEGIN');
+    for (const r of legacy) {
+      const m = POST_ID_IN_URL.exec(r.url);
+      if (m) set.run(Number(m[1]), r.id);
+    }
+    for (const t of items.slice(0, 3))
+      d.exec(`UPDATE ${t} SET post_id=(SELECT c.post_id FROM scrape_comment c WHERE c.scrape_id=${t}.scrape_id
+                AND c.post_no=${t}.post_no AND c.post_id IS NOT NULL LIMIT 1) WHERE post_id IS NULL`);
+    d.exec('COMMIT');
+  }
+}
+migrate(db);
 
 export const now = () => new Date().toISOString();
 

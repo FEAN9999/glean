@@ -131,7 +131,11 @@ interface Item {
   threadId: number;
   title: string;
   author: string;
-  action: 'new' | 'updated' | 'comments';
+  /**
+   * edited / deleted: comments of the thread changed or removed on the forum (commentDelta = how many).
+   * check-skipped: the pages read looked unreliable, so deleted comments were not looked for this time.
+   */
+  action: 'new' | 'updated' | 'comments' | 'edited' | 'deleted' | 'check-skipped';
   commentDelta: number;
   url: string | null;
   isDeleted: number | null;
@@ -198,12 +202,18 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
                 </span>
               </div>
               {!!it.isDeleted && <Status tone="bad">{t('Đã bị xóa trên diễn đàn', 'Deleted on the forum')}</Status>}
-              <span className={`tag ${it.action === 'new' ? 'tag-moss' : it.action === 'comments' ? 'tag-straw' : ''}`}>
+              <span className={`tag ${{ new: 'tag-moss', comments: 'tag-straw', deleted: 'tag-rust', updated: '', edited: '', 'check-skipped': '' }[it.action] ?? ''}`}>
                 {it.action === 'new'
                   ? t('Bài mới', 'New')
                   : it.action === 'updated'
                     ? t('Cập nhật', 'Updated')
-                    : t(`+${fmtNum(it.commentDelta)} bình luận`, `+${fmtNum(it.commentDelta)} comments`)}
+                    : it.action === 'edited'
+                      ? t(`~${fmtNum(it.commentDelta)} sửa`, `~${fmtNum(it.commentDelta)} edited`)
+                      : it.action === 'deleted'
+                        ? t(`−${fmtNum(it.commentDelta)} đã xóa`, `−${fmtNum(it.commentDelta)} deleted`)
+                        : it.action === 'check-skipped'
+                          ? t('Bỏ qua kiểm tra xóa', 'Deletion check skipped')
+                          : t(`+${fmtNum(it.commentDelta)} bình luận`, `+${fmtNum(it.commentDelta)} comments`)}
               </span>
             </li>
           ))}

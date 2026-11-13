@@ -119,6 +119,8 @@ interface CommentSearchBody {
   isExactMatch?: boolean;
   threadId?: number | string | null;
   isSearchByAuthor?: boolean;
+  /** Only comments edited or deleted on the forum. */
+  onlyChanged?: boolean;
 }
 
 function resolveThreadId(v: CommentSearchBody['threadId']) {
@@ -132,6 +134,7 @@ function commentWhere(b: CommentSearchBody, byAuthor: boolean) {
   const keyword = b.keyword.trim();
   const threadId = resolveThreadId(b.threadId);
   const scope = threadId ? { sql: ' AND c.thread_id = ?', params: [threadId] } : { sql: '', params: [] as number[] };
+  if (b.onlyChanged) scope.sql += ' AND (c.edit_count > 0 OR c.deleted_at IS NOT NULL)';
   if (byAuthor) {
     return b.isExactMatch
       ? { join: '', where: `c.author = ? COLLATE NOCASE${scope.sql}`, params: [keyword, ...scope.params] }
@@ -160,7 +163,7 @@ export function searchComments(b: CommentSearchBody, byAuthor: boolean) {
   if (!w) return { items: [], total: 0, page, pageSize: size, nextPage: null };
   const rows = all(
     `SELECT c.id, c.thread_id, c.post_no, c.page, c.author, c.content, c.created_at, c.url,
-            t.title thread_title, t.is_deleted thread_is_deleted
+            c.edit_count, c.edited_at, c.deleted_at, t.title thread_title, t.is_deleted thread_is_deleted
      FROM comment c ${w.join} LEFT JOIN thread t ON t.id = c.thread_id
      WHERE ${w.where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
     ...w.params,
@@ -297,4 +300,13 @@ export function registerSearch(app: FastifyInstance) {
     if (!t) throw new ApiError(404, 'NOT_FOUND', 'Chưa có bài này trong kho.');
     return ok(camel(t));
   });
+
+  /** Earlier versions of an edited comment, newest first. */
+  app.get<{ Params: { id: string } }>('/api/comments/:id/revisions', async (req) =>
+    ok(
+      camelAll(
+        all('SELECT id, content, captured_at, replaced_at FROM comment_revision WHERE comment_id=? ORDER BY id DESC', Number(req.params.id)),
+      ),
+    ),
+  );
 }

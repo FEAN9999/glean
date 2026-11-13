@@ -37,6 +37,8 @@ export interface Scrape {
   syncedCommentCount?: number;
   failedImages?: number;
   donePages?: number[];
+  /** Items kept from earlier runs whose posts are no longer on the forum (detail endpoint only). */
+  missingCounts?: { images: number; videos: number; links: number; comments: number };
 }
 
 export function useStatusLabel() {
