@@ -59,9 +59,11 @@ interface PostSearchBody {
   page?: number;
   keyword: string;
   isSearchByAuthor?: boolean;
-  sortDescendingField?: 'createdAt' | 'commentCount';
+  sortDescendingField?: 'createdAt' | 'commentCount' | 'viewCount' | 'likeCount';
   isExactMatch?: boolean;
 }
+
+const SORT_COLUMN: Record<string, string> = { commentCount: 't.comment_count', viewCount: 't.view_count', likeCount: 't.like_count' };
 
 function postWhere(b: PostSearchBody) {
   const keyword = b.keyword.trim();
@@ -91,10 +93,11 @@ export function searchPosts(b: PostSearchBody) {
   const size = cfg().search.pageSize;
   const page = intParam(b.page, 1);
   if (!w) return { items: [], total: 0, page, pageSize: size, nextPage: null };
-  const order = b.sortDescendingField === 'commentCount' ? 't.comment_count DESC, t.created_at DESC' : 't.created_at DESC';
+  const col = Object.hasOwn(SORT_COLUMN, b.sortDescendingField ?? '') ? SORT_COLUMN[b.sortDescendingField!] : null;
+  const order = col ? `${col} DESC, t.created_at DESC` : 't.created_at DESC';
   const rows = all(
     `SELECT t.id, t.title, t.author, t.forum_id, COALESCE(fo.name, '') forum_name, t.url, t.created_at, t.last_post_at,
-            t.comment_count, t.synced_comment_count, t.is_deleted
+            t.comment_count, t.synced_comment_count, t.view_count, t.like_count, t.is_deleted
      FROM thread t ${w.join} LEFT JOIN forum fo ON fo.id = t.forum_id
      WHERE ${w.where} ORDER BY ${order} LIMIT ? OFFSET ?`,
     ...w.params,

@@ -22,8 +22,14 @@ interface PostItem {
   lastPostAt: string | null;
   commentCount: number;
   syncedCommentCount: number;
+  viewCount: number;
+  likeCount: number;
   isDeleted: boolean;
 }
+
+type PostSort = 'createdAt' | 'commentCount' | 'viewCount' | 'likeCount';
+const POST_SORTS: PostSort[] = ['commentCount', 'viewCount', 'likeCount'];
+const postSort = (v: string | null): PostSort => (POST_SORTS.find((s) => s === v) ?? 'createdAt');
 interface CommentItem {
   id: number;
   threadId: number;
@@ -145,7 +151,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
   // The URL is the source of truth: the global search box and the filters only change it.
   const q = (params.get('q') ?? '').trim();
   const exact = params.get('exact') === '1';
-  const sort: 'createdAt' | 'commentCount' = scope === 'posts' && params.get('sort') === 'commentCount' ? 'commentCount' : 'createdAt';
+  const sort: PostSort = scope === 'posts' ? postSort(params.get('sort')) : 'createdAt';
   const thread = scope === 'comments' ? (params.get('thread') ?? '') : '';
   const changed = scope === 'comments' && params.get('changed') === '1';
 
@@ -277,7 +283,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
     if (q) p.set('q', q);
     if (exact) p.set('exact', '1');
     if (s === scope) {
-      if (sort === 'commentCount') p.set('sort', sort);
+      if (sort !== 'createdAt') p.set('sort', sort);
       if (thread) p.set('thread', thread);
       if (changed) p.set('changed', '1');
     }
@@ -332,9 +338,11 @@ export function SearchPage({ scope }: { scope: Scope }) {
             <option value="nguoi-dang-bai">{t('Theo người đăng', 'By author')}</option>
           </select>
           {scope === 'posts' && (
-            <select className="pick" aria-label={t('Sắp xếp', 'Sort')} value={sort} onChange={(e) => setParam('sort', e.target.value === 'commentCount' ? 'commentCount' : null)}>
+            <select className="pick" aria-label={t('Sắp xếp', 'Sort')} value={sort} onChange={(e) => setParam('sort', postSort(e.target.value) === 'createdAt' ? null : e.target.value)}>
               <option value="createdAt">{t('Mới nhất', 'Newest')}</option>
               <option value="commentCount">{t('Nhiều bình luận nhất', 'Most comments')}</option>
+              <option value="viewCount">{t('Nhiều lượt xem nhất', 'Most views')}</option>
+              <option value="likeCount">{t('Nhiều like nhất', 'Most likes')}</option>
             </select>
           )}
           {scope === 'comments' && (
@@ -445,6 +453,8 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       <span>{p.forumName}</span>
                       <span>{fmtDate(p.createdAt, false)}</span>
                       <span>{t(`${fmtNum(p.commentCount)} bình luận`, `${fmtNum(p.commentCount)} comments`)}</span>
+                      <span>{t(`${fmtNum(p.viewCount)} lượt xem`, `${fmtNum(p.viewCount)} views`)}</span>
+                      <span>{t(`${fmtNum(p.likeCount)} like`, `${fmtNum(p.likeCount)} likes`)}</span>
                       <Link className="link-btn muted" to={`/binh-luan/tu-khoa?thread=${p.id}`}>
                         {t('Tìm bình luận trong bài', 'Search its comments')}
                       </Link>

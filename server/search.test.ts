@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
 import { run } from './db.ts';
-import { registerSearch, searchComments } from './search.ts';
+import { registerSearch, searchComments, searchPosts } from './search.ts';
 import { upsertComments } from './sync.ts';
 import type { ParsedPost } from './source/xenforo.ts';
 
@@ -61,4 +61,34 @@ test('revisions route lists earlier versions, newest first', async () => {
     ['quanhdao bản đã sửa', 'quanhdao bản đầu'],
   );
   assert.ok(r.data[0].capturedAt && r.data[0].replacedAt);
+});
+
+test('searchPosts sorts by views and by likes', () => {
+  for (const [id, views, likes] of [
+    [7101, 5, 9],
+    [7102, 50, 1],
+    [7103, 20, 4],
+  ])
+    run(
+      `INSERT INTO thread(id, forum_id, title, author, url, created_at, view_count, like_count, updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+      id,
+      1,
+      `xepthutu ${id}`,
+      'An',
+      'http://x.test',
+      `2026-11-0${id - 7100}T00:00:00.000Z`,
+      views,
+      likes,
+      '2026-11-01T00:00:00.000Z',
+    );
+  const byViews = searchPosts({ keyword: 'xepthutu', sortDescendingField: 'viewCount' }).items as { viewCount: number; likeCount: number }[];
+  assert.deepEqual(
+    byViews.map((p) => p.viewCount),
+    [50, 20, 5],
+  );
+  const byLikes = searchPosts({ keyword: 'xepthutu', sortDescendingField: 'likeCount' }).items as { viewCount: number; likeCount: number }[];
+  assert.deepEqual(
+    byLikes.map((p) => p.likeCount),
+    [9, 4, 1],
+  );
 });
