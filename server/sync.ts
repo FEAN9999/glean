@@ -518,18 +518,20 @@ async function runManual(o: ManualOptions) {
     manual.result = manual.stopRequested ? 'stopped' : 'completed';
     mlog(manual.stopRequested ? 'Đã dừng theo yêu cầu.' : `Hoàn tất: ${manual.totalSynced} bản ghi.`);
     manual.finishedAt = now();
-    emit(Ev.ManualSyncComplete, manualStatus(), undefined, 'manual-sync');
   } catch (e) {
     manual.result = 'failed';
     manual.error = (e as Error).message;
     manual.finishedAt = now();
     mlog(`Lỗi: ${manual.error}`);
-    emit(Ev.ManualSyncFailed, manualStatus(), manual.error, 'manual-sync');
     if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ thủ công lỗi — ${manual.error}`);
   } finally {
     manual.running = false;
     manual.stopRequested = false;
+    manual.saving = 0;
   }
+  // sent only now, so the page gets the finished state rather than a "running" one
+  if (manual.result === 'failed') emit(Ev.ManualSyncFailed, manualStatus(), manual.error!, 'manual-sync');
+  else emit(Ev.ManualSyncComplete, manualStatus(), undefined, 'manual-sync');
 }
 
 /* ---------------- routes ---------------- */

@@ -2,8 +2,10 @@ import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cfg, loadConfig, updateConfig } from './config.ts';
+import Fastify from 'fastify';
 import { all, get, run } from './db.ts';
-import { commentSyncStartPage, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments } from './sync.ts';
+import { addClient, Ev, removeClient } from './events.ts';
+import { commentSyncStartPage, registerSync, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments } from './sync.ts';
 import type { ListedThread, ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -195,5 +197,24 @@ test('comments sync skips a thread that fails and reads the rest', async () => {
     assert.match(h.error ?? '', /70/);
   } finally {
     updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+});
+
+test('the manual sync "complete" event no longer says it is running', async () => {
+  const events: { type: number; data: any }[] = [];
+  const client = addClient({ raw: { write: (s: string) => s.startsWith('data:') && events.push(JSON.parse(s.slice(5))) } } as any, ['manual-sync']);
+  try {
+    const app = Fastify();
+    registerSync(app);
+    // a forum id that is not configured: the run has nothing to read and finishes at once, without the network
+    const r = await app.inject({ method: 'POST', url: '/api/manual-syncs/start', payload: { type: 'posts', pageFrom: 1, pageTo: 1, forums: [999999] } });
+    assert.equal(r.statusCode, 200);
+    const done = events.find((e) => e.type === Ev.ManualSyncComplete);
+    assert.ok(done, 'a complete event was sent');
+    assert.equal(done.data.running, false);
+    assert.equal(done.data.saving, 0);
+    assert.equal(done.data.result, 'completed');
+  } finally {
+    removeClient(client);
   }
 });
