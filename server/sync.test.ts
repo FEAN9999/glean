@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cfg, loadConfig, updateConfig } from './config.ts';
 import { all, get, run } from './db.ts';
-import { commentSyncStartPage, syncCommentsForum, syncThreadComments, threadsNeedingComments, upsertComments } from './sync.ts';
-import type { ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
+import { commentSyncStartPage, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments } from './sync.ts';
+import type { ListedThread, ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
 
@@ -119,6 +119,80 @@ test('a skipped deletion check shows up in the sync log', async () => {
     assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=60 AND deleted_at IS NOT NULL')!.n, 0);
     const actions = all<{ action: string }>('SELECT action FROM sync_history_item WHERE thread_id=60').map((x) => x.action);
     assert.deepEqual(actions, ['check-skipped']);
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+});
+
+const listed = (id: number): ListedThread => ({
+  id,
+  title: `Bài ${id}`,
+  author: 'An',
+  createdAt: '2026-11-01T00:00:00.000Z',
+  lastPostAt: '2026-11-01T00:00:00.000Z',
+  replies: 0,
+  url: `http://x.test/threads/${id}`,
+});
+
+test('posts sync skips a page that keeps failing and reads the rest', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } } as any, 0);
+  try {
+    const lines: string[] = [];
+    const synced: number[] = [];
+    const fetchListPage = async (_forum: number, page: number) => {
+      if (page === 2) throw new Error('The operation was aborted due to timeout');
+      return { threads: [listed(3000 + page)], totalPages: 3 };
+    };
+    const n = await syncPostsForum({ id: 30, name: 'F30' }, 1, 'all', {
+      trigger: 'manual',
+      shouldStop: () => false,
+      fetchListPage,
+      log: (l) => lines.push(l),
+      onPage: (p) => synced.push(p.synced),
+    });
+    assert.equal(n, 2);
+    assert.deepEqual(all<{ id: number }>('SELECT id FROM thread WHERE forum_id=30 ORDER BY id').map((r) => r.id), [3001, 3003]);
+    assert.ok(lines.some((l) => /trang 2\b.*bỏ qua/i.test(l)), lines.join('\n'));
+    assert.deepEqual(synced, [1, 2]);
+    const h = get<{ error: string | null; sync_count: number }>('SELECT error, sync_count FROM sync_history WHERE forum=30')!;
+    assert.equal(h.sync_count, 2);
+    assert.match(h.error ?? '', /trang 2\b/);
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+});
+
+test('posts sync stops after 3 failed pages in a row', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } } as any, 0);
+  try {
+    let calls = 0;
+    const fetchListPage = async (_forum: number, page: number) => {
+      calls++;
+      if (page >= 2) throw new Error('forum down');
+      return { threads: [listed(3100 + page)], totalPages: 10 };
+    };
+    await assert.rejects(syncPostsForum({ id: 31, name: 'F31' }, 1, 'all', { trigger: 'manual', shouldStop: () => false, fetchListPage }), /forum down/);
+    assert.equal(calls, 4);
+    assert.ok(get('SELECT id FROM thread WHERE id=3101'), 'the page read before the failures is kept');
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+});
+
+test('comments sync skips a thread that fails and reads the rest', async () => {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  try {
+    addThread(70, 32, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    addThread(71, 32, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    const fetchPage = async (id: number): Promise<ParsedThreadPage> => {
+      if (id === 70) throw new Error('The operation was aborted due to timeout');
+      return { title: 'Chủ đề 71', forumId: 32, totalPages: 1, posts: [post(4001)] };
+    };
+    const n = await syncCommentsForum({ id: 32, name: 'F32' }, [70, 71], 5, { trigger: 'manual', shouldStop: () => false, fetchPage });
+    assert.equal(n, 1);
+    assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=71')!.n, 1);
+    const h = get<{ error: string | null }>('SELECT error FROM sync_history WHERE forum=32')!;
+    assert.match(h.error ?? '', /70/);
   } finally {
     updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
   }

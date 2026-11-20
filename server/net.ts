@@ -58,7 +58,27 @@ export interface FetchOpts {
 }
 
 /** fetch through a rotating proxy (when enabled), with timeout and retry on network errors / 5xx. */
-export async function fetchRaw(url: string, opts: FetchOpts = {}): Promise<Response> {
+export function fetchRaw(url: string, opts: FetchOpts = {}): Promise<Response> {
+  return fetchWith(url, opts, async (res) => res);
+}
+
+export interface FetchedPage {
+  status: number;
+  ok: boolean;
+  /** Final URL after redirects. */
+  url: string;
+  text: string;
+}
+
+/**
+ * Like fetchRaw, but reads the body inside the retry loop: the timeout covers the body too,
+ * so a page whose body stalls is fetched again instead of failing outright.
+ */
+export function fetchPage(url: string, opts: FetchOpts = {}): Promise<FetchedPage> {
+  return fetchWith(url, opts, async (res) => ({ status: res.status, ok: res.ok, url: res.url, text: await res.text() }));
+}
+
+async function fetchWith<T>(url: string, opts: FetchOpts, read: (res: Response) => Promise<T>): Promise<T> {
   const retries = opts.retries ?? 2;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -71,13 +91,15 @@ export async function fetchRaw(url: string, opts: FetchOpts = {}): Promise<Respo
         // @ts-expect-error undici dispatcher is accepted by Node's fetch
         dispatcher: proxy?.agent as Dispatcher | undefined,
       });
-      if (proxy) proxy.failures = 0;
       if (res.status >= 500 && attempt < retries) {
+        if (proxy) proxy.failures = 0;
         lastErr = new HttpError(res.status, url);
         await sleep(300 * (attempt + 1));
         continue;
       }
-      return res;
+      const out = await read(res);
+      if (proxy) proxy.failures = 0;
+      return out;
     } catch (e) {
       lastErr = e;
       if (proxy) {

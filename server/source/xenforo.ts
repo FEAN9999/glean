@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { cfg } from '../config.ts';
-import { fetchRaw, HttpError } from '../net.ts';
+import { fetchPage, HttpError } from '../net.ts';
 
 /** Adapter for XenForo-2-style forums: forum listing pages and thread pages. */
 
@@ -124,9 +124,9 @@ export interface ForumNode {
 /** Reads the forum index and returns every forum node (categories and link-forums excluded). */
 export async function fetchForumIndex(baseUrl = base()): Promise<ForumNode[]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/`;
-  const res = await fetchRaw(url);
+  const res = await fetchPage(url);
   if (!res.ok) throw new HttpError(res.status, url);
-  const $ = cheerio.load(await res.text());
+  const $ = cheerio.load(res.text);
   const out = new Map<number, ForumNode>();
   const add = (href: string | undefined, name: string, group: string | null, depth: number) => {
     const m = href?.match(/\/forums\/(?:[^/]*\.)?(\d+)\/?/);
@@ -160,9 +160,9 @@ export class ThreadGoneError extends Error {
 
 export async function fetchForumPage(forumId: number, page: number) {
   const url = forumUrl(forumId, page);
-  const res = await fetchRaw(url);
+  const res = await fetchPage(url);
   if (!res.ok) throw new HttpError(res.status, url);
-  const html = await res.text();
+  const html = res.text;
   const $ = cheerio.load(html);
   const threads: ListedThread[] = [];
   $('.structItem--thread').each((_, el) => {
@@ -187,10 +187,10 @@ export async function fetchForumPage(forumId: number, page: number) {
 
 export async function fetchThreadPage(threadId: number, page: number): Promise<ParsedThreadPage> {
   const url = threadUrl(threadId, page);
-  const res = await fetchRaw(url);
+  const res = await fetchPage(url);
   if (res.status === 404 || res.status === 410) throw new ThreadGoneError(threadId, res.status);
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    const body = res.text;
     if (/challenge-platform|cf-chl|Just a moment/i.test(body))
       throw new Error(`Diễn đàn đang chặn truy cập tự động (HTTP ${res.status}, trang kiểm tra chống bot). Thử lại sau.`);
     if (res.status === 403)
@@ -198,8 +198,7 @@ export async function fetchThreadPage(threadId: number, page: number): Promise<P
     throw new HttpError(res.status, url);
   }
   const pageUrl = res.url || url;
-  const html = await res.text();
-  return parseThreadHtml(html, pageUrl, page);
+  return parseThreadHtml(res.text, pageUrl, page);
 }
 
 export function parseThreadHtml(html: string, pageUrl: string, page: number): ParsedThreadPage {

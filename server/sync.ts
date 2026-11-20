@@ -151,11 +151,43 @@ export interface RunCtx {
   batchSize?: number;
   /** Page reader; defaults to the live forum (tests pass a fake). */
   fetchPage?: typeof fetchThreadPage;
+  /** Forum list page reader; defaults to the live forum (tests pass a fake). */
+  fetchListPage?: typeof fetchForumPage;
 }
 
-async function syncPostsForum(forum: { id: number; name: string }, from: number, to: number | 'all', ctx: RunCtx) {
+/** Failed pages (or threads) in a row before a run gives up: the forum is then likely down, not just slow. */
+const MAX_FAILURES_IN_A_ROW = 3;
+
+/**
+ * Lets a long run step over a page that still fails after fetch retries, instead of losing the
+ * whole run to it. Several failures in a row rethrow the last one.
+ */
+function skipper(ctx: RunCtx) {
+  let inRow = 0;
+  const skipped: string[] = [];
+  return {
+    async run<T>(label: string, step: () => Promise<T>): Promise<T | undefined> {
+      try {
+        const v = await step();
+        inRow = 0;
+        return v;
+      } catch (e) {
+        if (++inRow >= MAX_FAILURES_IN_A_ROW) throw e;
+        skipped.push(label);
+        ctx.log?.(`${label}: lỗi — ${(e as Error).message}. Bỏ qua, chạy tiếp.`);
+        return undefined;
+      }
+    },
+    /** For the sync log: which steps were skipped, so they can be run again. */
+    summary: () => (skipped.length ? `Bỏ qua ${skipped.join(', ')} vì lỗi — chạy lại để lấy phần này.` : undefined),
+  };
+}
+
+export async function syncPostsForum(forum: { id: number; name: string }, from: number, to: number | 'all', ctx: RunCtx) {
   ensureForum(forum.id, forum.name);
   const hid = startHistory('posts', ctx.trigger, forum.id, forum.name);
+  const fetchList = ctx.fetchListPage ?? fetchForumPage;
+  const skip = skipper(ctx);
   let count = 0;
   const buffer: ListedThread[] = [];
   const flush = () => {
@@ -176,18 +208,21 @@ async function syncPostsForum(forum: { id: number; name: string }, from: number,
     let page = from;
     let total = to === 'all' ? Infinity : to;
     while (page <= total && !ctx.shouldStop()) {
-      const r = await fetchForumPage(forum.id, page);
-      if (to === 'all') total = r.totalPages;
-      else total = Math.min(to, r.totalPages);
-      buffer.push(...r.threads);
-      if (buffer.length >= (ctx.batchSize ?? 1)) flush();
-      ctx.onPage?.({ forum: forum.id, forumName: forum.name, page, totalPages: total, synced: count + buffer.length });
-      ctx.log?.(`[${forum.name}] trang ${page}/${total}: ${r.threads.length} bài`);
+      const p = page;
+      const r = await skip.run(`[${forum.name}] trang ${p}`, () => fetchList(forum.id, p));
+      if (r) {
+        if (to === 'all') total = r.totalPages;
+        else total = Math.min(to, r.totalPages);
+        buffer.push(...r.threads);
+        if (buffer.length >= (ctx.batchSize ?? 1)) flush();
+        ctx.onPage?.({ forum: forum.id, forumName: forum.name, page, totalPages: total, synced: count });
+        ctx.log?.(`[${forum.name}] trang ${page}/${total}: ${r.threads.length} bài`);
+      }
       page++;
       if (cfg().scraper.batchDelayMs) await sleep(cfg().scraper.batchDelayMs);
     }
     flush();
-    finishHistory(hid, count);
+    finishHistory(hid, count, skip.summary());
     return count;
   } catch (e) {
     flush();
@@ -274,13 +309,15 @@ export async function syncCommentsForum(
 ) {
   ensureForum(forum.id, forum.name);
   const hid = startHistory('comments', ctx.trigger, forum.id, forum.name);
+  const skip = skipper(ctx);
   let count = 0;
   try {
     let i = 0;
     for (const id of threadIds) {
       if (ctx.shouldStop()) break;
       i++;
-      const n = await syncThreadComments(id, pagesPerThread, ctx);
+      const n = await skip.run(`[${forum.name}] bài ${id}`, () => syncThreadComments(id, pagesPerThread, ctx));
+      if (!n) continue;
       if (n.added || n.edited || n.deleted || n.skipped) {
         const t = get<{ title: string; author: string }>('SELECT title, author FROM thread WHERE id=?', id)!;
         if (n.added) addItem(hid, id, t.title, t.author, 'comments', n.added);
@@ -295,7 +332,7 @@ export async function syncCommentsForum(
         `[${forum.name}] bài ${id}: +${n.added} bình luận${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
       );
     }
-    finishHistory(hid, count);
+    finishHistory(hid, count, skip.summary());
     return count;
   } catch (e) {
     finishHistory(hid, count, (e as Error).message);
@@ -429,6 +466,7 @@ function progress(force = false) {
 
 async function runManual(o: ManualOptions) {
   const forums = o.forums.length ? cfg().source.forums.filter((f) => o.forums.includes(f.id)) : cfg().source.forums;
+  let done = 0; // records saved by forums already finished
   const ctx: RunCtx = {
     trigger: 'manual',
     shouldStop: () => manual.stopRequested,
@@ -438,6 +476,7 @@ async function runManual(o: ManualOptions) {
       manual.forumName = p.forumName;
       manual.currentPage = p.page;
       manual.totalPages = p.totalPages;
+      manual.totalSynced = done + p.synced;
       manual.saving = 0;
       progress();
     },
@@ -454,25 +493,26 @@ async function runManual(o: ManualOptions) {
       manual.forumName = f.name;
       mlog(`Bắt đầu ${o.type === 'posts' ? 'bài viết' : 'bình luận'} — ${f.name}`);
       if (o.type === 'posts') {
-        const n = await syncPostsForum(f, o.allPages ? 1 : o.pageFrom, o.allPages ? 'all' : o.pageTo, ctx);
-        manual.totalSynced += n;
+        done += await syncPostsForum(f, o.allPages ? 1 : o.pageFrom, o.allPages ? 'all' : o.pageTo, ctx);
       } else {
         let ids: number[];
         if (o.allPages) {
           ids = all<{ id: number }>('SELECT id FROM thread WHERE forum_id=? AND is_deleted=0 ORDER BY last_post_at DESC', f.id).map((r) => r.id);
         } else {
           const seen = new Set<number>();
+          const skip = skipper(ctx);
           for (let p = o.pageFrom; p <= o.pageTo && !manual.stopRequested; p++) {
-            const r = await fetchForumPage(f.id, p);
+            const r = await skip.run(`[${f.name}] trang ${p}`, () => fetchForumPage(f.id, p));
+            if (!r) continue;
             tx(() => r.threads.forEach((t) => upsertThread(t, f.id)));
             r.threads.forEach((t) => seen.add(t.id));
             if (p >= r.totalPages) break;
           }
           ids = [...seen];
         }
-        const n = await syncCommentsForum(f, ids, Number.MAX_SAFE_INTEGER, ctx);
-        manual.totalSynced += n;
+        done += await syncCommentsForum(f, ids, Number.MAX_SAFE_INTEGER, ctx);
       }
+      manual.totalSynced = done;
       progress(true);
     }
     manual.result = manual.stopRequested ? 'stopped' : 'completed';
