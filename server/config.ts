@@ -29,6 +29,8 @@ export interface AppConfig {
       recheckPages: number;
       /** Threads with a post this recent are re-read even when no new comments are expected. */
       recheckWithinHours: number;
+      /** Threads read at the same time (auto and manual sync); pages within a thread stay in order. */
+      concurrentThreads: number;
     };
     commentServiceUrl: string;
   };
@@ -86,7 +88,7 @@ export function defaultConfig(port: number): AppConfig {
     },
     sync: {
       posts: { enabled: true, pagesPerRun: 2, intervalMs: 5 * 60_000 },
-      comments: { enabled: true, pagesPerRun: 2, intervalMs: 10 * 60_000, maxThreadsPerRun: 40, recheckPages: 2, recheckWithinHours: 48 },
+      comments: { enabled: true, pagesPerRun: 2, intervalMs: 10 * 60_000, maxThreadsPerRun: 40, recheckPages: 2, recheckWithinHours: 48, concurrentThreads: 3 },
       commentServiceUrl: '',
     },
     scraper: {

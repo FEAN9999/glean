@@ -346,6 +346,12 @@ function Inner() {
                 min: 0,
               })}
               {Num({ p: 'sync.comments.recheckWithinHours', label: t('Đọc lại bài có hoạt động trong (giờ)', 'Re-read threads active within (hours)'), min: 1 })}
+              {Num({
+                p: 'sync.comments.concurrentThreads',
+                label: t('Số bài tải cùng lúc', 'Threads in parallel'),
+                hint: t('Dùng cho cả đồng bộ thủ công. Cao quá dễ bị diễn đàn chặn.', 'Manual sync uses it too. Too high may get you blocked by the forum.'),
+                min: 1,
+              })}
             </div>
             {Text({ p: 'sync.commentServiceUrl', label: t('Địa chỉ dịch vụ bình luận (tùy chọn)', 'Comment service URL (optional)'), placeholder: 'http://…' })}
           </Section>

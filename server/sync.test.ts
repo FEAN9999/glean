@@ -218,3 +218,55 @@ test('the manual sync "complete" event no longer says it is running', async () =
     removeClient(client);
   }
 });
+
+test('comments sync reads several threads at once, up to concurrentThreads', async () => {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+  try {
+    const ids = [80, 81, 82, 83, 84, 85];
+    for (const id of ids) addThread(id, 33, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    let inFlight = 0;
+    let most = 0;
+    const fetchPage = async (id: number): Promise<ParsedThreadPage> => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight--;
+      return { title: `Chủ đề ${id}`, forumId: 33, totalPages: 1, posts: [post(5000 + id)] };
+    };
+    const n = await syncCommentsForum({ id: 33, name: 'F33' }, ids, 5, { trigger: 'manual', shouldStop: () => false, fetchPage });
+    assert.equal(n, 6);
+    assert.equal(most, 3);
+    assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id BETWEEN 80 AND 85')!.n, 6);
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+  }
+});
+
+test('parallel comments sync stops taking threads once failures pile up', async () => {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 2 } } } as any, 0);
+  try {
+    const ids = Array.from({ length: 20 }, (_, i) => 90 + i);
+    for (const id of ids) addThread(id, 34, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    let calls = 0;
+    const fetchPage = async (): Promise<ParsedThreadPage> => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 5));
+      throw new Error('forum down');
+    };
+    await assert.rejects(syncCommentsForum({ id: 34, name: 'F34' }, ids, 5, { trigger: 'manual', shouldStop: () => false, fetchPage }), /forum down/);
+    assert.ok(calls <= 4, `stopped early, made ${calls} calls`);
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+  }
+});
+
+test('threadsNeedingComments with no limit returns every thread still to sync', () => {
+  const at = new Date('2026-11-13T12:00:00.000Z');
+  const hoursAgo = (h: number) => new Date(at.getTime() - h * 3600_000).toISOString();
+  for (let id = 120; id < 130; id++) addThread(id, 35, { commentCount: 3, synced: 0, lastPostAt: hoursAgo(200) }); // missing comments
+  addThread(130, 35, { commentCount: 2, synced: 3, lastPostAt: hoursAgo(200) }); // complete and quiet: skipped
+  addThread(131, 35, { commentCount: 2, synced: 3, lastPostAt: hoursAgo(1) }); // complete but active: re-read
+  const ids = threadsNeedingComments(35, Infinity, at);
+  assert.equal(ids.length, 11);
+  assert.ok(!ids.includes(130));
+  assert.ok(ids.includes(131));
+});

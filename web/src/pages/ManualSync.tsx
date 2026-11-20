@@ -11,7 +11,7 @@ interface SyncStatus {
   running: boolean;
   stopRequested: boolean;
   type: 'posts' | 'comments';
-  options: { type: string; allPages: boolean; pageFrom: number; pageTo: number; batchSize: number; forums: number[] } | null;
+  options: { type: string; allPages: boolean; pageFrom: number; pageTo: number; batchSize: number; forums: number[]; onlyMissing: boolean } | null;
   forum: number | null;
   forumName: string;
   currentPage: number;
@@ -94,6 +94,7 @@ function Inner() {
   const [pageTo, setPageTo] = useState(3);
   const [batchSize, setBatchSize] = useState(100);
   const [picked, setPicked] = useState<number[]>([]);
+  const [onlyMissing, setOnlyMissing] = useState(true);
   const [st, setSt] = useState<SyncStatus | null>(null);
   const [logs, setLogs] = useState<{ at: string; line: string }[]>([]);
   const [error, setError] = useState('');
@@ -131,7 +132,7 @@ function Inner() {
     e.preventDefault();
     setError('');
     try {
-      const r = await api.post<SyncStatus>('/manual-syncs/start', { type, allPages, pageFrom, pageTo, batchSize, forums: picked }, { quiet: true });
+      const r = await api.post<SyncStatus>('/manual-syncs/start', { type, allPages, pageFrom, pageTo, batchSize, forums: picked, onlyMissing: type === 'comments' && onlyMissing }, { quiet: true });
       setLogs([]);
       onStatus(r.data);
     } catch (err) {
@@ -151,6 +152,7 @@ function Inner() {
     ? [
         st?.forumName || (o.forums.length ? t(`${o.forums.length} chuyên mục`, `${o.forums.length} sections`) : t('Mọi chuyên mục', 'All sections')),
         o.allPages ? t('tất cả các trang', 'every page') : t(`trang ${o.pageFrom}–${o.pageTo}`, `pages ${o.pageFrom}–${o.pageTo}`),
+        ...(o.onlyMissing ? [t('chỉ bài còn thiếu', 'missing only')] : []),
       ].join(' · ')
     : '';
 
@@ -203,7 +205,20 @@ function Inner() {
                 <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} disabled={running} />
                 {type === 'posts' ? t('Tất cả các trang', 'Every page') : t('Mọi bài đã có trong kho', 'Every thread in the archive')}
               </label>
+              {type === 'comments' && (
+                <label className="check" style={{ height: 40 }}>
+                  <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} disabled={running} />
+                  {t('Chỉ bài còn thiếu bình luận', 'Only threads missing comments')}
+                </label>
+              )}
             </div>
+            {type === 'comments' && (
+              <p className="section-sub">
+                {onlyMissing
+                  ? t('Bỏ qua bài đã đủ bình luận và không có hoạt động gần đây.', 'Skips threads that have every comment and no recent activity.')
+                  : t('Đọc lại cả bài đã đủ bình luận để phát hiện bình luận bị sửa/xóa — lâu hơn nhiều.', 'Re-reads complete threads too, to catch edited/deleted comments — much slower.')}
+              </p>
+            )}
             {type === 'comments' && !allPages && (
               <p className="section-sub">
                 {t('Lấy các bài nằm trong khoảng trang này của chuyên mục, rồi tải toàn bộ bình luận của từng bài.', 'Takes the threads on these section pages, then pulls every comment of each.')}

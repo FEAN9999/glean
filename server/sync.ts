@@ -6,7 +6,7 @@ import { ApiError, intParam, ok } from './http.ts';
 import { fetchForumPage, fetchThreadPage, ThreadGoneError, type ListedThread, type ParsedPost } from './source/xenforo.ts';
 import { requireSudo } from './auth.ts';
 import { telegram } from './notify.ts';
-import { sleep } from './net.ts';
+import { pool, sleep } from './net.ts';
 import { normalizeText, reconcileDeletions, type ReconcileSkip } from './archive.ts';
 
 type SyncType = 'posts' | 'comments';
@@ -313,11 +313,19 @@ export async function syncCommentsForum(
   let count = 0;
   try {
     let i = 0;
-    for (const id of threadIds) {
-      if (ctx.shouldStop()) break;
+    // Set when a run gives up; the other workers then stop taking threads before the error is rethrown.
+    let failure: { e: unknown } | null = null;
+    await pool(threadIds, cfg().sync.comments.concurrentThreads, async (id) => {
+      if (failure || ctx.shouldStop()) return;
+      let n: Awaited<ReturnType<typeof syncThreadComments>> | undefined;
+      try {
+        n = await skip.run(`[${forum.name}] bài ${id}`, () => syncThreadComments(id, pagesPerThread, ctx));
+      } catch (e) {
+        failure ??= { e };
+        return;
+      }
       i++;
-      const n = await skip.run(`[${forum.name}] bài ${id}`, () => syncThreadComments(id, pagesPerThread, ctx));
-      if (!n) continue;
+      if (!n) return;
       if (n.added || n.edited || n.deleted || n.skipped) {
         const t = get<{ title: string; author: string }>('SELECT title, author FROM thread WHERE id=?', id)!;
         if (n.added) addItem(hid, id, t.title, t.author, 'comments', n.added);
@@ -331,7 +339,8 @@ export async function syncCommentsForum(
       ctx.log?.(
         `[${forum.name}] bài ${id}: +${n.added} bình luận${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
       );
-    }
+    });
+    if (failure) throw (failure as { e: unknown }).e;
     finishHistory(hid, count, skip.summary());
     return count;
   } catch (e) {
@@ -351,7 +360,7 @@ export function threadsNeedingComments(forumId: number, limit: number, at = new 
     forumId,
     c.recheckPages,
     since,
-    limit,
+    Number.isFinite(limit) ? limit : -1, // -1: no limit
   ).map((r) => r.id);
 }
 
@@ -424,6 +433,8 @@ interface ManualOptions {
   pageTo: number;
   batchSize: number;
   forums: number[];
+  /** Comments only: skip threads that already have every comment and were not active lately. */
+  onlyMissing: boolean;
 }
 
 const manual = {
@@ -496,7 +507,9 @@ async function runManual(o: ManualOptions) {
         done += await syncPostsForum(f, o.allPages ? 1 : o.pageFrom, o.allPages ? 'all' : o.pageTo, ctx);
       } else {
         let ids: number[];
-        if (o.allPages) {
+        if (o.allPages && o.onlyMissing) {
+          ids = threadsNeedingComments(f.id, Infinity);
+        } else if (o.allPages) {
           ids = all<{ id: number }>('SELECT id FROM thread WHERE forum_id=? AND is_deleted=0 ORDER BY last_post_at DESC', f.id).map((r) => r.id);
         } else {
           const seen = new Set<number>();
@@ -509,7 +522,12 @@ async function runManual(o: ManualOptions) {
             if (p >= r.totalPages) break;
           }
           ids = [...seen];
+          if (o.onlyMissing) {
+            const needing = new Set(threadsNeedingComments(f.id, Infinity));
+            ids = ids.filter((id) => needing.has(id));
+          }
         }
+        if (o.onlyMissing) mlog(`[${f.name}] ${ids.length} bài cần tải bình luận.`);
         done += await syncCommentsForum(f, ids, Number.MAX_SAFE_INTEGER, ctx);
       }
       manual.totalSynced = done;
@@ -601,6 +619,7 @@ export function registerSync(app: FastifyInstance) {
       pageTo: intParam(b.pageTo, 1),
       batchSize: intParam(b.batchSize, 100, 1, 5000),
       forums: Array.isArray(b.forums) ? b.forums.map(Number).filter(Boolean) : [],
+      onlyMissing: !!b.onlyMissing,
     };
     if (!o.allPages && o.pageTo < o.pageFrom) throw new ApiError(400, 'INVALID_RANGE', 'Trang kết thúc phải lớn hơn hoặc bằng trang bắt đầu.', 'inline');
     Object.assign(manual, {
