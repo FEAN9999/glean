@@ -218,6 +218,19 @@ function svgImage(key: string) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560"><rect width="800" height="560" fill="hsl(${hue} 30% 88%)"/>${shapes}<text x="24" y="536" font-family="sans-serif" font-size="22" fill="rgba(0,0,0,.55)">${esc(key)}</text></svg>`;
 }
 
+/** Deterministic view count, so sorting by views has something to show. */
+const demoViews = (threadId: number, posts: number) => ((threadId * 7919) % 4000) + posts * 25;
+
+/** Deterministic reactions bar in the forum's "A, B và N người khác" form; none for some posts. */
+function demoReactions(postId: number) {
+  const n = (postId * 31) % 9;
+  if (!n) return '';
+  const names = ['Mít', 'Ổi', 'Na'].slice(0, Math.min(n, 2));
+  const rest = n - names.length;
+  const who = names.map((x) => `<bdi>${x}</bdi>`).join(', ') + (rest ? ` và ${rest} người khác` : '');
+  return `<div class="reactionsBar js-reactionsList is-active"><a class="reactionsBar-link">${who}</a></div>`;
+}
+
 export function registerDemoForum(app: FastifyInstance) {
   app.get('/demo-forum/', async (_req, reply) => {
     const nodes = FORUMS.map(
@@ -246,7 +259,7 @@ export function registerDemoForum(app: FastifyInstance) {
     <div class="structItem-title"><a href="/demo-forum/threads/${slugify(t.title)}.${t.id}/">${esc(t.title)}</a></div>
     <div class="structItem-minor"><ul class="structItem-parts"><li><a class="username">${esc(t.author)}</a></li><li class="structItem-startDate"><a>${timeTag(t.createdAt)}</a></li></ul></div>
   </div>
-  <div class="structItem-cell structItem-cell--meta"><dl class="pairs pairs--justified"><dt>Trả lời</dt><dd>${posts.length - 1}</dd></dl></div>
+  <div class="structItem-cell structItem-cell--meta"><dl class="pairs pairs--justified"><dt>Trả lời</dt><dd>${posts.length - 1}</dd></dl><dl class="pairs pairs--justified structItem-minor"><dt>Lượt xem</dt><dd>${demoViews(t.id, posts.length)}</dd></dl></div>
   <div class="structItem-cell structItem-cell--latest"><a class="structItem-latestDate">${timeTag(posts.at(-1)!.at)}</a></div>
 </div>`,
       )
@@ -279,7 +292,7 @@ export function registerDemoForum(app: FastifyInstance) {
     </header>
     <div class="message-content"><div class="message-body"><div class="bbWrapper">${editedPosts.get(p.id)?.html ?? p.html}</div></div>${
       editedPosts.has(p.id) ? `<div class="message-lastEdit">Sửa lần cuối: ${timeTag(editedPosts.get(p.id)!.at)}</div>` : ''
-    }</div>
+    }${demoReactions(p.id)}</div>
   </div>
 </article>`,
       )

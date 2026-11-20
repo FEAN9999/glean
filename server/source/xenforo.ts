@@ -12,6 +12,8 @@ export interface ListedThread {
   createdAt: string;
   lastPostAt: string | null;
   replies: number;
+  /** Views shown in the forum listing; 0 when the listing has none. */
+  views?: number;
   url: string;
 }
 
@@ -27,6 +29,8 @@ export interface ParsedPost {
   images: string[];
   videos: { url: string; kind: 'file' | 'embed' }[];
   links: { url: string; text: string }[];
+  /** Reactions (likes) on the post; 0 when it has none. */
+  likes?: number;
 }
 
 export interface ParsedThreadPage {
@@ -152,6 +156,14 @@ export async function fetchForumIndex(baseUrl = base()): Promise<ForumNode[]> {
   return [...out.values()];
 }
 
+/** "A, B và 12 người khác" / "A and 3 others" → named users plus the others. */
+function reactionCount(bar: cheerio.Cheerio<AnyNode>) {
+  if (!bar.length) return 0;
+  const named = bar.find('bdi').length || bar.find('.username').length;
+  const others = bar.text().match(/([\d.,]+[KM]?)\s*(?:người khác|others?)/i);
+  return named + (others ? parseCount(others[1]) : 0);
+}
+
 export class ThreadGoneError extends Error {
   constructor(public threadId: number, public status: number) {
     super(`Thread ${threadId} unavailable (HTTP ${status})`);
@@ -162,7 +174,10 @@ export async function fetchForumPage(forumId: number, page: number) {
   const url = forumUrl(forumId, page);
   const res = await fetchPage(url);
   if (!res.ok) throw new HttpError(res.status, url);
-  const html = res.text;
+  return parseForumHtml(res.text, url);
+}
+
+export function parseForumHtml(html: string, url: string) {
   const $ = cheerio.load(html);
   const threads: ListedThread[] = [];
   $('.structItem--thread').each((_, el) => {
@@ -171,7 +186,8 @@ export async function fetchForumPage(forumId: number, page: number) {
     const href = abs(a.attr('href'), url);
     const ref = href ? parseThreadRef(href) : null;
     if (!ref) return;
-    const metaDd = item.find('.structItem-cell--meta dl').first().find('dd').first().text();
+    const metaDl = item.find('.structItem-cell--meta dl');
+    const metaDd = metaDl.first().find('dd').first().text();
     threads.push({
       id: ref.threadId,
       title: a.text().trim(),
@@ -179,6 +195,7 @@ export async function fetchForumPage(forumId: number, page: number) {
       createdAt: timeOf($, item.find('.structItem-startDate')) ?? new Date().toISOString(),
       lastPostAt: timeOf($, item.find('.structItem-latestDate').parent()) ?? timeOf($, item.find('.structItem-cell--latest')),
       replies: parseCount(metaDd),
+      views: parseCount(metaDl.eq(1).find('dd').first().text()),
       url: href!,
     });
   });
@@ -302,6 +319,7 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
       images: [...images],
       videos: [...videos].map(([u, kind]) => ({ url: u, kind })),
       links,
+      likes: reactionCount(art.find('.reactionsBar').first()),
     });
   });
 
