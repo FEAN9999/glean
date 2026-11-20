@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { all, run, now, DATA_DIR } from './db.ts';
 import { emit, Ev } from './events.ts';
+import { ApiError } from './http.ts';
 
 export interface PauseFlag {
   isPaused: boolean;
@@ -222,9 +223,15 @@ export function unmaskPatch(patch: any) {
   }
   if (Array.isArray(patch?.proxy?.list)) {
     const old = new Map(current.proxy.list.map((l) => [l.split(':').slice(0, 3).join(':'), l]));
-    patch.proxy.list = patch.proxy.list.map((line: string) =>
-      line.endsWith(MASK) ? old.get(line.split(':').slice(0, 3).join(':')) ?? line : line,
-    );
+    patch.proxy.list = patch.proxy.list.map((line: string) => {
+      if (!line.endsWith(MASK)) return line;
+      const key = line.split(':').slice(0, 3).join(':');
+      const stored = old.get(key);
+      // Without a stored line for this host:port:user there is no password to restore;
+      // saving the line as is would make the mask itself the password.
+      if (!stored) throw new ApiError(400, 'PROXY_PASSWORD_REQUIRED', `Nhập lại mật khẩu cho proxy ${key} (đã đổi máy chủ, cổng hoặc tài khoản).`, 'inline');
+      return stored;
+    });
   }
   return patch;
 }
