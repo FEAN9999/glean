@@ -26,8 +26,8 @@ export function upsertThread(t: ListedThread, forumId: number): { action: 'new' 
   );
   if (!ex) {
     run(
-      `INSERT INTO thread(id, forum_id, title, title_lc, author, url, created_at, last_post_at, comment_count, updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO thread(id, forum_id, title, title_lc, author, url, created_at, last_post_at, comment_count, view_count, updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
       t.id,
       forumId,
       t.title,
@@ -37,21 +37,25 @@ export function upsertThread(t: ListedThread, forumId: number): { action: 'new' 
       t.createdAt,
       t.lastPostAt,
       t.replies,
+      t.views ?? 0,
       now(),
     );
     return { action: 'new', delta: t.replies };
   }
   if (ex.title === t.title && ex.comment_count === t.replies && ex.last_post_at === t.lastPostAt && !ex.is_deleted) {
+    // Views change all the time: keep them current without counting the thread as updated.
+    run('UPDATE thread SET view_count=? WHERE id=? AND view_count<>?', t.views ?? 0, t.id, t.views ?? 0);
     return { action: null, delta: 0 };
   }
   run(
-    `UPDATE thread SET title=?, title_lc=?, forum_id=?, url=?, last_post_at=?, comment_count=?, is_deleted=0, updated_at=? WHERE id=?`,
+    `UPDATE thread SET title=?, title_lc=?, forum_id=?, url=?, last_post_at=?, comment_count=?, view_count=?, is_deleted=0, updated_at=? WHERE id=?`,
     t.title,
     t.title.toLowerCase(),
     forumId,
     t.url,
     t.lastPostAt,
     t.replies,
+    t.views ?? 0,
     now(),
     t.id,
   );
@@ -72,8 +76,8 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
     const ex = get<{ content: string; updated_at: string }>('SELECT content, updated_at FROM comment WHERE id=?', id);
     if (!ex) {
       run(
-        `INSERT INTO comment(id, thread_id, post_no, page, author, content, content_lc, created_at, url, updated_at, edited_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO comment(id, thread_id, post_no, page, author, content, content_lc, created_at, url, updated_at, edited_at, like_count)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
         id,
         threadId,
         p.postNo,
@@ -85,6 +89,7 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
         p.url,
         at,
         p.editedAt,
+        p.likes ?? 0,
       );
       added++;
       continue;
@@ -114,8 +119,15 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
       p.editedAt,
       p.editedAt,
     );
+    run('UPDATE comment SET like_count=? WHERE id=? AND like_count<>?', p.likes ?? 0, id, p.likes ?? 0);
   }
-  run('UPDATE thread SET synced_comment_count=(SELECT COUNT(*) FROM comment WHERE thread_id=?) WHERE id=?', threadId, threadId);
+  run(
+    `UPDATE thread SET synced_comment_count=(SELECT COUNT(*) FROM comment WHERE thread_id=?),
+       like_count=(SELECT COALESCE(SUM(like_count), 0) FROM comment WHERE thread_id=?) WHERE id=?`,
+    threadId,
+    threadId,
+    threadId,
+  );
   return { added, edited };
 }
 

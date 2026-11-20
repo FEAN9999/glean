@@ -5,7 +5,7 @@ import { cfg, loadConfig, updateConfig } from './config.ts';
 import Fastify from 'fastify';
 import { all, get, run } from './db.ts';
 import { addClient, Ev, removeClient } from './events.ts';
-import { commentSyncStartPage, registerSync, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments } from './sync.ts';
+import { commentSyncStartPage, registerSync, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments, upsertThread } from './sync.ts';
 import type { ListedThread, ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -269,4 +269,30 @@ test('threadsNeedingComments with no limit returns every thread still to sync', 
   assert.equal(ids.length, 11);
   assert.ok(!ids.includes(130));
   assert.ok(ids.includes(131));
+});
+
+test('upsertThread stores views; a views-only change is saved but not counted as an update', () => {
+  const listed: ListedThread = {
+    id: 9201,
+    title: 'Chủ đề 9201',
+    author: 'An',
+    createdAt: '2026-11-01T00:00:00.000Z',
+    lastPostAt: '2026-11-02T00:00:00.000Z',
+    replies: 3,
+    views: 10,
+    url: 'http://x.test/threads/t.9201/',
+  };
+  assert.equal(upsertThread(listed, 1).action, 'new');
+  assert.equal(get<{ v: number }>('SELECT view_count v FROM thread WHERE id=9201')!.v, 10);
+  assert.deepEqual(upsertThread({ ...listed, views: 25 }, 1), { action: null, delta: 0 });
+  assert.equal(get<{ v: number }>('SELECT view_count v FROM thread WHERE id=9201')!.v, 25);
+});
+
+test('upsertComments keeps per-post likes and sums them on the thread', () => {
+  addThread(9202, 1, { commentCount: 1, synced: 0, lastPostAt: '2026-11-02T00:00:00.000Z' });
+  upsertComments(9202, 1, [{ ...post(92001), likes: 3 }, { ...post(92002), likes: 4 }]);
+  assert.equal(get<{ n: number }>('SELECT like_count n FROM thread WHERE id=9202')!.n, 7);
+  upsertComments(9202, 1, [{ ...post(92001), likes: 3 }, { ...post(92002), likes: 1 }]);
+  assert.equal(get<{ n: number }>('SELECT like_count n FROM comment WHERE id=92002')!.n, 1);
+  assert.equal(get<{ n: number }>('SELECT like_count n FROM thread WHERE id=9202')!.n, 4);
 });

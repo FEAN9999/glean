@@ -272,6 +272,12 @@ export function migrate(d: DatabaseSync) {
   ensureColumn(d, 'comment', 'deleted_at', 'TEXT');
   ensureColumn(d, 'scrape', 'run_no', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(d, 'backup_run', 'media_error', 'TEXT');
+  ensureColumn(d, 'thread', 'view_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(d, 'thread', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(d, 'comment', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
+  if (d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread'").get())
+    d.exec(`CREATE INDEX IF NOT EXISTS ix_thread_views ON thread(view_count DESC);
+            CREATE INDEX IF NOT EXISTS ix_thread_likes ON thread(like_count DESC);`);
   const items = ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'];
   for (const t of items) {
     ensureColumn(d, t, 'post_id', 'INTEGER');
