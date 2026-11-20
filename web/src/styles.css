@@ -1398,10 +1398,214 @@ a.gtr:hover .gt-title {
 
 /* ================= gallery ================= */
 
+/* --tile: narrowest a tile may get before the row drops a column */
 .gallery {
+  --tile: 118px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--tile), 100%), 1fr));
   gap: 12px;
+}
+.gallery.size-s {
+  --tile: 150px;
+}
+.gallery.size-m {
+  --tile: 260px;
+  gap: 18px 14px;
+}
+/* one image per row, whole picture, no crop */
+.gallery.size-l {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+}
+.gallery.size-l .tile {
+  aspect-ratio: auto;
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  background: var(--field);
+}
+.gallery.size-l .tile img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 82vh;
+  object-fit: contain;
+}
+.shot {
+  margin: 0;
+  min-width: 0;
+}
+.shot-cap {
+  padding-top: 6px;
+  font-size: 12.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery.size-s .shot-cap {
+  display: none;
+}
+
+/* count + view options above a tab's content */
+.tab-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: -6px 0 16px;
+  font-size: 13px;
+}
+
+/* videos: playable in place */
+.reels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+  gap: 26px 20px;
+}
+.reel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.player {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+.player video,
+.player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #000;
+}
+.player-off {
+  aspect-ratio: auto;
+  min-height: 132px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 12px;
+  font-size: 13px;
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px dashed var(--axis);
+}
+
+/* numbered pagination */
+/* two centred rows: page buttons, then "showing x–y of n" and the jump box */
+.pager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.pager-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 18px;
+}
+.pager-info {
+  color: var(--dim);
+}
+.pager-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pg {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r-field);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 300;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.pg:hover {
+  border-color: var(--dim);
+}
+.pg.on,
+.pg.on:hover {
+  background: var(--tint);
+  border-color: var(--tint);
+  color: var(--acc-ink);
+  font-weight: 500;
+  cursor: default;
+}
+.pg-step {
+  color: var(--acc-ink);
+  font-weight: 500;
+}
+.pg-step > [aria-hidden] {
+  font-size: 17px;
+  line-height: 1;
+  margin-top: -2px;
+}
+.pg:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pg:disabled:hover {
+  border-color: var(--bd);
+}
+.pg-gap {
+  min-width: 22px;
+  text-align: center;
+  color: var(--dim);
+}
+.pager-jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+}
+.pager-jump input {
+  width: 64px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r-field);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.pager-jump input::-webkit-outer-spin-button,
+.pager-jump input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.pager-jump input:focus {
+  outline: none;
+  border-color: var(--acc);
+  box-shadow: 0 0 0 1px var(--acc);
 }
 .tile {
   position: relative;
@@ -2081,6 +2285,26 @@ a.result-title:hover {
 @media (max-width: 879px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .gallery.size-s {
+    --tile: 96px;
+  }
+  .gallery.size-m {
+    --tile: 150px;
+  }
+  .pager-pages {
+    gap: 3px;
+  }
+  .pg {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+  }
+  .pg-word {
+    display: none;
+  }
+  .pg-gap {
+    min-width: 14px;
   }
   .rail {
     display: none;

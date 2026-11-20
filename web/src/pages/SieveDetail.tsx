@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, useConfirm, useUi } from '../components/ui';
+import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, useStatusLabel, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
@@ -56,9 +56,26 @@ interface Cmt {
 
 type Tab = 'images' | 'videos' | 'links' | 'comments' | 'synced-comments';
 
+/** Brings the tab bar back into view (below the sticky top bar) when it is above the screen. */
+function scrollToTabs() {
+  const tabs = document.getElementById('tabs');
+  if (!tabs) return;
+  const bar = document.querySelector('.topbar')?.getBoundingClientRect().height ?? 0;
+  const top = Math.max(0, tabs.getBoundingClientRect().top + window.scrollY - bar - 12);
+  // Instant: a smooth scroll is cancelled by the new page's images loading in.
+  if (window.scrollY > top) window.scrollTo({ top, behavior: 'instant' });
+}
+
 function usePaged<T>(path: string, size: number, extra = '', deps: unknown[] = []) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: T[]; total: number; extra: Record<string, unknown> } | null>(null);
+  // Scroll once the new page is on screen; scrolling earlier is cut short when the page gets shorter.
+  const scrollPending = useRef(false);
+  useEffect(() => {
+    if (!scrollPending.current) return;
+    scrollPending.current = false;
+    scrollToTabs();
+  }, [data]);
   const load = useCallback(
     (p: number) => {
       api
@@ -78,8 +95,8 @@ function usePaged<T>(path: string, size: number, extra = '', deps: unknown[] = [
     page,
     setPage: (p: number) => {
       setPage(p);
+      scrollPending.current = true;
       load(p);
-      window.scrollTo({ top: document.getElementById('tabs')?.offsetTop ?? 0, behavior: 'smooth' });
     },
     reload: () => load(page),
   };
@@ -145,6 +162,14 @@ function MissingTag({ since }: { since: string }) {
 const pageLabel = (t: (vi: string, en: string) => string, page: number, postNo: number | null) =>
   t(`Trang ${page}${postNo ? ` · bình luận #${postNo}` : ''}`, `Page ${page}${postNo ? ` · post #${postNo}` : ''}`);
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
 const isViewable = (i: Img) => !!(i.currentUrl || (i.displayByOriginUrl && !i.isBin));
 
 function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onOpen: () => void }) {
@@ -181,7 +206,7 @@ function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onO
       aria-label={t(`Phóng to ảnh ở trang ${img.page}`, `Enlarge image on page ${img.page}`)}
       aria-pressed={selected}
     >
-      <img src={src} loading="lazy" alt="" onError={() => setBroken(true)} />
+      <img src={src} loading="lazy" decoding="async" alt="" onError={() => setBroken(true)} />
       {img.missingSince && <span className="tile-flag">{t('Không còn trên diễn đàn', 'No longer on the forum')}</span>}
     </button>
   );
@@ -192,20 +217,71 @@ interface Picked {
   list: Img[];
 }
 
+/** Gallery tile size: small grid, large grid, or one full uncropped image per row. */
+type TileSize = 's' | 'm' | 'l';
+const TILE_SIZE_KEY = 'imageTileSize';
+
+function useTileSize() {
+  const [size, setSize] = useState<TileSize>(() => {
+    try {
+      const v = localStorage.getItem(TILE_SIZE_KEY);
+      if (v === 's' || v === 'm' || v === 'l') return v;
+    } catch {
+      /* storage blocked: use the default */
+    }
+    return 'm';
+  });
+  const set = (v: TileSize) => {
+    setSize(v);
+    try {
+      localStorage.setItem(TILE_SIZE_KEY, v);
+    } catch {
+      /* not remembered, still applied */
+    }
+  };
+  return [size, set] as const;
+}
+
+const IMAGES_PER_PAGE = 48;
+
 function ImagesTab({ id, selectedId, onPick }: { id: number; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
   const { t } = useI18n();
-  const { data, page, setPage } = usePaged<Img>(`/scrapes/${id}/images`, 48);
+  const [tileSize, setTileSize] = useTileSize();
+  const { data, page, setPage } = usePaged<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE);
   if (!data) return <Spinner label={t('Đang tải ảnh', 'Loading images')} />;
   if (!data.total) return <Empty title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</Empty>;
   const viewable = data.items.filter(isViewable);
+  const sizes: { key: TileSize; label: string; hint: string }[] = [
+    { key: 's', label: t('Nhỏ', 'Small'), hint: t('Nhiều ảnh trên một hàng', 'Many images per row') },
+    { key: 'm', label: t('Vừa', 'Medium'), hint: t('Ảnh lớn, xếp lưới', 'Large images in a grid') },
+    { key: 'l', label: t('Lớn', 'Large'), hint: t('Mỗi hàng một ảnh, không cắt', 'One full, uncropped image per row') },
+  ];
   return (
     <>
-      <div className="gallery">
+      <div className="tab-tools">
+        <span className="muted num">{pageRange(t, page, data.total, IMAGES_PER_PAGE, t('ảnh', 'images'))}</span>
+        <div className="hstack" style={{ gap: 10 }} role="group" aria-label={t('Cỡ ảnh', 'Image size')}>
+          <span className="muted" aria-hidden="true">
+            {t('Cỡ ảnh', 'Image size')}
+          </span>
+          <div className="seg">
+            {sizes.map((s) => (
+              <button key={s.key} className={tileSize === s.key ? 'on' : ''} aria-pressed={tileSize === s.key} title={s.hint} onClick={() => setTileSize(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className={`gallery size-${tileSize}`}>
         {data.items.map((img) => (
-          <ImageTile key={img.id} img={img} selected={img.id === selectedId} onOpen={() => onPick({ img, list: viewable }, true)} />
+          <figure key={img.id} className="shot">
+            <ImageTile img={img} selected={img.id === selectedId} onOpen={() => onPick({ img, list: viewable }, true)} />
+            <figcaption className="shot-cap">{pageLabel(t, img.page, img.postNo)}</figcaption>
+          </figure>
         ))}
       </div>
-      <Pager page={page} total={data.total} size={48} onPage={setPage} />
+      <Pager page={page} total={data.total} size={IMAGES_PER_PAGE} onPage={setPage} unit={t('ảnh', 'images')} />
     </>
   );
 }
@@ -220,12 +296,7 @@ function PickedImage({ picked, onZoom }: { picked: Picked | null; onZoom: () => 
       </p>
     );
   const { img } = picked;
-  let host = img.originUrl;
-  try {
-    host = new URL(img.originUrl).host;
-  } catch {
-    /* keep raw */
-  }
+  const host = hostOf(img.originUrl);
   return (
     <>
       <div className="kv">
@@ -266,35 +337,97 @@ function PickedImage({ picked, onZoom }: { picked: Picked | null; onZoom: () => 
   );
 }
 
+/** Only http(s) pages on another origin are framed; anything else is shown as a link. */
+function embeddable(url: string) {
+  try {
+    const u = new URL(url, window.location.href);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Only one video plays at a time. */
+const pauseOthers = (e: SyntheticEvent<HTMLVideoElement>) => {
+  document.querySelectorAll('video').forEach((el) => el !== e.currentTarget && el.pause());
+};
+
+/**
+ * Plays a video in place: the downloaded copy when there is one, otherwise the file straight
+ * from its source; embeds (YouTube and the like) in a sandboxed frame.
+ */
+function VideoPlayer({ v }: { v: Vid }) {
+  const { t } = useI18n();
+  const [failed, setFailed] = useState(false);
+  const title = t(`Video ở trang ${v.page}`, `Video on page ${v.page}`);
+  const src = v.kind === 'embed' ? v.originUrl : (v.currentUrl ?? v.originUrl);
+  const canPlay = v.kind === 'embed' ? embeddable(src) : !!src;
+  if (failed || !canPlay)
+    return (
+      <div className="player player-off">
+        <div className="stack" style={{ gap: 6, alignItems: 'center' }}>
+          <span>{t('Không phát được video này ngay tại đây', 'This video cannot play here')}</span>
+          <ExternalLink href={v.originUrl} className="link-btn">
+            {t('Mở link gốc', 'Open source link')}
+          </ExternalLink>
+        </div>
+      </div>
+    );
+  return (
+    <div className="player">
+      {v.kind === 'embed' ? (
+        <iframe
+          src={src}
+          title={title}
+          loading="lazy"
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          referrerPolicy="strict-origin-when-cross-origin"
+          sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
+        />
+      ) : (
+        <video controls playsInline preload="metadata" src={src} aria-label={title} onPlay={pauseOthers} onError={() => setFailed(true)} />
+      )}
+    </div>
+  );
+}
+
+const VIDEOS_PER_PAGE = 12;
+
 function VideosTab({ id }: { id: number }) {
   const { t } = useI18n();
-  const { data, page, setPage } = usePaged<Vid>(`/scrapes/${id}/videos`, 30);
+  const { data, page, setPage } = usePaged<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE);
   if (!data) return <Spinner label={t('Đang tải video', 'Loading videos')} />;
   if (!data.total) return <Empty title={t('Không có video', 'No videos')} />;
   return (
     <>
-      <ul className="rows">
+      <div className="tab-tools">
+        <span className="muted num">{pageRange(t, page, data.total, VIDEOS_PER_PAGE, t('video', 'videos'))}</span>
+      </div>
+      <ul className="reels">
         {data.items.map((v) => (
-          <li key={v.id} className="row">
-            {v.currentUrl ? (
-              <video controls preload="metadata" src={v.currentUrl} style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 10, background: '#000' }} />
-            ) : null}
+          <li key={v.id} className="reel">
+            <VideoPlayer v={v} />
             <div className="row-meta">
-              <span className="tag">{v.kind === 'embed' ? t('Video nhúng', 'Embedded') : t('Tệp video', 'Video file')}</span>
+              <span>{pageLabel(t, v.page, v.postNo)}</span>
               <span>
-                {t(`Ở trang ${v.page}`, `On page ${v.page}`)}
-                {v.postNo ? `, #${v.postNo}` : ''}
+                {v.kind === 'embed'
+                  ? t('Video nhúng', 'Embedded')
+                  : v.currentUrl
+                    ? t('Đã tải về máy', 'Downloaded')
+                    : t('Phát từ link gốc', 'Plays from the source')}
               </span>
-              {v.hlsUrl && <span className="tag tag-moss">HLS</span>}
+              {v.hlsUrl && <span>HLS</span>}
+            </div>
+            <div className="hstack" style={{ gap: '4px 12px' }}>
+              <ExternalLink href={v.originUrl} className="link-btn" title={v.originUrl} style={{ fontSize: 13, wordBreak: 'break-all' }}>
+                {t(`Mở trên ${hostOf(v.originUrl)}`, `Open on ${hostOf(v.originUrl)}`)}
+              </ExternalLink>
               {v.missingSince && <MissingTag since={v.missingSince} />}
             </div>
-            <ExternalLink href={v.originUrl} className="link-btn" style={{ wordBreak: 'break-all', fontSize: 14 }}>
-              {v.originUrl}
-            </ExternalLink>
           </li>
         ))}
       </ul>
-      <Pager page={page} total={data.total} size={30} onPage={setPage} />
+      <Pager page={page} total={data.total} size={VIDEOS_PER_PAGE} onPage={setPage} unit={t('video', 'videos')} />
     </>
   );
 }

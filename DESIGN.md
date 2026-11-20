@@ -232,7 +232,8 @@ Làm bằng media query trong `styles.css`; `Shell` dùng `matchMedia('(max-widt
 
 | Thành phần | Class | Quy cách |
 |---|---|---|
-| Lưới ảnh | `.gallery` | `repeat(auto-fill, minmax(118px, 1fr))`, gap 12px |
+| Lưới ảnh | `.gallery` + `.size-s` / `.size-m` / `.size-l` | `repeat(auto-fill, minmax(min(var(--tile), 100%), 1fr))`. Nhỏ: `--tile` 150px (hẹp 96px), gap 12px. Vừa (mặc định): 260px (hẹp 150px), gap `18px 14px`. Lớn: một cột, ảnh nguyên khung không cắt, cao tối đa 82vh, nền `--field`. Mỗi ô là `figure.shot` + `figcaption.shot-cap` 12.5px `--dim` ("Trang 3 · bình luận #45"), ẩn ở cỡ Nhỏ |
+| Thanh trên tab | `.tab-tools` | Hàng flex: "Hiển thị x–y trong n …" 13px `--dim` bên trái; tùy chọn hiển thị (segmented "Cỡ ảnh") bên phải |
 | Ô ảnh | `.tile` (`.on`) | Tỉ lệ 4/3, bo 8, nền sọc khi chưa tải. Đang chọn: `box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--acc)` |
 | Ảnh lỗi | `.tile-broken` (`.waiting`) | Viền 1px dashed `--axis` (đang chờ: viền liền `--line`), nền `--bg`, chữ 12px `--dim`: "Không tải được" / "Không phải ảnh" / "Đang chờ tải về" |
 | Avatar chữ cái | `.avatar` | 34px tròn, nền `--tint`, chữ `--acc-ink` 500 13px |
@@ -255,8 +256,11 @@ Làm bằng media query trong `styles.css`; `Shell` dùng `matchMedia('(max-widt
 | Banner phiên bản mới | `.banner-straw` | Nền `--tint`, chữ `--acc-ink` |
 | Hộp thoại | `Dialog` → `.scrim` + `.dialog` | Nền `--bg`, viền `--line`, bo 8; tiêu đề 18px/500 |
 | Trình xem ảnh | `.lightbox` | Nền gần đen, giữ như bản cũ |
+| Video | `ul.reels` > `li.reel` | `repeat(auto-fill, minmax(min(380px, 100%), 1fr))`, gap `26px 20px`. Mỗi mục: `.player` (16/9, bo 8, nền đen) chứa `<video controls>` hoặc `<iframe>` nhúng; dưới là `.row-meta` và link "Mở trên <tên miền>" |
+| Video không phát được | `.player-off` | Cao tối thiểu 132px, viền 1px dashed `--axis`, chữ 13px `--dim` + link gốc |
+| Phân trang | `Pager` → `nav.pager` | Hai hàng căn giữa, kẻ trên `--line`. Hàng 1 `.pager-pages`: "‹ Trước", số trang, "Sau ›"; luôn có trang đầu, trang cuối và trang hai bên trang hiện tại, chỗ bị lược là "…", tổng 7 ô nên nút không nhảy chỗ. Nút `.pg` 34×34 (hẹp 32), viền `--bd`, bo 6; trang hiện tại nền `--tint`, chữ `--acc-ink` 500, `aria-current="page"`. Hàng 2 `.pager-meta`: "Hiển thị x–y trong n …" và ô "Đến trang" (khi trên 7 trang; số vượt quá thì về trang cuối). Hẹp: ẩn chữ "Trước"/"Sau", chỉ còn mũi tên |
 
-`.tag` (`-straw`, `-moss`, `-rust`) còn dùng cho nhãn nhỏ: loại video, HLS, hành động trong chi tiết nhật ký.
+`.tag` (`-straw`, `-moss`, `-rust`) còn dùng cho nhãn nhỏ: "Không còn trên diễn đàn", hành động trong chi tiết nhật ký.
 
 ### Icon và logo
 
@@ -308,6 +312,9 @@ Hai cột bằng nhau, cao 100vh; dưới 880px chỉ còn cột form.
 ### 6. Bài đã sàng — `/sang/:id`, `pages/SieveDetail.tsx`
 
 - Cột trái: breadcrumb "Kho › Bài #id"; tiêu đề + "Làm mới" / "Sàng lại" (khi đã xong) / "Mở bài gốc"; meta (trạng thái · số trang · thời điểm); các cảnh báo (proxy, bài đã xóa, lỗi, thứ tự chờ); dải trang + tiến trình khi đang sàng; tab **Ảnh · Video · Liên kết · Bình luận · Bình luận lưu trữ**; nội dung tab với `Pager`.
+- Tab Ảnh: `.tab-tools` với segmented **Cỡ ảnh: Nhỏ · Vừa · Lớn** (mặc định Vừa, nhớ ở `localStorage['imageTileSize']`); 48 ảnh mỗi trang.
+- Tab Video: phát ngay trong trang, 12 video mỗi trang. Tệp video dùng bản đã tải về nếu có, không thì phát thẳng từ link gốc; video nhúng (YouTube…) mở trong `iframe` có `sandbox` và `referrerpolicy="strict-origin-when-cross-origin"` (YouTube cần referrer). Link cùng origin với app không được nhúng. Mỗi lúc chỉ một `<video>` phát. Không phát được thì hiện `.player-off`.
+- Đổi trang: chờ trang mới hiện rồi mới cuộn (tức thì) về thanh tab, ngay dưới thanh trên.
 - Cột phải: **Lượt sàng** — donut 96px "đã quét/tổng trang", số ảnh đã lưu (chấm `--ok`), số ảnh không tải được (chấm `--bad`), tình trạng bài gốc. **Ảnh đang chọn** (tab Ảnh) — Vị trí, Nguồn (tên miền), Bản lưu; nút "Phóng to" + "Mở ảnh gốc". Thời điểm tự xóa nếu có. Cuối cùng là "Xóa khỏi kho" (hỏi lại qua `useConfirm`).
 - Bấm một ảnh: mở trình xem và đánh dấu ảnh đó là "đang chọn". Chuyển ảnh trong trình xem cũng đổi ảnh đang chọn.
 

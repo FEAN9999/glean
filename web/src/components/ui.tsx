@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
 import { ApiErr, api, setErrorSinks } from '../lib/api';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
-import { highlight } from '../lib/format';
+import { fmtNum, highlight } from '../lib/format';
 
 /* ---------------- toasts ---------------- */
 
@@ -347,22 +347,102 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   );
 }
 
-export function Pager({ page, total, size, onPage }: { page: number; total: number; size: number; onPage: (p: number) => void }) {
+/**
+ * Page numbers to show: always the first and last page and the pages next to the current one,
+ * with `null` for a gap. The list keeps the same length while you move, so the buttons do not jump.
+ */
+export function pageItems(page: number, pages: number, siblings = 1): (number | null)[] {
+  const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  const slots = siblings * 2 + 5;
+  if (pages <= slots) return range(1, pages);
+  const left = Math.max(page - siblings, 1);
+  const right = Math.min(page + siblings, pages);
+  const gapLeft = left > 3;
+  const gapRight = right < pages - 2;
+  const edge = siblings * 2 + 3;
+  if (!gapLeft) return [...range(1, edge), null, pages];
+  if (!gapRight) return [1, null, ...range(pages - edge + 1, pages)];
+  return [1, null, ...range(left, right), null, pages];
+}
+
+/** "Showing 49–96 of 1,234 images" — the items on the current page. */
+export function pageRange(t: (vi: string, en: string) => string, page: number, total: number, size: number, unit = '') {
+  const from = Math.min(total, (page - 1) * size + 1);
+  const to = Math.min(total, page * size);
+  const u = unit ? ` ${unit}` : '';
+  return t(`Hiển thị ${fmtNum(from)}–${fmtNum(to)} trong ${fmtNum(total)}${u}`, `Showing ${fmtNum(from)}–${fmtNum(to)} of ${fmtNum(total)}${u}`);
+}
+
+/** Numbered pagination: range shown, previous / page numbers / next, and a jump box for long lists. */
+export function Pager({ page, total, size, onPage, unit }: { page: number; total: number; size: number; onPage: (p: number) => void; unit?: string }) {
   const { t } = useI18n();
+  const [jump, setJump] = useState('');
+  const jumpId = useId();
   const pages = Math.max(1, Math.ceil(total / size));
   if (pages <= 1) return null;
+  const go = (p: number) => {
+    const n = Math.min(pages, Math.max(1, Math.round(p)));
+    if (n !== page) onPage(n);
+  };
   return (
-    <div className="hstack" style={{ paddingTop: 18, gap: 14, fontSize: 13 }}>
-      <button className="btn btn-sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-        {t('Trang trước', 'Previous')}
-      </button>
-      <span className="muted num">
-        {page} / {pages}
-      </span>
-      <button className="btn btn-sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>
-        {t('Trang sau', 'Next')}
-      </button>
-    </div>
+    <nav className="pager" aria-label={t('Phân trang', 'Pagination')}>
+      <div className="pager-pages">
+        <button className="pg pg-step" disabled={page <= 1} onClick={() => go(page - 1)} aria-label={t('Trang trước', 'Previous page')}>
+          <span aria-hidden="true">‹</span>
+          <span className="pg-word">{t('Trước', 'Previous')}</span>
+        </button>
+        {pageItems(page, pages).map((p, i) =>
+          p == null ? (
+            <span key={`gap-${i}`} className="pg-gap" aria-hidden="true">
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              className={`pg num ${p === page ? 'on' : ''}`}
+              aria-current={p === page ? 'page' : undefined}
+              aria-label={t(`Trang ${p}`, `Page ${p}`)}
+              onClick={() => go(p)}
+            >
+              {fmtNum(p)}
+            </button>
+          ),
+        )}
+        <button className="pg pg-step" disabled={page >= pages} onClick={() => go(page + 1)} aria-label={t('Trang sau', 'Next page')}>
+          <span className="pg-word">{t('Sau', 'Next')}</span>
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
+      <div className="pager-meta">
+        <span className="pager-info num">{pageRange(t, page, total, size, unit)}</span>
+        {pages > 7 && (
+          <form
+            className="pager-jump"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = Number(jump);
+              if (Number.isFinite(n) && jump.trim()) go(n);
+              setJump('');
+            }}
+          >
+            <label htmlFor={jumpId}>{t('Đến trang', 'Go to page')}</label>
+            <input
+              id={jumpId}
+              className="num"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={pages}
+              placeholder={`${page}`}
+              value={jump}
+              onChange={(e) => setJump(e.target.value)}
+            />
+            <span className="muted num">/ {fmtNum(pages)}</span>
+          </form>
+        )}
+      </div>
+    </nav>
   );
 }
 
