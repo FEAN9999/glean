@@ -165,6 +165,8 @@ export interface RunCtx {
   fetchPage?: typeof fetchThreadPage;
   /** Forum list page reader; defaults to the live forum (tests pass a fake). */
   fetchListPage?: typeof fetchForumPage;
+  /** Comments: read every page from page 1, e.g. to fill in like counts of an older archive. */
+  fromFirstPage?: boolean;
 }
 
 /** Failed pages (or threads) in a row before a run gives up: the forum is then likely down, not just slow. */
@@ -270,35 +272,49 @@ export async function syncThreadComments(threadId: number, maxPages: number, ctx
   const fetchPage = ctx.fetchPage ?? fetchThreadPage;
   const per = cfg().source.postsPerPage;
   const storedMaxPage = get<{ p: number | null }>('SELECT MAX(page) p FROM comment WHERE thread_id=?', threadId)!.p ?? 0;
-  const start = commentSyncStartPage({
-    syncedCount: t.synced_comment_count,
-    perPage: per,
-    storedMaxPage,
-    recheckPages: cfg().sync.comments.recheckPages,
-  });
-  let page = start;
-  let newPages = 0;
+  const start = ctx.fromFirstPage
+    ? 1
+    : commentSyncStartPage({
+        syncedCount: t.synced_comment_count,
+        perPage: per,
+        storedMaxPage,
+        recheckPages: cfg().sync.comments.recheckPages,
+      });
   let totalPages = Math.max(1, Math.ceil((t.comment_count + 1) / per), storedMaxPage);
-  const read: ParsedPost[][] = [];
-  while (page <= totalPages && !ctx.shouldStop()) {
-    const isNew = page > storedMaxPage;
-    if (isNew && newPages >= maxPages) break;
+  /** Reads and stores one page; null when the thread is gone from the forum. */
+  const readPage = async (p: number) => {
     try {
-      const r = await fetchPage(threadId, page);
+      const r = await fetchPage(threadId, p);
       totalPages = r.totalPages;
-      const n = tx(() => upsertComments(threadId, page, r.posts));
+      const n = tx(() => upsertComments(threadId, p, r.posts));
       out.added += n.added;
       out.edited += n.edited;
-      read.push(r.posts);
       ctx.onSaving?.(r.posts.length);
+      return r.posts;
     } catch (e) {
       if (e instanceof ThreadGoneError) {
         run('UPDATE thread SET is_deleted=1, updated_at=? WHERE id=?', now(), threadId);
         ctx.log?.(`Bài ${threadId} không còn trên diễn đàn (HTTP ${e.status}) — giữ bản lưu trữ.`);
-        return out;
+        return null;
       }
       throw e;
     }
+  };
+  // The first post usually collects most of a thread's likes: keep it current on every re-check.
+  // It stays out of the deletion check, which needs consecutive pages.
+  if (start > 1 && !ctx.shouldStop()) {
+    if (!(await readPage(1))) return out;
+    if (cfg().scraper.batchDelayMs) await sleep(cfg().scraper.batchDelayMs);
+  }
+  let page = start;
+  let newPages = 0;
+  const read: ParsedPost[][] = [];
+  while (page <= totalPages && !ctx.shouldStop()) {
+    const isNew = page > storedMaxPage;
+    if (isNew && newPages >= maxPages) break;
+    const posts = await readPage(page);
+    if (!posts) return out;
+    read.push(posts);
     if (isNew) newPages++;
     page++;
     if (cfg().scraper.batchDelayMs) await sleep(cfg().scraper.batchDelayMs);
@@ -447,6 +463,8 @@ interface ManualOptions {
   forums: number[];
   /** Comments only: skip threads that already have every comment and were not active lately. */
   onlyMissing: boolean;
+  /** Comments only: re-read every page from page 1 (fills in likes of an older archive). */
+  fromFirstPage: boolean;
 }
 
 const manual = {
@@ -494,6 +512,7 @@ async function runManual(o: ManualOptions) {
     trigger: 'manual',
     shouldStop: () => manual.stopRequested,
     batchSize: o.batchSize,
+    fromFirstPage: o.fromFirstPage,
     onPage: (p) => {
       manual.forum = p.forum;
       manual.forumName = p.forumName;
@@ -631,7 +650,8 @@ export function registerSync(app: FastifyInstance) {
       pageTo: intParam(b.pageTo, 1),
       batchSize: intParam(b.batchSize, 100, 1, 5000),
       forums: Array.isArray(b.forums) ? b.forums.map(Number).filter(Boolean) : [],
-      onlyMissing: !!b.onlyMissing,
+      onlyMissing: !!b.onlyMissing && !b.fromFirstPage,
+      fromFirstPage: b.type === 'comments' && !!b.fromFirstPage,
     };
     if (!o.allPages && o.pageTo < o.pageFrom) throw new ApiError(400, 'INVALID_RANGE', 'Trang kết thúc phải lớn hơn hoặc bằng trang bắt đầu.', 'inline');
     Object.assign(manual, {

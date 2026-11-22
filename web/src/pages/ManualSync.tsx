@@ -11,7 +11,7 @@ interface SyncStatus {
   running: boolean;
   stopRequested: boolean;
   type: 'posts' | 'comments';
-  options: { type: string; allPages: boolean; pageFrom: number; pageTo: number; batchSize: number; forums: number[]; onlyMissing: boolean } | null;
+  options: { type: string; allPages: boolean; pageFrom: number; pageTo: number; batchSize: number; forums: number[]; onlyMissing: boolean; fromFirstPage?: boolean } | null;
   forum: number | null;
   forumName: string;
   currentPage: number;
@@ -95,6 +95,7 @@ function Inner() {
   const [batchSize, setBatchSize] = useState(100);
   const [picked, setPicked] = useState<number[]>([]);
   const [onlyMissing, setOnlyMissing] = useState(true);
+  const [fromFirstPage, setFromFirstPage] = useState(false);
   const [st, setSt] = useState<SyncStatus | null>(null);
   const [logs, setLogs] = useState<{ at: string; line: string }[]>([]);
   const [error, setError] = useState('');
@@ -132,7 +133,7 @@ function Inner() {
     e.preventDefault();
     setError('');
     try {
-      const r = await api.post<SyncStatus>('/manual-syncs/start', { type, allPages, pageFrom, pageTo, batchSize, forums: picked, onlyMissing: type === 'comments' && onlyMissing }, { quiet: true });
+      const r = await api.post<SyncStatus>('/manual-syncs/start', { type, allPages, pageFrom, pageTo, batchSize, forums: picked, onlyMissing: type === 'comments' && onlyMissing && !fromFirstPage, fromFirstPage: type === 'comments' && fromFirstPage }, { quiet: true });
       setLogs([]);
       onStatus(r.data);
     } catch (err) {
@@ -153,6 +154,7 @@ function Inner() {
         st?.forumName || (o.forums.length ? t(`${o.forums.length} chuyên mục`, `${o.forums.length} sections`) : t('Mọi chuyên mục', 'All sections')),
         o.allPages ? t('tất cả các trang', 'every page') : t(`trang ${o.pageFrom}–${o.pageTo}`, `pages ${o.pageFrom}–${o.pageTo}`),
         ...(o.onlyMissing ? [t('chỉ bài còn thiếu', 'missing only')] : []),
+        ...(o.fromFirstPage ? [t('đọc lại từ trang 1', 'from page 1')] : []),
       ].join(' · ')
     : '';
 
@@ -207,14 +209,25 @@ function Inner() {
               </label>
               {type === 'comments' && (
                 <label className="check" style={{ height: 40 }}>
-                  <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} disabled={running} />
+                  <input type="checkbox" checked={onlyMissing && !fromFirstPage} onChange={(e) => setOnlyMissing(e.target.checked)} disabled={running || fromFirstPage} />
                   {t('Chỉ bài còn thiếu bình luận', 'Only threads missing comments')}
+                </label>
+              )}
+              {type === 'comments' && (
+                <label className="check" style={{ height: 40 }}>
+                  <input type="checkbox" checked={fromFirstPage} onChange={(e) => setFromFirstPage(e.target.checked)} disabled={running} />
+                  {t('Đọc lại từ trang 1', 'Re-read from page 1')}
                 </label>
               )}
             </div>
             {type === 'comments' && (
               <p className="section-sub">
-                {onlyMissing
+                {fromFirstPage
+                  ? t(
+                      'Đọc lại mọi trang của từng bài để cập nhật số like (và phát hiện bình luận bị sửa/xóa). Chọn cùng "Mọi bài đã có trong kho" để điền like cho kho cũ — chạy một lần, rất lâu.',
+                      'Re-reads every page of each thread to update like counts (and catch edited/deleted comments). With "Every thread in the archive" it fills in likes for an older archive — run it once; very slow.',
+                    )
+                  : onlyMissing
                   ? t('Bỏ qua bài đã đủ bình luận và không có hoạt động gần đây.', 'Skips threads that have every comment and no recent activity.')
                   : t('Đọc lại cả bài đã đủ bình luận để phát hiện bình luận bị sửa/xóa — lâu hơn nhiều.', 'Re-reads complete threads too, to catch edited/deleted comments — much slower.')}
               </p>

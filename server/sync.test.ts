@@ -96,7 +96,7 @@ test('syncThreadComments re-reads stored pages and detects edits and deletions',
     };
     const r = await syncThreadComments(50, 2, { trigger: 'manual', shouldStop: () => false, fetchPage });
     assert.deepEqual(r, { added: 0, edited: 1, deleted: 1, skipped: null });
-    assert.deepEqual(asked, [2, 3]);
+    assert.deepEqual(asked, [1, 2, 3]);
     assert.deepEqual(all<{ id: number }>('SELECT id FROM comment WHERE thread_id=50 AND deleted_at IS NOT NULL').map((x) => x.id), [1006]);
     assert.equal(get<{ edit_count: number }>('SELECT edit_count FROM comment WHERE id=1003')!.edit_count, 1);
   } finally {
@@ -295,4 +295,49 @@ test('upsertComments keeps per-post likes and sums them on the thread', () => {
   upsertComments(9202, 1, [{ ...post(92001), likes: 3 }, { ...post(92002), likes: 1 }]);
   assert.equal(get<{ n: number }>('SELECT like_count n FROM comment WHERE id=92002')!.n, 1);
   assert.equal(get<{ n: number }>('SELECT like_count n FROM thread WHERE id=9202')!.n, 4);
+});
+
+/** Thread 9301 with 10 posts stored on 5 pages; on the forum the first post now has 5 likes. */
+async function readThread9301(ctx: { fromFirstPage?: boolean }) {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  try {
+    if (!get('SELECT 1 FROM thread WHERE id=9301')) {
+      addThread(9301, 1, { commentCount: 9, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+      for (let page = 1; page <= 5; page++) upsertComments(9301, page, [post(93000 + page * 2 - 1), post(93000 + page * 2)]);
+    }
+    const asked: number[] = [];
+    const fetchPage = async (_id: number, page: number): Promise<ParsedThreadPage> => {
+      asked.push(page);
+      const posts = [post(93000 + page * 2 - 1), post(93000 + page * 2)];
+      if (page === 1) posts[0] = { ...posts[0], likes: 5 };
+      return { title: 'Chủ đề 9301', forumId: 1, totalPages: 5, posts };
+    };
+    await syncThreadComments(9301, 2, { trigger: 'manual', shouldStop: () => false, fetchPage, ...ctx });
+    return asked;
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+}
+
+test('a re-check also re-reads page 1, so the first post keeps its likes current', async () => {
+  assert.deepEqual(await readThread9301({}), [1, 4, 5]);
+  assert.equal(get<{ n: number }>('SELECT like_count n FROM thread WHERE id=9301')!.n, 5);
+});
+
+test('fromFirstPage re-reads every page of a thread', async () => {
+  assert.deepEqual(await readThread9301({ fromFirstPage: true }), [1, 2, 3, 4, 5]);
+});
+
+test('manual comments sync from page 1 reads complete threads too', async () => {
+  const app = Fastify();
+  registerSync(app);
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/manual-syncs/start',
+    payload: { type: 'comments', allPages: true, onlyMissing: true, fromFirstPage: true, forums: [999999] },
+  });
+  assert.equal(r.statusCode, 200);
+  const o = r.json().data.options;
+  assert.equal(o.fromFirstPage, true);
+  assert.equal(o.onlyMissing, false);
 });
