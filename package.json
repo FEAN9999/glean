@@ -11,7 +11,7 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --import ./server/test/setup.ts --test \"server/**/*.test.ts\""
+    "test": "node --import tsx --import ./server/test/setup.ts --test \"server/**/*.test.ts\" \"web/**/*.test.ts\""
   },
   "engines": {
     "node": ">=22.13"
