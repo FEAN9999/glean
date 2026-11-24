@@ -94,9 +94,14 @@ export function SievePage() {
   const [done, setDone] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const busy = useRef(false);
+  const reloadAfter = useRef(false);
 
   const load = useCallback(async (reset: boolean, cur: number | null) => {
-    if (busy.current) return;
+    if (busy.current) {
+      // A job finished while a page was loading: reload from the top once that load is done.
+      if (reset) reloadAfter.current = true;
+      return;
+    }
     busy.current = true;
     try {
       const r = await api.get<Scrape[]>(`/scrapes/processed${!reset && cur ? `?cursor=${cur}` : ''}`, { quiet: true });
@@ -108,6 +113,10 @@ export function SievePage() {
     } finally {
       busy.current = false;
       setLoaded(true);
+      if (reloadAfter.current) {
+        reloadAfter.current = false;
+        void load(true, null);
+      }
     }
   }, []);
 

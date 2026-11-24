@@ -144,6 +144,45 @@ function deepMerge<T>(base: T, patch: any): T {
   return out;
 }
 
+/**
+ * Smallest allowed value of the number settings that the Settings and Backup forms limit (same
+ * limits as the forms show). Every other number setting may be 0 but not negative.
+ */
+const NUMBER_MIN: Record<string, number> = {
+  'source.postsPerPage': 1,
+  'source.requestTimeoutMs': 1000,
+  'sync.posts.pagesPerRun': 1,
+  'sync.posts.intervalMs': 60_000,
+  'sync.comments.pagesPerRun': 1,
+  'sync.comments.intervalMs': 60_000,
+  'sync.comments.maxThreadsPerRun': 1,
+  'sync.comments.recheckWithinHours': 1,
+  'scraper.concurrentPages': 1,
+  'scraper.concurrentImageDownloads': 1,
+  'storage.maxFileSizeMb': 1,
+  'storage.chunkSizeMb': 1,
+  'storage.concurrentUploads': 1,
+  'search.semanticTopK': 1,
+  'search.pageSize': 5,
+  'search.minKeywordLength': 1,
+  'auth.accessTokenMinutes': 1,
+  'auth.refreshTokenDays': 1,
+  'backup.intervalHours': 1,
+  'backup.keep': 1,
+};
+
+/** Number settings come back as numbers within their limits; a value that is not a number takes the default. */
+function cleanNumbers(value: any, def: any, at: string): any {
+  if (typeof def === 'number') {
+    const n = typeof value === 'number' ? value : value === '' || value == null ? NaN : Number(value);
+    return Number.isFinite(n) ? Math.max(NUMBER_MIN[at] ?? 0, n) : def;
+  }
+  if (!def || typeof def !== 'object' || Array.isArray(def) || !value || typeof value !== 'object') return value;
+  const out = { ...value };
+  for (const k of Object.keys(def)) if (k in out) out[k] = cleanNumbers(out[k], def[k], at ? `${at}.${k}` : k);
+  return out;
+}
+
 /** Loads config from DB, filling gaps from defaults. Persists any missing sections. */
 export function loadConfig(port: number): AppConfig {
   defaults ??= defaultConfig(port);
@@ -155,7 +194,7 @@ export function loadConfig(port: number): AppConfig {
     stored.source.userAgent = stored.source.userAgent.replace('SangPersonal/', 'GleanPersonal/');
     saveSection('source', stored.source);
   }
-  const merged = deepMerge(defaults, stored);
+  const merged: AppConfig = cleanNumbers(deepMerge(defaults, stored), defaults, '');
   for (const key of Object.keys(merged) as (keyof AppConfig)[]) {
     if (!(key in stored)) saveSection(key, merged[key]);
   }
@@ -184,7 +223,7 @@ export function onConfigChange(l: Listener) {
 export function updateConfig(patch: Partial<AppConfig>, port: number) {
   for (const key of Object.keys(patch) as (keyof AppConfig)[]) {
     if (!(key in current)) continue;
-    saveSection(key, deepMerge(current[key], patch[key]));
+    saveSection(key, cleanNumbers(deepMerge(current[key], patch[key]), defaults[key], key));
   }
   const c = loadConfig(port);
   emit(Ev.ConfigReloaded, { maintenance: c.maintenance });

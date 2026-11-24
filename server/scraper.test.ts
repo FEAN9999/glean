@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig, updateConfig } from './config.ts';
 import { all, get, now, run } from './db.ts';
-import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, savePageItems, ScrapeStatus } from './scraper.ts';
+import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus } from './scraper.ts';
 import type { ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -203,4 +203,16 @@ test('a re-sieve that misses most items does not mark them missing', async () =>
   assert.equal(missing(id), 0);
   assert.equal(images(id).length, 6);
   assert.equal(get<{ status: number }>('SELECT status FROM scrape WHERE id=?', id)!.status, ScrapeStatus.Completed);
+});
+
+test('deleting a job while it is sieved stops it without recording a failure', async () => {
+  const { id } = newScrape();
+  const read = forum(3, { 1: [post(101, 1)], 2: [post(102, 21)], 3: [post(103, 41)] });
+  await runScrape(id, async (threadId, page) => {
+    // the user deletes the job while page 1 is being read
+    if (page === 1) run('UPDATE scrape SET is_marked_deleted=1 WHERE id=?', id);
+    return read(threadId, page);
+  });
+  const s = get<{ status: number; error: string | null }>('SELECT status, error FROM scrape WHERE id=?', id)!;
+  assert.deepEqual([s.status, s.error], [ScrapeStatus.NotProcessed, null]);
 });

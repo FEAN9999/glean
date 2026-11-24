@@ -35,7 +35,7 @@ async function work() {
       const next = get<{ id: number }>('SELECT id FROM scrape WHERE status=? AND is_marked_deleted=0 ORDER BY id LIMIT 1', ScrapeStatus.Waiting);
       if (!next) break;
       currentId = next.id;
-      await processScrape(next.id).catch((e) => failScrape(next.id, (e as Error).message));
+      await runScrape(next.id);
       currentId = null;
     }
   } finally {
@@ -288,6 +288,14 @@ function finish(id: number, extra: { isThreadDeleted?: boolean } = {}) {
   emit(Ev.FinishScrape, sm, undefined, 'scrape');
   if (cfg().telegram.notifyScrapeFinished)
     void telegram(`Glean: xong "${sm.threadTitle}" — ${sm.totalImages} ảnh, ${sm.totalVideos} video, ${sm.totalComments} bình luận.`);
+}
+
+/** Runs one queued job to its end, recording a failure instead of throwing. A job deleted while it runs is not a failure. */
+export async function runScrape(id: number, fetchPage: typeof fetchThreadPage = fetchThreadPage) {
+  await processScrape(id, fetchPage).catch((e) => {
+    if (e instanceof Cancelled) run('UPDATE scrape SET status=?, finished_at=? WHERE id=?', ScrapeStatus.NotProcessed, now(), id);
+    else failScrape(id, (e as Error).message);
+  });
 }
 
 /** Sieves one job. `fetchPage` reads a thread page; tests pass a fake forum. */

@@ -37,10 +37,11 @@ export function fmtAgo(iso: string | null | undefined) {
 export function fmtDuration(seconds: number | null | undefined) {
   if (seconds == null) return '—';
   if (seconds < 1) return `${Math.round(seconds * 1000)} ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)} giây`;
+  const en = currentLang() === 'en-US';
+  if (seconds < 60) return `${seconds.toFixed(1)} ${en ? 's' : 'giây'}`;
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
-  return `${m} phút ${s} giây`;
+  return en ? `${m} min ${s} s` : `${m} phút ${s} giây`;
 }
 
 export function fmtBytes(b: number) {

@@ -43,11 +43,26 @@ let session: Session | null = (() => {
       if (localStorage.getItem(SKEY) === null) localStorage.setItem(SKEY, legacy);
       localStorage.removeItem(LEGACY_SKEY);
     }
+  } catch {
+    /* ignore */
+  }
+  return readStoredSession();
+})();
+
+function readStoredSession(): Session | null {
+  try {
     return JSON.parse(localStorage.getItem(SKEY) ?? 'null');
   } catch {
     return null;
   }
-})();
+}
+
+// Another tab refreshed the tokens or logged out: follow it, so this tab never sends a refresh token that was already used.
+window.addEventListener('storage', (e) => {
+  if (e.key !== SKEY && e.key !== null) return;
+  session = readStoredSession();
+  authListeners.forEach((l) => l());
+});
 
 type Listener = () => void;
 const authListeners = new Set<Listener>();
@@ -60,6 +75,7 @@ export const onAuthChange = (l: Listener) => {
 
 export function setSession(s: Session | null) {
   session = s;
+  if (!s) sudoToken = null;
   try {
     if (s) localStorage.setItem(SKEY, JSON.stringify(s));
     else localStorage.removeItem(SKEY);
@@ -85,12 +101,19 @@ async function refresh(): Promise<boolean> {
   if (!session) return false;
   refreshing ??= (async () => {
     try {
-      const res = await fetch(`/api/auth/refresh/${session!.userId}/${encodeURIComponent(session!.refreshToken)}`, {
+      const tried = session!.refreshToken;
+      const res = await fetch(`/api/auth/refresh/${session!.userId}/${encodeURIComponent(tried)}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{}',
       });
       if (!res.ok) {
+        // Another tab may have used this refresh token first: its new tokens are in storage.
+        const stored = readStoredSession();
+        if (stored && stored.refreshToken !== tried) {
+          session = stored;
+          return true;
+        }
         setSession(null);
         return false;
       }
@@ -117,6 +140,14 @@ export interface ReqOpts {
 let sudoToken: string | null = null;
 export const setSudoToken = (t: string | null) => (sudoToken = t);
 export const getSudoToken = () => sudoToken;
+const sudoListeners = new Set<Listener>();
+/** Called when the server turns a write down because the 2FA re-check ran out. */
+export const onSudoRequired = (l: Listener) => {
+  sudoListeners.add(l);
+  return () => {
+    sudoListeners.delete(l);
+  };
+};
 
 export async function request<T = any>(path: string, opts: ReqOpts = {}): Promise<Envelope<T>> {
   const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
@@ -156,6 +187,10 @@ export async function request<T = any>(path: string, opts: ReqOpts = {}): Promis
     if (res.ok && json?.success) return json;
     const display = (res.headers.get('error-message-type') as ApiErr['display']) ?? 'toast';
     const err = new ApiErr(res.status, json?.code ?? 'ERROR', json?.message ?? `Lỗi ${res.status}`, display);
+    if (err.code === 'SUDO_REQUIRED') {
+      sudoToken = null;
+      sudoListeners.forEach((l) => l());
+    }
     if (idempotent && res.status >= 502 && attempt < 2 && err.code !== 'FEATURE_PAUSED') {
       attempt++;
       await new Promise((r) => setTimeout(r, 400 * attempt));

@@ -3,7 +3,7 @@ import { api, ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { fmtBytes } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
-import { Switch, useUi } from '../components/ui';
+import { Empty, Switch, useUi } from '../components/ui';
 
 type Cfg = any;
 
@@ -160,10 +160,13 @@ function Inner() {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    api.get('/systems/config', { quiet: true }).then((r) => {
-      setCfg(r.data);
-      setSaved(JSON.stringify(r.data));
-    });
+    api
+      .get('/systems/config', { quiet: true })
+      .then((r) => {
+        setCfg(r.data);
+        setSaved(JSON.stringify(r.data));
+      })
+      .catch((err) => setError((err as ApiErr).message));
     api.get('/systems/environment', { quiet: true }).then((r) => setEnv(r.data)).catch(() => {});
   }, []);
 
@@ -174,7 +177,12 @@ function Inner() {
     document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
   }, [ready]);
 
-  if (!cfg) return null;
+  if (!cfg)
+    return error ? (
+      <div className="page">
+        <Empty title={t('Không tải được cài đặt', 'Could not load settings')}>{error}</Empty>
+      </div>
+    ) : null;
   const dirty = JSON.stringify(cfg) !== saved;
   const set = (p: string, v: unknown) => setCfg((c: Cfg) => setPath(c, p, v));
 

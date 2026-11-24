@@ -54,7 +54,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
         setForm(r.data.backup);
         setSaved(r.data.backup);
       })
-      .catch(() => {});
+      .catch((err) => setError((err as ApiErr).message));
   }, [loadStatus]);
 
   const runNow = async () => {
@@ -212,7 +212,10 @@ function Inner() {
   const [log, setLog] = useState<string[]>([]);
 
   const load = useCallback(() => {
-    api.get<Tables>('/clone/tables', { quiet: true }).then((r) => setData(r.data));
+    api
+      .get<Tables>('/clone/tables', { quiet: true })
+      .then((r) => setData(r.data))
+      .catch((err) => setError((err as ApiErr).message));
   }, []);
   useEffect(load, [load]);
 

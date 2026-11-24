@@ -104,10 +104,13 @@ function Inner() {
 
   useEffect(() => {
     api.get('/systems/config', { quiet: true }).then((r) => setForums(r.data.source.forums)).catch(() => {});
-    api.get<SyncStatus>('/manual-syncs/status', { quiet: true }).then((r) => {
-      setSt(r.data);
-      setLogs(r.data.logs);
-    });
+    api
+      .get<SyncStatus>('/manual-syncs/status', { quiet: true })
+      .then((r) => {
+        setSt(r.data);
+        setLogs(r.data.logs);
+      })
+      .catch((err) => setError((err as ApiErr).message));
   }, []);
 
   // local clock so elapsed time moves between progress events

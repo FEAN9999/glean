@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MASK, loadConfig, maskedConfig, cfg, unmaskPatch, updateConfig } from './config.ts';
 import { ApiError } from './http.ts';
+import { run } from './db.ts';
 
 loadConfig(0);
 
@@ -23,6 +24,38 @@ test('a masked proxy password is never saved when the host, port or user changed
       (e: unknown) => e instanceof ApiError && e.status === 400 && e.code === 'PROXY_PASSWORD_REQUIRED',
       line,
     );
+  }
+});
+
+test('a number setting below the limit the Settings form shows is saved at that limit', () => {
+  // An emptied number field sends 0; 0 pages in parallel used to stall the sieve queue for good.
+  updateConfig({ scraper: { concurrentPages: 0 }, source: { postsPerPage: 0 }, search: { pageSize: 2 } } as any, 0);
+  try {
+    assert.equal(cfg().scraper.concurrentPages, 1);
+    assert.equal(cfg().source.postsPerPage, 1);
+    assert.equal(cfg().search.pageSize, 5);
+  } finally {
+    updateConfig({ scraper: { concurrentPages: 3 }, source: { postsPerPage: 20 }, search: { pageSize: 20 } } as any, 0);
+  }
+});
+
+test('a number setting may be 0 where 0 means off, but never negative or not a number', () => {
+  updateConfig({ scraper: { retentionHours: 0, batchDelayMs: -5, minCommentLength: 'abc' } } as any, 0);
+  try {
+    assert.equal(cfg().scraper.retentionHours, 0);
+    assert.equal(cfg().scraper.batchDelayMs, 0);
+    assert.equal(cfg().scraper.minCommentLength, 12);
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+  }
+});
+
+test('a 0 already stored by an earlier version is read back at the limit', () => {
+  run("UPDATE config SET value=json_set(value, '$.concurrentPages', 0) WHERE key='scraper'");
+  try {
+    assert.equal(loadConfig(0).scraper.concurrentPages, 1);
+  } finally {
+    updateConfig({ scraper: { concurrentPages: 3 } } as any, 0);
   }
 });
 

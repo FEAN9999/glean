@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import './styles.css';
 import { I18nProvider, useI18n } from './lib/i18n';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -19,6 +19,11 @@ import { ProfilePage } from './pages/Profile';
 import { Empty } from './components/ui';
 
 initTheme();
+
+/** Another job id is another job: start the page fresh instead of keeping the previous job's state. */
+function SieveDetailRoute() {
+  return <SieveDetailPage key={useParams().id} />;
+}
 
 function NotFound() {
   const { t } = useI18n();
@@ -48,7 +53,7 @@ function App() {
           <Route path="/binh-luan" element={<Navigate to="/binh-luan/tu-khoa" replace />} />
           <Route path="/binh-luan/:mode" element={<SearchPage key="comments" scope="comments" />} />
           <Route path="/sang" element={<SievePage />} />
-          <Route path="/sang/:id" element={<SieveDetailPage />} />
+          <Route path="/sang/:id" element={<SieveDetailRoute />} />
           <Route path="/hang-doi" element={<QueuePage />} />
           <Route path="/nhat-ky" element={<Navigate to="/nhat-ky/bai-viet" replace />} />
           <Route path="/nhat-ky/bai-viet" element={<SyncLogPage kind="posts" />} />
