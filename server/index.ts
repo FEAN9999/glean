@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { loadConfig } from './config.ts';
 import { ApiError, sendError } from './http.ts';
-import { registerAuth, userFromRequest } from './auth.ts';
+import { registerApiGuard, registerAuth } from './auth.ts';
 import { registerSearch } from './search.ts';
 import { registerSync, initAutoSync } from './sync.ts';
 import { registerScraper, initScraper } from './scraper.ts';
@@ -27,21 +27,7 @@ const app = Fastify({
   bodyLimit: 2 * 1024 * 1024,
 });
 
-const PUBLIC = [
-  /^\/api\/auth\/(status|setup|login|verify-2fa|validate-token|logout)$/,
-  /^\/api\/auth\/refresh\//,
-  /^\/api\/systems\/(version|maintenance)$/,
-  /^\/api\/events/,
-];
-
-app.addHook('onRequest', async (req, reply) => {
-  const url = req.url.split('?')[0];
-  if (!url.startsWith('/api/')) return;
-  if (PUBLIC.some((r) => r.test(url))) return;
-  const uid = userFromRequest(req);
-  if (uid == null) return sendError(reply, new ApiError(401, 'UNAUTHORIZED', 'Phiên đăng nhập đã hết hạn.', 'silent'));
-  (req as any).userId = uid;
-});
+registerApiGuard(app);
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ApiError) return sendError(reply, err);

@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import QRCode from 'qrcode';
 import { get, run, now } from './db.ts';
 import { cfg } from './config.ts';
-import { ApiError, ok } from './http.ts';
+import { ApiError, ok, sendError } from './http.ts';
 
 /* ---------------- password ---------------- */
 
@@ -131,6 +131,26 @@ export function userFromRequest(req: FastifyRequest): number | null {
   const token = h?.startsWith('Bearer ') ? h.slice(7) : (req.query as any)?.access_token;
   const body = verifyJwt<{ sub: number; scope: string }>(token);
   return body?.scope === 'access' ? body.sub : null;
+}
+
+/** API routes reachable without an access token. Everything else under /api/ needs one. */
+const PUBLIC_API = [
+  /^\/api\/auth\/(status|setup|login|verify-2fa|validate-token|logout)$/,
+  /^\/api\/auth\/refresh\//,
+  /^\/api\/systems\/(version|maintenance)$/,
+  /^\/api\/events$/, // the EventSource stream, which cannot send a token: it checks the browser cookie itself
+];
+
+/** Turns away /api/ requests without a valid access token, except the public routes above. */
+export function registerApiGuard(app: FastifyInstance) {
+  app.addHook('onRequest', async (req, reply) => {
+    const url = req.url.split('?')[0];
+    if (!url.startsWith('/api/')) return;
+    if (PUBLIC_API.some((r) => r.test(url))) return;
+    const uid = userFromRequest(req);
+    if (uid == null) return sendError(reply, new ApiError(401, 'UNAUTHORIZED', 'Phiên đăng nhập đã hết hạn.', 'silent'));
+    (req as any).userId = uid;
+  });
 }
 
 /** When 2FA is on, sensitive admin writes need a fresh `x-sudo-token` from /auth/2fa/verify-code. */
