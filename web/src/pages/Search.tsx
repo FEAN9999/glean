@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
+import { useLatest } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDate, fmtNum, parseThreadInput } from '../lib/format';
 import { Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Spinner, Status, useUi } from '../components/ui';
@@ -187,19 +188,24 @@ export function SearchPage({ scope }: { scope: Scope }) {
   };
 
   const lastRun = useRef({ key: '', at: 0 });
+  const latest = useLatest();
   const run = useCallback(
     async (page: number) => {
       const key = `${q}|${page}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}`;
       if (lastRun.current.key === key && Date.now() - lastRun.current.at < 600) return;
       lastRun.current = { key, at: Date.now() };
+      // A newer run drops the answers of one still loading, so they cannot overwrite its results.
+      const isLatest = latest();
       setError('');
       if (q.length < 3) {
         setError(t('Nhập tối thiểu 3 ký tự.', 'Type at least 3 characters.'));
+        setBusy(false);
         return;
       }
       const threadId = thread ? parseThreadInput(thread) : null;
       if (thread && threadId == null) {
         setError(t('Không nhận ra link hoặc ID bài viết trong phạm vi tìm.', 'The thread link or ID in the scope is not recognised.'));
+        setBusy(false);
         return;
       }
       setBusy(true);
@@ -217,6 +223,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                 { page, keyword: q, isExactMatch: exact, threadId, onlyChanged: changed },
                 { quiet: true },
               );
+        if (!isLatest()) return;
         setItems((xs) => (page === 1 ? r.data : [...xs, ...r.data]));
         setTotal(r.total ?? 0);
         setNextPage((r.nextPage as number | null) ?? null);
@@ -225,7 +232,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
           // the other tab's count, so both tabs can show a number
           api
             .post<{ total: number }>(scope === 'posts' ? '/comments/search/count' : '/posts/search/count', { keyword: q, isSearchByAuthor: byAuthor, isExactMatch: exact }, { quiet: true })
-            .then((c) => setOtherScopeTotal(c.data.total))
+            .then((c) => isLatest() && setOtherScopeTotal(c.data.total))
             .catch(() => {});
           if (!r.total) {
             const c = await api.post<{ total: number }>(
@@ -233,22 +240,23 @@ export function SearchPage({ scope }: { scope: Scope }) {
               { keyword: q, isSearchByAuthor: !byAuthor, isExactMatch: exact, threadId, onlyChanged: changed },
               { quiet: true },
             );
+            if (!isLatest()) return;
             setOther(c.data.total);
           }
           if (scope === 'posts' && !byAuthor) {
             api
               .get(`/posts/search/suggestions?q=${encodeURIComponent(q)}&topK=8`, { quiet: true })
-              .then((s) => setSuggest(s.data))
+              .then((s) => isLatest() && setSuggest(s.data))
               .catch(() => {});
           }
         }
       } catch (err) {
-        setError((err as ApiErr).message);
+        if (isLatest()) setError((err as ApiErr).message);
       } finally {
-        setBusy(false);
+        if (isLatest()) setBusy(false);
       }
     },
-    [byAuthor, changed, exact, q, scope, sort, t, thread],
+    [byAuthor, changed, exact, q, scope, sort, t, thread, latest],
   );
 
   // Run whenever the query or a filter in the URL changes.

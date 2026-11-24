@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, type ApiErr } from '../lib/api';
+import { useLatest, usePaged } from '../lib/load';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
@@ -37,23 +38,9 @@ function KindTabs({ kind }: { kind: Kind }) {
 export function SyncLogPage({ kind }: { kind: Kind }) {
   const { t } = useI18n();
   const { toast } = useUi();
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<{ items: History[]; total: number } | null>(null);
   const size = 20;
-  const load = useCallback(
-    (p: number) =>
-      api
-        .get<History[]>(`/sync-histories/${kind}?page=${p}&size=${size}`, { quiet: true })
-        .then((r) => setData({ items: r.data, total: r.total ?? 0 }))
-        .catch(() => setData({ items: [], total: 0 })),
-    [kind],
-  );
-  useEffect(() => {
-    setPage(1);
-    setData(null);
-    void load(1);
-  }, [load]);
-  useEvent([Ev.AutoSyncFinished, Ev.ManualSyncComplete, Ev.ManualSyncFailed], () => void load(page));
+  const { data, error, page, setPage, reload } = usePaged<History>(`/sync-histories/${kind}`, size);
+  useEvent([Ev.AutoSyncFinished, Ev.ManualSyncComplete, Ev.ManualSyncFailed, Ev.Reconnected], () => reload());
 
   const runNow = async () => {
     await api.post(`/sync/auto/${kind}/run-now`);
@@ -75,8 +62,13 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
         </button>
       </header>
       <KindTabs kind={kind} />
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
       {!data ? (
-        <Spinner label={t('Đang tải', 'Loading')} />
+        !error && <Spinner label={t('Đang tải', 'Loading')} />
       ) : !data.items.length ? (
         <Empty title={t('Chưa có lần đồng bộ nào', 'No sync runs yet')}>{t('Bật đồng bộ tự động trong Cài đặt hoặc chạy Đồng bộ thủ công.', 'Turn on auto-sync in Settings or run Manual sync.')}</Empty>
       ) : (
@@ -116,10 +108,7 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
             page={page}
             total={data.total}
             size={size}
-            onPage={(p) => {
-              setPage(p);
-              void load(p);
-            }}
+            onPage={setPage}
           />
         </>
       )}
@@ -147,19 +136,42 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ history: History; items: Item[]; total: number } | null>(null);
   const [missing, setMissing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const size = 50;
+  const latest = useLatest();
   const load = useCallback(
-    (p: number) =>
-      api
-        .get<{ history: History; items: Item[] }>(`/sync-histories/${kind}/${id}/items?page=${p}&size=${size}`, { quiet: true })
-        .then((r) => setData({ ...r.data, total: r.total ?? 0 }))
-        .catch(() => setMissing(true)),
-    [id, kind],
+    (p: number) => {
+      const isLatest = latest();
+      api.get<{ history: History; items: Item[] }>(`/sync-histories/${kind}/${id}/items?page=${p}&size=${size}`, { quiet: true }).then(
+        (r) => {
+          if (!isLatest()) return;
+          setData({ ...r.data, total: r.total ?? 0 });
+          setError(null);
+        },
+        (e) => {
+          if (!isLatest()) return;
+          if ((e as ApiErr).status === 404) setMissing(true);
+          else setError((e as ApiErr).message);
+        },
+      );
+    },
+    [id, kind, latest],
   );
-  useEffect(() => void load(1), [load]);
+  useEffect(() => {
+    setData(null);
+    setMissing(false);
+    setError(null);
+    setPage(1);
+    load(1);
+  }, [load]);
 
   if (missing) return <div className="page"><Empty title={t('Không tìm thấy lần đồng bộ này', 'Sync run not found')} /></div>;
-  if (!data) return <div className="page"><Spinner label={t('Đang tải', 'Loading')} /></div>;
+  if (!data)
+    return (
+      <div className="page">
+        {error ? <Empty title={t('Không tải được lần đồng bộ này', 'Could not load this sync run')}>{error}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
+      </div>
+    );
   const h = data.history;
   return (
     <div className="page">
@@ -179,6 +191,11 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
         <div className="notice notice-rust" style={{ marginBottom: 16 }}>
           {h.error}
         </div>
+      )}
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
       )}
       {!data.items.length ? (
         <Empty title={t('Lần này không có gì thay đổi', 'Nothing changed in this run')} />

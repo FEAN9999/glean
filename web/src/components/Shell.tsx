@@ -195,7 +195,7 @@ export function Shell({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
   useEffect(loadQueue, [loadQueue]);
-  useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.UpdateScrape], loadQueue);
+  useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.UpdateScrape, Ev.Reconnected], loadQueue);
 
   const main: NavItem[] = [
     { to: '/', label: t('Bàn làm việc', 'Desk'), short: t('Bàn', 'Desk'), icon: 'desk' },

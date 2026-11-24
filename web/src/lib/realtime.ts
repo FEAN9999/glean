@@ -1,7 +1,11 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { establishBrowserSession } from './api';
+import type { Ev as ServerEv } from '../../../server/events';
 
-/** Realtime event codes (see server/events.ts). */
+/** Realtime event codes. The type check fails if one is missing or differs from server/events.ts. */
 export const Ev = {
+  /** Sent by this app, not the server: the stream is back after a break and events sent meanwhile were missed. */
+  Reconnected: -1,
   Hello: 0,
   SystemNotification: 1000,
   NeedReload: 2000,
@@ -20,7 +24,7 @@ export const Ev = {
   ProxyStatus: 5101,
   AutoSyncFinished: 5102,
   ConfigReloaded: 5103,
-} as const;
+} as const satisfies typeof ServerEv & { Reconnected: -1; Hello: 0 };
 
 export interface RtMessage<T = any> {
   type: number;
@@ -41,12 +45,36 @@ function setConnected(v: boolean) {
   connListeners.forEach((l) => l());
 }
 
+/** Whether the app wants a stream (between login and logout). */
+let wanted = false;
+let everOpened = false;
+let retryMs = 3000;
+
 export function connectRealtime() {
+  wanted = true;
   if (es) return;
-  es = new EventSource('/api/events', { withCredentials: true });
-  es.onopen = () => setConnected(true);
-  es.onerror = () => setConnected(false);
-  es.onmessage = (e) => {
+  const source = new EventSource('/api/events', { withCredentials: true });
+  es = source;
+  source.onopen = () => {
+    retryMs = 3000;
+    setConnected(true);
+    if (everOpened) handlers.forEach((h) => h({ type: Ev.Reconnected, data: null, message: null }));
+    everOpened = true;
+  };
+  source.onerror = () => {
+    setConnected(false);
+    // The browser reopens a dropped stream by itself, but not one the server refused (an expired
+    // cookie, a proxy error while the server restarts): renew the cookie and open a new one.
+    if (source.readyState !== EventSource.CLOSED || es !== source) return;
+    es = null;
+    setTimeout(async () => {
+      if (!wanted || es) return;
+      await establishBrowserSession();
+      if (wanted) connectRealtime();
+    }, retryMs);
+    retryMs = Math.min(retryMs * 2, 60_000);
+  };
+  source.onmessage = (e) => {
     let m: RtMessage;
     try {
       m = JSON.parse(e.data);
@@ -61,6 +89,9 @@ export function connectRealtime() {
   };
 }
 export function disconnectRealtime() {
+  wanted = false;
+  everOpened = false;
+  retryMs = 3000;
   es?.close();
   es = null;
   setConnected(false);

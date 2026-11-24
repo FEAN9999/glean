@@ -176,7 +176,8 @@ export function HomePage() {
     api
       .get<Scrape[]>('/scrapes/processed?size=3', { quiet: true })
       .then((r) => setSaved(r.data))
-      .catch(() => setSaved([]));
+      // Keep what is shown: an empty list here would claim nothing was ever sieved.
+      .catch(() => {});
   }, []);
   useEffect(() => {
     load();
@@ -184,8 +185,8 @@ export function HomePage() {
     api.get<Recent[]>('/posts/search/recent-keywords', { quiet: true }).then((r) => setRecent(r.data.slice(0, 4))).catch(() => {});
     api.get<Recent[]>('/comments/recent-keywords', { quiet: true }).then((r) => setRecentC(r.data.slice(0, 4))).catch(() => {});
   }, [load, loadSaved]);
-  useEvent([Ev.AutoSyncFinished, Ev.FinishScrape, Ev.ManualSyncComplete], load);
-  useEvent(Ev.FinishScrape, loadSaved);
+  useEvent([Ev.AutoSyncFinished, Ev.FinishScrape, Ev.ManualSyncComplete, Ev.Reconnected], load);
+  useEvent([Ev.FinishScrape, Ev.Reconnected], loadSaved);
   useEvent(Ev.NewSearch, (m) => setRecent((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)));
   useEvent(Ev.NewCommentSearch, (m) => setRecentC((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)));
 

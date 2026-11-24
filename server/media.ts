@@ -60,7 +60,7 @@ export function registerMedia(app: FastifyInstance) {
   }
 
   app.post('/api/auth/browser-session', async (req, reply) => {
-    reply.header('set-cookie', browserCookie((req as any).userId));
+    reply.header('set-cookie', browserCookie(req.userId!));
     return ok(true);
   });
   app.post('/api/auth/browser-session/clear', async (_req, reply) => {

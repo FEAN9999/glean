@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, type ApiErr } from '../lib/api';
 import { useI18n } from '../lib/i18n';
+import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useUi } from '../components/ui';
@@ -66,40 +67,38 @@ function scrollToTabs() {
   if (window.scrollY > top) window.scrollTo({ top, behavior: 'instant' });
 }
 
-function usePaged<T>(path: string, size: number, extra = '', deps: unknown[] = []) {
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<{ items: T[]; total: number; extra: Record<string, unknown> } | null>(null);
+/** A tab's list, brought back into view when another page of it is picked. */
+function useTabPages<T>(path: string, size: number, extra = '') {
+  const r = usePaged<T>(path, size, extra);
   // Scroll once the new page is on screen; scrolling earlier is cut short when the page gets shorter.
   const scrollPending = useRef(false);
   useEffect(() => {
     if (!scrollPending.current) return;
     scrollPending.current = false;
     scrollToTabs();
-  }, [data]);
-  const load = useCallback(
-    (p: number) => {
-      api
-        .get<T[]>(`${path}?page=${p}&size=${size}${extra}`, { quiet: true })
-        .then((r) => setData({ items: r.data, total: r.total ?? 0, extra: r }))
-        .catch(() => setData({ items: [], total: 0, extra: {} }));
-    },
-    [path, size, extra],
-  );
-  useEffect(() => {
-    setPage(1);
-    load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, ...deps]);
+  }, [r.data]);
   return {
-    data,
-    page,
+    ...r,
     setPage: (p: number) => {
-      setPage(p);
       scrollPending.current = true;
-      load(p);
+      r.setPage(p);
     },
-    reload: () => load(page),
   };
+}
+
+/** Before a tab's first page arrives: the error if loading failed, else a spinner. */
+function TabLoading({ error, label }: { error: string | null; label: string }) {
+  const { t } = useI18n();
+  return error ? <Empty title={t('Không tải được', 'Could not load')}>{error}</Empty> : <Spinner label={label} />;
+}
+
+/** A later page failed: the rows shown are from the page before. */
+function TabError({ error }: { error: string | null }) {
+  return error ? (
+    <p className="error-text" role="alert">
+      {error}
+    </p>
+  ) : null;
 }
 
 function Lightbox({ items, index, onClose, onIndex }: { items: Img[]; index: number; onClose: () => void; onIndex: (i: number) => void }) {
@@ -247,8 +246,8 @@ const IMAGES_PER_PAGE = 48;
 function ImagesTab({ id, selectedId, onPick }: { id: number; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
   const { t } = useI18n();
   const [tileSize, setTileSize] = useTileSize();
-  const { data, page, setPage } = usePaged<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE);
-  if (!data) return <Spinner label={t('Đang tải ảnh', 'Loading images')} />;
+  const { data, error, page, setPage } = useTabPages<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE);
+  if (!data) return <TabLoading error={error} label={t('Đang tải ảnh', 'Loading images')} />;
   if (!data.total) return <Empty title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</Empty>;
   const viewable = data.items.filter(isViewable);
   const sizes: { key: TileSize; label: string; hint: string }[] = [
@@ -258,6 +257,7 @@ function ImagesTab({ id, selectedId, onPick }: { id: number; selectedId: number 
   ];
   return (
     <>
+      <TabError error={error} />
       <div className="tab-tools">
         <span className="muted num">{pageRange(t, page, data.total, IMAGES_PER_PAGE, t('ảnh', 'images'))}</span>
         <div className="hstack" style={{ gap: 10 }} role="group" aria-label={t('Cỡ ảnh', 'Image size')}>
@@ -395,11 +395,12 @@ const VIDEOS_PER_PAGE = 12;
 
 function VideosTab({ id }: { id: number }) {
   const { t } = useI18n();
-  const { data, page, setPage } = usePaged<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE);
-  if (!data) return <Spinner label={t('Đang tải video', 'Loading videos')} />;
+  const { data, error, page, setPage } = useTabPages<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE);
+  if (!data) return <TabLoading error={error} label={t('Đang tải video', 'Loading videos')} />;
   if (!data.total) return <Empty title={t('Không có video', 'No videos')} />;
   return (
     <>
+      <TabError error={error} />
       <div className="tab-tools">
         <span className="muted num">{pageRange(t, page, data.total, VIDEOS_PER_PAGE, t('video', 'videos'))}</span>
       </div>
@@ -434,11 +435,12 @@ function VideosTab({ id }: { id: number }) {
 
 function LinksTab({ id }: { id: number }) {
   const { t } = useI18n();
-  const { data, page, setPage } = usePaged<Lnk>(`/scrapes/${id}/links`, 40);
-  if (!data) return <Spinner label={t('Đang tải liên kết', 'Loading links')} />;
+  const { data, error, page, setPage } = useTabPages<Lnk>(`/scrapes/${id}/links`, 40);
+  if (!data) return <TabLoading error={error} label={t('Đang tải liên kết', 'Loading links')} />;
   if (!data.total) return <Empty title={t('Không có liên kết', 'No links')} />;
   return (
     <>
+      <TabError error={error} />
       <ul className="rows">
         {data.items.map((l) => (
           <li key={l.id} className="row" style={{ gap: 2 }}>
@@ -469,7 +471,7 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
     const h = setTimeout(() => setApplied(minLength), 300);
     return () => clearTimeout(h);
   }, [minLength]);
-  const { data, page, setPage } = usePaged<Cmt>(`/scrapes/${id}/${synced ? 'synced-comments' : 'comments'}`, 30, synced ? '' : `&minLength=${applied}`);
+  const { data, error, page, setPage } = useTabPages<Cmt>(`/scrapes/${id}/${synced ? 'synced-comments' : 'comments'}`, 30, synced ? '' : `&minLength=${applied}`);
   return (
     <>
       {synced ? (
@@ -493,11 +495,12 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
         </div>
       )}
       {!data ? (
-        <Spinner label={t('Đang tải bình luận', 'Loading comments')} />
+        <TabLoading error={error} label={t('Đang tải bình luận', 'Loading comments')} />
       ) : !data.total ? (
         <Empty title={t('Không có bình luận', 'No comments')} />
       ) : (
         <>
+          <TabError error={error} />
           <ul className="rows">
             {data.items.map((c) => (
               <li key={c.id} className="row">
@@ -542,6 +545,7 @@ export function SieveDetailPage() {
   const { ask, node } = useConfirm();
   const [s, setS] = useState<Scrape | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [dl, setDl] = useState<{ downloaded: number; total: number } | null>(null);
   const [rank, setRank] = useState<{ rank: number | null; waiting: number } | null>(null);
@@ -557,10 +561,12 @@ export function SieveDetailPage() {
         setDone((d) => new Set([...d, ...(r.data.donePages ?? [])]));
         if (r.data.status === ScrapeStatus.Waiting) api.get(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
         else setRank(null);
+        setLoadError(null);
       })
-      .catch(() => setNotFound(true));
+      .catch((e: ApiErr) => (e.status === 404 ? setNotFound(true) : setLoadError(e.message)));
   }, [id]);
   useEffect(load, [load]);
+  useEvent(Ev.Reconnected, load);
 
   useEvent(Ev.UpdateScrape, (m) => {
     if (m.data.id === id) setS((x) => (x ? { ...x, ...m.data } : m.data));
@@ -603,7 +609,7 @@ export function SieveDetailPage() {
   if (!s)
     return (
       <div className="page">
-        <Spinner label={t('Đang tải', 'Loading')} />
+        {loadError ? <Empty title={t('Không tải được lượt sàng này', 'Could not load this sieve job')}>{loadError}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
       </div>
     );
 

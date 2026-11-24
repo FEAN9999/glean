@@ -5,6 +5,13 @@ import { get, run, now } from './db.ts';
 import { cfg } from './config.ts';
 import { ApiError, ok, sendError } from './http.ts';
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** The signed-in user, set by the API guard on every non-public /api route. */
+    userId?: number;
+  }
+}
+
 /* ---------------- password ---------------- */
 
 export function hashPassword(pw: string) {
@@ -149,13 +156,13 @@ export function registerApiGuard(app: FastifyInstance) {
     if (PUBLIC_API.some((r) => r.test(url))) return;
     const uid = userFromRequest(req);
     if (uid == null) return sendError(reply, new ApiError(401, 'UNAUTHORIZED', 'Phiên đăng nhập đã hết hạn.', 'silent'));
-    (req as any).userId = uid;
+    req.userId = uid;
   });
 }
 
 /** When 2FA is on, sensitive admin writes need a fresh `x-sudo-token` from /auth/2fa/verify-code. */
 export function requireSudo(req: FastifyRequest) {
-  const u = getUser((req as any).userId);
+  const u = getUser(req.userId);
   if (!u?.totp_enabled) return;
   const body = verifyJwt<{ sub: number; scope: string }>(req.headers['x-sudo-token'] as string);
   if (!body || body.scope !== 'sudo' || body.sub !== u.id)
@@ -220,7 +227,7 @@ export function registerAuth(app: FastifyInstance) {
   app.get('/api/auth/validate-token', async (req) => ok({ valid: userFromRequest(req) != null }));
 
   const me = async (req: FastifyRequest) => {
-    const u = getUser((req as any).userId);
+    const u = getUser(req.userId);
     if (!u) throw new ApiError(401, 'UNAUTHORIZED', 'Chưa đăng nhập.', 'silent');
     return ok(publicUser(u));
   };
@@ -228,7 +235,7 @@ export function registerAuth(app: FastifyInstance) {
   app.get('/api/accounts/me', me);
 
   app.put<{ Body: { currentPassword: string; newPassword: string } }>('/api/accounts/change-password', async (req) => {
-    const u = getUser((req as any).userId)!;
+    const u = getUser(req.userId)!;
     const { currentPassword, newPassword } = req.body ?? ({} as any);
     if (!verifyPassword(String(currentPassword ?? ''), u.password_hash))
       throw new ApiError(400, 'INVALID_PASSWORD', 'Mật khẩu hiện tại không đúng.', 'inline');
@@ -239,7 +246,7 @@ export function registerAuth(app: FastifyInstance) {
   });
 
   app.post('/api/auth/2fa/setup', async (req) => {
-    const u = getUser((req as any).userId)!;
+    const u = getUser(req.userId)!;
     if (u.totp_enabled) throw new ApiError(409, 'ALREADY_ENABLED', 'Xác thực 2 lớp đang bật.', 'inline');
     const secret = base32Encode(crypto.randomBytes(20));
     run('UPDATE app_user SET totp_pending_secret=? WHERE id=?', secret, u.id);
@@ -250,7 +257,7 @@ export function registerAuth(app: FastifyInstance) {
   });
 
   app.post<{ Body: { code: string } }>('/api/auth/2fa/enable', async (req) => {
-    const u = getUser((req as any).userId)!;
+    const u = getUser(req.userId)!;
     if (!u.totp_pending_secret || !verifyTotp(u.totp_pending_secret, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
     run('UPDATE app_user SET totp_secret=totp_pending_secret, totp_pending_secret=NULL, totp_enabled=1 WHERE id=?', u.id);
@@ -258,7 +265,7 @@ export function registerAuth(app: FastifyInstance) {
   });
 
   app.post<{ Body: { code: string } }>('/api/auth/2fa/disable', async (req) => {
-    const u = getUser((req as any).userId)!;
+    const u = getUser(req.userId)!;
     if (!u.totp_enabled || !u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
     run('UPDATE app_user SET totp_secret=NULL, totp_enabled=0 WHERE id=?', u.id);
@@ -266,7 +273,7 @@ export function registerAuth(app: FastifyInstance) {
   });
 
   app.post<{ Body: { code: string } }>('/api/auth/2fa/verify-code', async (req) => {
-    const u = getUser((req as any).userId)!;
+    const u = getUser(req.userId)!;
     if (!u.totp_enabled) return ok({ sudoToken: null, required: false });
     if (!u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');

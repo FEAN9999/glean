@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import './styles.css';
 import { I18nProvider, useI18n } from './lib/i18n';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -16,7 +16,7 @@ import { ManualSyncPage } from './pages/ManualSync';
 import { SettingsPage } from './pages/Settings';
 import { BackupPage } from './pages/Backup';
 import { ProfilePage } from './pages/Profile';
-import { Empty } from './components/ui';
+import { Empty, PageErrorBoundary } from './components/ui';
 
 initTheme();
 
@@ -40,12 +40,14 @@ function NotFound() {
 
 function App() {
   const { status } = useAuth();
+  const { pathname } = useLocation();
   if (status === 'loading') return null;
   if (status === 'setup') return <SetupPage />;
   if (status === 'anon') return <LoginPage />;
   return (
     <UiProvider>
       <Shell>
+        <PageErrorBoundary resetKey={pathname}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/bai-viet" element={<Navigate to="/bai-viet/tu-khoa" replace />} />
@@ -66,6 +68,7 @@ function App() {
           <Route path="/ho-so" element={<ProfilePage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </PageErrorBoundary>
       </Shell>
     </UiProvider>
   );

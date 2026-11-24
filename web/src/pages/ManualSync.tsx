@@ -46,7 +46,7 @@ function AutoRows() {
   const [auto, setAuto] = useState<{ posts: AutoState; comments: AutoState } | null>(null);
   const load = () => api.get('/sync/auto-status', { quiet: true }).then((r) => setAuto(r.data)).catch(() => {});
   useEffect(() => void load(), []);
-  useEvent([Ev.AutoSyncFinished, Ev.ConfigReloaded], () => void load());
+  useEvent([Ev.AutoSyncFinished, Ev.ConfigReloaded, Ev.Reconnected], () => void load());
   if (!auto) return null;
   return (
     <>
@@ -128,6 +128,13 @@ function Inner() {
     });
   };
   useEvent([Ev.ManualSyncProgress, Ev.ManualSyncComplete, Ev.ManualSyncFailed], (m) => onStatus(m.data));
+  // Progress sent while the stream was down was missed: read where the run is now.
+  useEvent(Ev.Reconnected, () =>
+    api
+      .get<SyncStatus>('/manual-syncs/status', { quiet: true })
+      .then((r) => onStatus(r.data))
+      .catch(() => {}),
+  );
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [logs.length]);

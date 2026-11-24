@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
 import { ApiErr, api, setErrorSinks } from '../lib/api';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
@@ -335,6 +335,35 @@ export function Status({ tone, children }: { tone: 'ok' | 'bad' | 'off' | 'acc';
       <span className={`dot ${tone === 'ok' ? 'dot-ok' : tone === 'bad' ? 'dot-bad' : tone === 'acc' ? 'dot-acc' : ''}`} />
       {children}
     </span>
+  );
+}
+
+/** Keeps an error while drawing one page from blanking the whole app: that page shows it, the navigation keeps working. */
+export class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: string }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  /** Opening another page (a new `resetKey`) clears the error; pages that work are left mounted. */
+  componentDidUpdate(prev: { resetKey: string }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null });
+  }
+  render() {
+    return this.state.error ? <PageCrashed error={this.state.error} /> : this.props.children;
+  }
+}
+
+function PageCrashed({ error }: { error: Error }) {
+  const { t } = useI18n();
+  return (
+    <div className="page">
+      <Empty title={t('Trang này gặp lỗi', 'This page ran into an error')}>
+        <span>{error.message}</span>
+        <button className="btn" onClick={() => location.reload()}>
+          {t('Tải lại trang', 'Reload the page')}
+        </button>
+      </Empty>
+    </div>
   );
 }
 

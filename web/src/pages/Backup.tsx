@@ -4,34 +4,11 @@ import { useI18n } from '../lib/i18n';
 import { fmtAgo, fmtBytes, fmtDate, fmtNum } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
 import { Status, Switch, useUi } from '../components/ui';
+import type { BackupRun, backupStatus } from '../../../server/backup';
+import type { AppConfig } from '../../../server/config';
 
-interface BackupRun {
-  id: number;
-  trigger: 'auto' | 'manual';
-  startedAt: string;
-  finishedAt: string | null;
-  file: string | null;
-  sizeBytes: number | null;
-  mediaCopied: number;
-  mediaBytes: number;
-  mediaError: string | null;
-  error: string | null;
-}
-interface AutoStatus {
-  running: boolean;
-  last: BackupRun | null;
-  lastSuccessAt: string | null;
-  nextDueAt: string | null;
-  dir: string;
-}
-interface BackupCfg {
-  enabled: boolean;
-  intervalHours: number;
-  keep: number;
-  targetDir: string;
-  includeMedia: boolean;
-  notifyOnFail: boolean;
-}
+type AutoStatus = ReturnType<typeof backupStatus>;
+type BackupCfg = AppConfig['backup'];
 
 /** Scheduled backups: last run, next run, settings and "back up now". */
 function AutoBackup({ onRan }: { onRan: () => void }) {
@@ -49,7 +26,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
   useEffect(() => {
     loadStatus();
     api
-      .get('/systems/config', { quiet: true })
+      .get<AppConfig>('/systems/config', { quiet: true })
       .then((r) => {
         setForm(r.data.backup);
         setSaved(r.data.backup);
@@ -77,7 +54,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
     setBusy('save');
     setError('');
     try {
-      const r = await api.put('/systems/config', { backup: form }, { quiet: true });
+      const r = await api.put<AppConfig>('/systems/config', { backup: form }, { quiet: true });
       setForm(r.data.backup);
       setSaved(r.data.backup);
       toast(t('Đã lưu cài đặt sao lưu.', 'Backup settings saved.'));

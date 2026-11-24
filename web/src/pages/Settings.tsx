@@ -4,8 +4,9 @@ import { useI18n } from '../lib/i18n';
 import { fmtBytes } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
 import { Empty, Switch, useUi } from '../components/ui';
+import type { AppConfig } from '../../../server/config';
 
-type Cfg = any;
+type Cfg = AppConfig;
 
 function getPath(o: any, p: string) {
   return p.split('.').reduce((a, k) => a?.[k], o);
@@ -184,7 +185,7 @@ function Inner() {
       </div>
     ) : null;
   const dirty = JSON.stringify(cfg) !== saved;
-  const set = (p: string, v: unknown) => setCfg((c: Cfg) => setPath(c, p, v));
+  const set = (p: string, v: unknown) => setCfg((c) => c && setPath(c, p, v));
 
   const Text = ({ p, label, hint, type = 'text', placeholder }: { p: string; label: string; hint?: string; type?: string; placeholder?: string }) => (
     <label className="field">

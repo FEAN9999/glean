@@ -51,7 +51,7 @@ function useOverview() {
     api.get<Overview>('/systems/overview', { quiet: true }).then((r) => setOv(r.data)).catch(() => {});
   }, []);
   useEffect(load, [load]);
-  useEvent([Ev.FinishScrape, Ev.AutoSyncFinished], load);
+  useEvent([Ev.FinishScrape, Ev.AutoSyncFinished, Ev.Reconnected], load);
   return ov;
 }
 
@@ -93,6 +93,7 @@ export function SievePage() {
   const [cursor, setCursor] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
   const reloadAfter = useRef(false);
 
@@ -108,7 +109,9 @@ export function SievePage() {
       setItems((xs) => (reset ? r.data : [...xs, ...r.data]));
       setCursor((r.nextCursor as number) ?? null);
       setDone(!r.nextCursor);
+      setError(null);
     } catch (e) {
+      setError((e as ApiErr).message);
       if ((e as ApiErr).status) setDone(true);
     } finally {
       busy.current = false;
@@ -127,7 +130,7 @@ export function SievePage() {
       .then((r) => setRetention(r.data?.scraper?.retentionHours ?? null))
       .catch(() => {});
   }, [load]);
-  useEvent(Ev.FinishScrape, () => void load(true, null));
+  useEvent([Ev.FinishScrape, Ev.Reconnected], () => void load(true, null));
   useEvent(Ev.UpdateScrape, (m) => {
     if (m.data?.isMarkedDeleted) setItems((xs) => xs.filter((x) => x.id !== m.data.id));
   });
@@ -157,8 +160,13 @@ export function SievePage() {
 
       <div className="cols">
         <section className="col-main gtable-scroll" aria-label={t('Các bài đã sàng', 'Sieved threads')} style={{ paddingTop: 10 }}>
+          {error && (
+            <p className="error-text" role="alert">
+              {error}
+            </p>
+          )}
           {loaded && !items.length ? (
-            <Empty title={t('Chưa có lượt sàng nào', 'No finished jobs yet')}>
+            !error && <Empty title={t('Chưa có lượt sàng nào', 'No finished jobs yet')}>
               {t('Dán link bài viết vào ô tìm ở trên, hoặc mở Hàng đợi sàng. Lượt sàng xong sẽ xuất hiện ở đây.', 'Paste a thread link into the box above, or open the sieve queue. Finished jobs show up here.')}
             </Empty>
           ) : (
@@ -239,7 +247,8 @@ export function QueuePage() {
     api
       .get<Scrape[]>('/scrapes/processed?size=5', { quiet: true })
       .then((r) => setRecent(r.data))
-      .catch(() => setRecent([]));
+      // Keep what is shown: an empty list here would claim nothing has finished.
+      .catch(() => {});
   }, []);
   useEffect(() => {
     loadRecent();
@@ -248,7 +257,7 @@ export function QueuePage() {
       .then((r) => setCfg(r.data?.scraper ?? null))
       .catch(() => {});
   }, [loadRecent]);
-  useEvent(Ev.FinishScrape, loadRecent);
+  useEvent([Ev.FinishScrape, Ev.Reconnected], loadRecent);
 
   const drop = async (s: Scrape) => {
     try {

@@ -106,10 +106,11 @@ export function useScrapeQueue() {
     api
       .get<Scrape[]>('/scrapes/unprocessed', { quiet: true })
       .then((r) => setItems(r.data))
-      .catch(() => setItems([]));
+      // Keep what is shown: an empty list here would claim nothing is queued.
+      .catch(() => {});
   }, []);
   useEffect(load, [load]);
-  useEvent([Ev.NewScrape, Ev.FinishScrape], load);
+  useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.Reconnected], load);
   useEvent(Ev.UpdateScrape, (m) => {
     setItems((xs) => {
       if (!xs) return xs;
