@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, ApiErr } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { useAuth, type Tokens } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
 import { OtpInput } from '../components/ui';
 import { Mark } from '../components/Icons';
@@ -53,7 +53,7 @@ export function SetupPage() {
     if (password !== confirm) return setError(t('Hai mật khẩu chưa khớp nhau.', 'The passwords do not match.'));
     setBusy(true);
     try {
-      const r = await api.post('/auth/setup', { username, password }, { quiet: true });
+      const r = await api.post<Tokens>('/auth/setup', { username, password }, { quiet: true });
       await acceptTokens(r.data);
     } catch (err) {
       setError((err as ApiErr).message);
@@ -110,14 +110,14 @@ export function LoginPage() {
     setBusy(true);
     try {
       if (!challenge) {
-        const r = await api.post('/auth/login', { username, password }, { quiet: true });
-        if (r.data.requires2fa) {
+        const r = await api.post<Tokens | { requires2fa: true; challenge: string }>('/auth/login', { username, password }, { quiet: true });
+        if ('requires2fa' in r.data) {
           setChallenge(r.data.challenge);
           return;
         }
         await acceptTokens(r.data);
       } else {
-        const r = await api.post('/auth/verify-2fa', { challenge, code }, { quiet: true });
+        const r = await api.post<Tokens>('/auth/verify-2fa', { challenge, code }, { quiet: true });
         await acceptTokens(r.data);
       }
     } catch (err) {

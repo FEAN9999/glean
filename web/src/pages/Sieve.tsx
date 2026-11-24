@@ -6,6 +6,7 @@ import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDuration, fmtNum } from '../lib/format';
 import { Empty, PausedNotice, Sentinel, useUi } from '../components/ui';
 import { NowSieving, ScrapeStatus, SieveForm, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
+import type { AppConfig } from '../../../server/config';
 
 interface ProxyState {
   enabled: boolean;
@@ -27,7 +28,7 @@ function useProxyState() {
   useEffect(() => {
     api.get<ProxyState>('/scrapes/check-proxy', { quiet: true }).then((r) => setSt(r.data)).catch(() => {});
   }, []);
-  useEvent(Ev.ProxyStatus, (m) => setSt(m.data));
+  useEvent<ProxyState>(Ev.ProxyStatus, (m) => setSt(m.data));
   return st;
 }
 
@@ -126,12 +127,12 @@ export function SievePage() {
   useEffect(() => {
     void load(true, null);
     api
-      .get('/systems/config', { quiet: true })
+      .get<AppConfig>('/systems/config', { quiet: true })
       .then((r) => setRetention(r.data?.scraper?.retentionHours ?? null))
       .catch(() => {});
   }, [load]);
   useEvent([Ev.FinishScrape, Ev.Reconnected], () => void load(true, null));
-  useEvent(Ev.UpdateScrape, (m) => {
+  useEvent<Scrape>(Ev.UpdateScrape, (m) => {
     if (m.data?.isMarkedDeleted) setItems((xs) => xs.filter((x) => x.id !== m.data.id));
   });
 
@@ -253,7 +254,7 @@ export function QueuePage() {
   useEffect(() => {
     loadRecent();
     api
-      .get('/systems/config', { quiet: true })
+      .get<AppConfig>('/systems/config', { quiet: true })
       .then((r) => setCfg(r.data?.scraper ?? null))
       .catch(() => {});
   }, [loadRecent]);

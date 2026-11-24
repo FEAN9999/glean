@@ -137,7 +137,7 @@ export const onSudoRequired = (l: Listener) => {
   };
 };
 
-export async function request<T = any>(path: string, opts: ReqOpts = {}): Promise<Envelope<T>> {
+export async function request<T = unknown>(path: string, opts: ReqOpts = {}): Promise<Envelope<T>> {
   const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
   const idempotent = method === 'GET';
   let attempt = 0;
@@ -194,10 +194,10 @@ export async function request<T = any>(path: string, opts: ReqOpts = {}): Promis
 }
 
 export const api = {
-  get: <T = any>(p: string, o?: ReqOpts) => request<T>(p, { ...o, method: 'GET' }),
-  post: <T = any>(p: string, body?: unknown, o?: ReqOpts) => request<T>(p, { ...o, method: 'POST', body: body ?? {} }),
-  put: <T = any>(p: string, body?: unknown, o?: ReqOpts) => request<T>(p, { ...o, method: 'PUT', body: body ?? {} }),
-  del: <T = any>(p: string, o?: ReqOpts) => request<T>(p, { ...o, method: 'DELETE' }),
+  get: <T = unknown>(p: string, o?: ReqOpts) => request<T>(p, { ...o, method: 'GET' }),
+  post: <T = unknown>(p: string, body?: unknown, o?: ReqOpts) => request<T>(p, { ...o, method: 'POST', body: body ?? {} }),
+  put: <T = unknown>(p: string, body?: unknown, o?: ReqOpts) => request<T>(p, { ...o, method: 'PUT', body: body ?? {} }),
+  del: <T = unknown>(p: string, o?: ReqOpts) => request<T>(p, { ...o, method: 'DELETE' }),
 };
 
 /** After login/refresh the browser gets an httpOnly cookie so <img> and EventSource are authorised too. */

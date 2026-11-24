@@ -9,12 +9,20 @@ export interface User {
   createdAt: string;
 }
 
+/** What the server sends after setup, sign-in, 2FA or a password change. */
+export interface Tokens {
+  accessToken: string;
+  refreshToken: string;
+  userId: number;
+  user: User;
+}
+
 type Status = 'loading' | 'setup' | 'anon' | 'authed';
 
 interface AuthCtx {
   status: Status;
   user: User | null;
-  acceptTokens: (d: { accessToken: string; refreshToken: string; userId: number; user: User }) => Promise<void>;
+  acceptTokens: (d: Tokens) => Promise<void>;
   reloadUser: () => Promise<void>;
   logout: () => Promise<void>;
 }

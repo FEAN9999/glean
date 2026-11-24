@@ -26,7 +26,7 @@ export const Ev = {
   ConfigReloaded: 5103,
 } as const satisfies typeof ServerEv & { Reconnected: -1; Hello: 0 };
 
-export interface RtMessage<T = any> {
+export interface RtMessage<T = unknown> {
   type: number;
   data: T;
   message: string | null;
@@ -82,8 +82,9 @@ export function connectRealtime() {
       return;
     }
     if (m.type === Ev.Hello) {
-      clientId = m.data.clientId;
-      serverVersion = m.data.version;
+      const hello = m.data as { clientId: number; version: string };
+      clientId = hello.clientId;
+      serverVersion = hello.version;
     }
     handlers.forEach((h) => h(m));
   };
@@ -109,15 +110,18 @@ export function useRealtimeConnected() {
   );
 }
 
-/** Subscribe to one or more event types for the lifetime of the component. */
-export function useEvent(types: number | number[], handler: (m: RtMessage) => void) {
+/**
+ * Subscribe to one or more event types for the lifetime of the component.
+ * T is the `data` the server sends with those events; like `api.get<T>`, it is not checked at run time.
+ */
+export function useEvent<T = unknown>(types: number | number[], handler: (m: RtMessage<T>) => void) {
   const ref = useRef(handler);
   ref.current = handler;
   const key = Array.isArray(types) ? types.join(',') : String(types);
   useEffect(() => {
     const set = new Set(key.split(',').map(Number));
     const h: Handler = (m) => {
-      if (set.has(m.type)) ref.current(m);
+      if (set.has(m.type)) ref.current(m as RtMessage<T>);
     };
     handlers.add(h);
     return () => {

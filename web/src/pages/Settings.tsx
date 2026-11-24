@@ -156,19 +156,19 @@ function Inner() {
   const [saved, setSaved] = useState<string>('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [env, setEnv] = useState<any>(null);
-  const [proxy, setProxy] = useState<any>(null);
+  const [env, setEnv] = useState<{ version: string; node: string; ffmpeg: boolean; dbSizeBytes: number; realtimeClients: number } | null>(null);
+  const [proxy, setProxy] = useState<{ enabled: boolean; alive: number; total: number } | null>(null);
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
     api
-      .get('/systems/config', { quiet: true })
+      .get<Cfg>('/systems/config', { quiet: true })
       .then((r) => {
         setCfg(r.data);
         setSaved(JSON.stringify(r.data));
       })
       .catch((err) => setError((err as ApiErr).message));
-    api.get('/systems/environment', { quiet: true }).then((r) => setEnv(r.data)).catch(() => {});
+    api.get<NonNullable<typeof env>>('/systems/environment', { quiet: true }).then((r) => setEnv(r.data)).catch(() => {});
   }, []);
 
   // Deep links such as /cai-dat#sync: scroll once the form exists.
@@ -236,7 +236,7 @@ function Inner() {
     setBusy(true);
     setError('');
     try {
-      const r = await api.put('/systems/config', cfg, { quiet: true });
+      const r = await api.put<Cfg>('/systems/config', cfg, { quiet: true });
       setCfg(r.data);
       setSaved(JSON.stringify(r.data));
       refreshMaintenance();
@@ -248,7 +248,7 @@ function Inner() {
     }
   };
   const reloadFromDb = async () => {
-    const r = await api.post('/systems/reload-config');
+    const r = await api.post<Cfg>('/systems/reload-config');
     setCfg(r.data);
     setSaved(JSON.stringify(r.data));
     toast(t('Đã nạp lại cấu hình từ cơ sở dữ liệu.', 'Configuration reloaded from the database.'));
@@ -384,7 +384,7 @@ function Inner() {
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => api.get('/scrapes/check-proxy?refresh=1').then((r) => setProxy(r.data))}
+                onClick={() => api.get<NonNullable<typeof proxy>>('/scrapes/check-proxy?refresh=1').then((r) => setProxy(r.data))}
               >
                 {t('Kiểm tra proxy ngay', 'Check proxies now')}
               </button>
@@ -485,7 +485,7 @@ function Inner() {
                   className="btn btn-sm"
                   disabled={!notice.trim()}
                   onClick={() =>
-                    api.post('/systems/notify', { message: notice }).then((r) => {
+                    api.post<{ delivered: number }>('/systems/notify', { message: notice }).then((r) => {
                       setNotice('');
                       toast(t(`Đã gửi tới ${r.data.delivered} thẻ.`, `Sent to ${r.data.delivered} tabs.`));
                     })

@@ -97,6 +97,20 @@ export interface LiveProgress {
   total?: number;
 }
 
+/** Data of the UpdateScrapeProcess event: a page of the thread was read. */
+export interface PageProgress {
+  scrapeId: number;
+  page: number;
+  currentPage: number;
+  totalPages: number;
+}
+/** Data of the UpdateDownloadImageProcess event. */
+export interface ImageProgress {
+  scrapeId: number;
+  downloaded: number;
+  total: number;
+}
+
 /** Waiting + processing jobs, kept live by realtime events. `items` is null until the first load. */
 export function useScrapeQueue() {
   const [items, setItems] = useState<Scrape[] | null>(null);
@@ -111,18 +125,18 @@ export function useScrapeQueue() {
   }, []);
   useEffect(load, [load]);
   useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.Reconnected], load);
-  useEvent(Ev.UpdateScrape, (m) => {
+  useEvent<Scrape>(Ev.UpdateScrape, (m) => {
     setItems((xs) => {
       if (!xs) return xs;
-      const s = m.data as Scrape;
+      const s = m.data;
       if (s.status >= ScrapeStatus.Completed || s.isMarkedDeleted) return xs.filter((x) => x.id !== s.id);
       return xs.map((x) => (x.id === s.id ? { ...x, ...s } : x));
     });
   });
-  useEvent(Ev.UpdateScrapeProcess, (m) =>
+  useEvent<PageProgress>(Ev.UpdateScrapeProcess, (m) =>
     setItems((xs) => xs?.map((x) => (x.id === m.data.scrapeId ? { ...x, currentPage: m.data.currentPage, totalPages: m.data.totalPages } : x)) ?? xs),
   );
-  useEvent(Ev.UpdateDownloadImageProcess, (m) => setLive((l) => ({ ...l, [m.data.scrapeId]: { downloaded: m.data.downloaded, total: m.data.total } })));
+  useEvent<ImageProgress>(Ev.UpdateDownloadImageProcess, (m) => setLive((l) => ({ ...l, [m.data.scrapeId]: { downloaded: m.data.downloaded, total: m.data.total } })));
 
   const processing = items?.find((x) => x.status === ScrapeStatus.Processing) ?? null;
   const waiting = items?.filter((x) => x.status === ScrapeStatus.Waiting) ?? [];

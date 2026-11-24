@@ -6,6 +6,7 @@ import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum, fmtTime } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
 import { Status } from '../components/ui';
+import type { AppConfig } from '../../../server/config';
 
 interface SyncStatus {
   running: boolean;
@@ -44,7 +45,7 @@ function clock(s: number) {
 function AutoRows() {
   const { t } = useI18n();
   const [auto, setAuto] = useState<{ posts: AutoState; comments: AutoState } | null>(null);
-  const load = () => api.get('/sync/auto-status', { quiet: true }).then((r) => setAuto(r.data)).catch(() => {});
+  const load = () => api.get<{ posts: AutoState; comments: AutoState }>('/sync/auto-status', { quiet: true }).then((r) => setAuto(r.data)).catch(() => {});
   useEffect(() => void load(), []);
   useEvent([Ev.AutoSyncFinished, Ev.ConfigReloaded, Ev.Reconnected], () => void load());
   if (!auto) return null;
@@ -103,7 +104,7 @@ function Inner() {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.get('/systems/config', { quiet: true }).then((r) => setForums(r.data.source.forums)).catch(() => {});
+    api.get<AppConfig>('/systems/config', { quiet: true }).then((r) => setForums(r.data.source.forums)).catch(() => {});
     api
       .get<SyncStatus>('/manual-syncs/status', { quiet: true })
       .then((r) => {
@@ -127,7 +128,7 @@ function Inner() {
       return [...old, ...s.logs.filter((l) => !seen.has(l.at + l.line))].slice(-300);
     });
   };
-  useEvent([Ev.ManualSyncProgress, Ev.ManualSyncComplete, Ev.ManualSyncFailed], (m) => onStatus(m.data));
+  useEvent<SyncStatus>([Ev.ManualSyncProgress, Ev.ManualSyncComplete, Ev.ManualSyncFailed], (m) => onStatus(m.data));
   // Progress sent while the stream was down was missed: read where the run is now.
   useEvent(Ev.Reconnected, () =>
     api

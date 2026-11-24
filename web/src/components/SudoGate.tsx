@@ -35,7 +35,7 @@ export function SudoGate({ children, title }: { children: ReactNode; title: stri
     setBusy(true);
     setError('');
     try {
-      const r = await api.post('/auth/2fa/verify-code', { code }, { quiet: true });
+      const r = await api.post<{ sudoToken: string | null; expiresInSeconds?: number }>('/auth/2fa/verify-code', { code }, { quiet: true });
       setSudoToken(r.data.sudoToken);
       sudoUntil = Date.now() + (r.data.expiresInSeconds ?? 900) * 1000 - 30_000;
       setOk(true);

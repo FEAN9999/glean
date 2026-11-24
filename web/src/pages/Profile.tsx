@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api, ApiErr, setSession, getSession } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { useAuth, type Tokens } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
 import { fmtDate } from '../lib/format';
 import { useTheme } from '../components/Shell';
@@ -20,7 +20,7 @@ function PasswordForm() {
     if (next !== again) return setError(t('Hai mật khẩu mới chưa khớp nhau.', 'The new passwords do not match.'));
     setBusy(true);
     try {
-      const r = await api.put('/accounts/change-password', { currentPassword: cur, newPassword: next }, { quiet: true });
+      const r = await api.put<Tokens>('/accounts/change-password', { currentPassword: cur, newPassword: next }, { quiet: true });
       setSession({ accessToken: r.data.accessToken, refreshToken: r.data.refreshToken, userId: r.data.userId });
       setCur('');
       setNext('');
@@ -67,7 +67,7 @@ function TwoFactor() {
 
   const begin = async () => {
     setError('');
-    const r = await api.post('/auth/2fa/setup');
+    const r = await api.post<{ secret: string; qrDataUrl: string }>('/auth/2fa/setup');
     setSetup(r.data);
   };
   const enable = async (e: FormEvent) => {

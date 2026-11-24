@@ -64,9 +64,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, [toast, refreshMaintenance]);
 
-  useEvent(Ev.SystemNotification, (m) => toast(m.message ?? m.data?.message ?? ''));
+  useEvent<{ message: string }>(Ev.SystemNotification, (m) => toast(m.message ?? m.data?.message ?? ''));
   useEvent(Ev.NeedReload, () => setNeedReload(true));
-  useEvent(Ev.ConfigReloaded, (m) => m.data?.maintenance && setMaintenance(m.data.maintenance));
+  useEvent<{ maintenance: Maintenance }>(Ev.ConfigReloaded, (m) => m.data?.maintenance && setMaintenance(m.data.maintenance));
   useEvent(Ev.Hello, () => {
     if (bootVersion.current && serverVersion && serverVersion !== bootVersion.current) setNeedReload(true);
   });

@@ -52,6 +52,13 @@ interface HistoryItem {
   resultCount: number;
   createdAt: string;
 }
+/** A thread whose title is close to the keyword. */
+interface Suggestion {
+  id: number;
+  title: string;
+  author: string;
+  commentCount: number;
+}
 
 function historyPath(scope: Scope, byAuthor: boolean) {
   if (scope === 'posts') return byAuthor ? '/posts/search/recent-authors' : '/posts/search/recent-keywords';
@@ -101,8 +108,8 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
     void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, byAuthor]);
-  useEvent(historyEvent(scope, byAuthor), (m) =>
-    setItems((xs) => [m.data as HistoryItem, ...xs.filter((x) => x.id !== m.data.id && x.keyword.toLowerCase() !== m.data.keyword.toLowerCase())]),
+  useEvent<HistoryItem>(historyEvent(scope, byAuthor), (m) =>
+    setItems((xs) => [m.data, ...xs.filter((x) => x.id !== m.data.id && x.keyword.toLowerCase() !== m.data.keyword.toLowerCase())]),
   );
 
   const clear = async () => {
@@ -166,13 +173,13 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [other, setOther] = useState<number | null>(null);
-  const [suggest, setSuggest] = useState<{ id: number; title: string; author: string; commentCount: number }[]>([]);
+  const [suggest, setSuggest] = useState<Suggestion[]>([]);
   const [meta, setMeta] = useState<{ count: number; at: string | null } | null>(null);
 
   useEffect(() => {
     if (scope === 'posts')
-      api.get('/posts/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
-    else api.get('/comments/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
+      api.get<{ postCount: number; postUpdatedAt: string | null }>('/posts/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
+    else api.get<{ commentCount: number; commentUpdatedAt: string | null }>('/comments/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
   }, [scope]);
 
   useEffect(() => {
@@ -245,7 +252,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
           }
           if (scope === 'posts' && !byAuthor) {
             api
-              .get(`/posts/search/suggestions?q=${encodeURIComponent(q)}&topK=8`, { quiet: true })
+              .get<Suggestion[]>(`/posts/search/suggestions?q=${encodeURIComponent(q)}&topK=8`, { quiet: true })
               .then((s) => isLatest() && setSuggest(s.data))
               .catch(() => {});
           }

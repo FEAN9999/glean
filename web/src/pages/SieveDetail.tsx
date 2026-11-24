@@ -6,7 +6,7 @@ import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useUi } from '../components/ui';
-import { ScrapeStatus, scrapeTitle, useStatusLabel, type Scrape } from '../components/Scrape';
+import { ScrapeStatus, scrapeTitle, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
 
@@ -56,6 +56,11 @@ interface Cmt {
 }
 
 type Tab = 'images' | 'videos' | 'links' | 'comments' | 'synced-comments';
+/** Place of a queued job: `rank` 1 is next, 0 is running, null is finished. */
+interface QueueRank {
+  rank: number | null;
+  waiting: number;
+}
 
 /** Brings the tab bar back into view (below the sticky top bar) when it is above the screen. */
 function scrollToTabs() {
@@ -548,7 +553,7 @@ export function SieveDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [dl, setDl] = useState<{ downloaded: number; total: number } | null>(null);
-  const [rank, setRank] = useState<{ rank: number | null; waiting: number } | null>(null);
+  const [rank, setRank] = useState<QueueRank | null>(null);
   const [tab, setTab] = useState<Tab>('images');
   const [version, setVersion] = useState(0);
 
@@ -559,7 +564,7 @@ export function SieveDetailPage() {
         setS(r.data);
         // merge: realtime events may have arrived while this request was in flight
         setDone((d) => new Set([...d, ...(r.data.donePages ?? [])]));
-        if (r.data.status === ScrapeStatus.Waiting) api.get(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
+        if (r.data.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
         else setRank(null);
         setLoadError(null);
       })
@@ -568,20 +573,20 @@ export function SieveDetailPage() {
   useEffect(load, [load]);
   useEvent(Ev.Reconnected, load);
 
-  useEvent(Ev.UpdateScrape, (m) => {
+  useEvent<Scrape>(Ev.UpdateScrape, (m) => {
     if (m.data.id === id) setS((x) => (x ? { ...x, ...m.data } : m.data));
-    else if (s?.status === ScrapeStatus.Waiting) api.get(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
+    else if (s?.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
   });
-  useEvent(Ev.NewScrape, (m) => {
+  useEvent<Scrape>(Ev.NewScrape, (m) => {
     if (m.data.id === id) load();
   });
-  useEvent(Ev.UpdateScrapeProcess, (m) => {
+  useEvent<PageProgress>(Ev.UpdateScrapeProcess, (m) => {
     if (m.data.scrapeId !== id) return;
     setDone((d) => new Set(d).add(m.data.page));
     setS((x) => (x ? { ...x, totalPages: m.data.totalPages, currentPage: m.data.currentPage, status: ScrapeStatus.Processing } : x));
   });
-  useEvent(Ev.UpdateDownloadImageProcess, (m) => m.data.scrapeId === id && setDl({ downloaded: m.data.downloaded, total: m.data.total }));
-  useEvent(Ev.FinishScrape, (m) => {
+  useEvent<ImageProgress>(Ev.UpdateDownloadImageProcess, (m) => m.data.scrapeId === id && setDl({ downloaded: m.data.downloaded, total: m.data.total }));
+  useEvent<Scrape>(Ev.FinishScrape, (m) => {
     if (m.data.id !== id) return;
     load();
     setVersion((v) => v + 1);
