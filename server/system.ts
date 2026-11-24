@@ -37,7 +37,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
       try {
         new URL(patch.source.baseUrl);
       } catch {
-        throw new ApiError(400, 'INVALID_URL', 'Địa chỉ nguồn không hợp lệ.', 'inline');
+        throw new ApiError(400, 'INVALID_URL', ['Địa chỉ nguồn không hợp lệ.', 'The source address is not valid.'], 'inline');
       }
       const old = cfg().source.baseUrl;
       if (patch.source.baseUrl !== old) {
@@ -57,16 +57,16 @@ export function registerSystem(app: FastifyInstance, port: number) {
       url = new URL(raw);
       if (!/^https?:$/.test(url.protocol)) throw new Error();
     } catch {
-      throw new ApiError(400, 'INVALID_URL', 'Địa chỉ diễn đàn không hợp lệ.', 'inline');
+      throw new ApiError(400, 'INVALID_URL', ['Địa chỉ diễn đàn không hợp lệ.', 'The forum address is not valid.'], 'inline');
     }
     try {
       const forums = await fetchForumIndex(url.toString());
       if (!forums.length)
-        throw new ApiError(422, 'NO_FORUMS', 'Không tìm thấy chuyên mục nào ở trang chủ. Địa chỉ này có phải diễn đàn XenForo không?', 'inline');
+        throw new ApiError(422, 'NO_FORUMS', ['Không tìm thấy chuyên mục nào ở trang chủ. Địa chỉ này có phải diễn đàn XenForo không?', 'No sections found on the home page. Is this a XenForo forum?'], 'inline');
       return ok(forums);
     } catch (e) {
       if (e instanceof ApiError) throw e;
-      throw new ApiError(502, 'SOURCE_UNREACHABLE', `Không đọc được ${url.host}: ${(e as Error).message}`, 'inline');
+      throw new ApiError(502, 'SOURCE_UNREACHABLE', [`Không đọc được ${url.host}: ${(e as Error).message}`, `Could not read ${url.host}: ${(e as Error).message}`], 'inline');
     }
   });
 
@@ -77,7 +77,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
 
   app.post<{ Body: { message: string } }>('/api/systems/notify', async (req) => {
     const message = String(req.body?.message ?? '').trim();
-    if (!message) throw new ApiError(400, 'EMPTY', 'Nhập nội dung thông báo.', 'inline');
+    if (!message) throw new ApiError(400, 'EMPTY', ['Nhập nội dung thông báo.', 'Type the notice text.'], 'inline');
     emit(Ev.SystemNotification, { message, at: new Date().toISOString() }, message);
     return ok({ delivered: clientCount() });
   });
@@ -89,7 +89,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
 
   app.post('/api/systems/test-telegram', async () => {
     const r = await telegram('Glean: tin nhắn thử từ trang cài đặt.', true);
-    if (!r.ok) throw new ApiError(400, 'TELEGRAM_FAILED', r.error ?? 'Không gửi được.', 'inline');
+    if (!r.ok) throw new ApiError(400, 'TELEGRAM_FAILED', r.error ?? ['Không gửi được.', 'Could not send.'], 'inline');
     return ok(true);
   });
 

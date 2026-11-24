@@ -35,19 +35,7 @@ interface Session {
 }
 
 const SKEY = 'glean.session';
-const LEGACY_SKEY = 'sang.session'; // pre-rename key, moved over once so the user stays signed in
-let session: Session | null = (() => {
-  try {
-    const legacy = localStorage.getItem(LEGACY_SKEY);
-    if (legacy !== null) {
-      if (localStorage.getItem(SKEY) === null) localStorage.setItem(SKEY, legacy);
-      localStorage.removeItem(LEGACY_SKEY);
-    }
-  } catch {
-    /* ignore */
-  }
-  return readStoredSession();
-})();
+let session: Session | null = readStoredSession();
 
 function readStoredSession(): Session | null {
   try {
@@ -175,7 +163,8 @@ export async function request<T = any>(path: string, opts: ReqOpts = {}): Promis
         await new Promise((r) => setTimeout(r, 400 * attempt));
         continue;
       }
-      const err = new ApiErr(0, 'NETWORK', 'Không kết nối được máy chủ. Kiểm tra máy chủ Glean có đang chạy không.', 'toast');
+      const message = currentLang() === 'en-US' ? 'Cannot reach the server. Check that Glean is running.' : 'Không kết nối được máy chủ. Kiểm tra máy chủ Glean có đang chạy không.';
+      const err = new ApiErr(0, 'NETWORK', message, 'toast');
       if (!opts.quiet) toastSink(err);
       throw err;
     }
@@ -186,7 +175,7 @@ export async function request<T = any>(path: string, opts: ReqOpts = {}): Promis
     const json = (await res.json().catch(() => null)) as Envelope<T> | null;
     if (res.ok && json?.success) return json;
     const display = (res.headers.get('error-message-type') as ApiErr['display']) ?? 'toast';
-    const err = new ApiErr(res.status, json?.code ?? 'ERROR', json?.message ?? `Lỗi ${res.status}`, display);
+    const err = new ApiErr(res.status, json?.code ?? 'ERROR', json?.message ?? `${currentLang() === 'en-US' ? 'Error' : 'Lỗi'} ${res.status}`, display);
     if (err.code === 'SUDO_REQUIRED') {
       sudoToken = null;
       sudoListeners.forEach((l) => l());

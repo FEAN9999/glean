@@ -15,14 +15,14 @@ import { registerDemoForum } from './demo/forum.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
 
-const PORT = Number(process.env.GLEAN_PORT ?? process.env.SANG_PORT ?? 4318);
-const HOST = process.env.GLEAN_HOST ?? process.env.SANG_HOST ?? '127.0.0.1';
+const PORT = Number(process.env.GLEAN_PORT ?? 4318);
+const HOST = process.env.GLEAN_HOST ?? '127.0.0.1';
 
 loadConfig(PORT);
 initNet();
 
 const app = Fastify({
-  logger: { level: process.env.GLEAN_LOG ?? process.env.SANG_LOG ?? 'warn' },
+  logger: { level: process.env.GLEAN_LOG ?? 'warn' },
   routerOptions: { ignoreTrailingSlash: true },
   bodyLimit: 2 * 1024 * 1024,
 });
@@ -34,7 +34,7 @@ app.setErrorHandler((err, _req, reply) => {
   const e = err as { statusCode?: number; message: string };
   if (e.statusCode && e.statusCode < 500) return sendError(reply, new ApiError(e.statusCode, 'BAD_REQUEST', e.message, 'toast'));
   app.log.error(err);
-  return sendError(reply, new ApiError(500, 'SERVER_ERROR', `Lỗi máy chủ: ${e.message}`, 'toast'));
+  return sendError(reply, new ApiError(500, 'SERVER_ERROR', [`Lỗi máy chủ: ${e.message}`, `Server error: ${e.message}`], 'toast'));
 });
 
 /* ---- realtime (Server-Sent Events) ---- */

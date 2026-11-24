@@ -1,9 +1,12 @@
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// SANG_* is the pre-rename name, still honoured so existing setups keep working.
-export const DATA_DIR = path.resolve(process.env.GLEAN_DATA_DIR ?? process.env.SANG_DATA_DIR ?? 'data');
+export const DATA_DIR = path.resolve(process.env.GLEAN_DATA_DIR ?? 'data');
+// On 2026-11-13 a test runner that skipped server/test/setup.ts wrote into the real archive. Test
+// runners set NODE_TEST_CONTEXT (node --test) or NODE_ENV=test (bun, vitest, jest).
+if (!process.env.GLEAN_DATA_DIR && (process.env.NODE_TEST_CONTEXT || process.env.NODE_ENV === 'test'))
+  throw new Error('Tests must not open the real data folder: load server/test/setup.ts first, which sets GLEAN_DATA_DIR.');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 export const DB_PATH = path.join(DATA_DIR, 'glean.db');
@@ -324,14 +327,31 @@ export const now = () => new Date().toISOString();
 
 type Row = Record<string, SQLInputValue>;
 
+/**
+ * Prepared statements by SQL text, so a query that runs often is compiled once. Some queries are
+ * built per call (IN lists, table names), so only the most recently used ones are kept.
+ */
+const statements = new Map<string, StatementSync>();
+const STATEMENTS_KEPT = 300;
+function prepared(sql: string) {
+  let s = statements.get(sql);
+  if (s) statements.delete(sql);
+  else {
+    s = db.prepare(sql);
+    if (statements.size >= STATEMENTS_KEPT) statements.delete(statements.keys().next().value!);
+  }
+  statements.set(sql, s);
+  return s;
+}
+
 export function all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
-  return db.prepare(sql).all(...params) as T[];
+  return prepared(sql).all(...params) as T[];
 }
 export function get<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
-  return db.prepare(sql).get(...params) as T | undefined;
+  return prepared(sql).get(...params) as T | undefined;
 }
 export function run(sql: string, ...params: SQLInputValue[]) {
-  return db.prepare(sql).run(...params);
+  return prepared(sql).run(...params);
 }
 export function tx<T>(fn: () => T): T {
   db.exec('BEGIN');

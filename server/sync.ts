@@ -611,7 +611,7 @@ export function registerSync(app: FastifyInstance) {
   const items = async (req: any) => {
     const id = Number(req.params.id);
     const h = get('SELECT * FROM sync_history WHERE id=?', id);
-    if (!h) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lần đồng bộ này.');
+    if (!h) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lần đồng bộ này.', 'Sync run not found.']);
     const page = intParam(req.query.page, 1);
     const size = intParam(req.query.size, 50, 1, 200);
     const rows = all(
@@ -643,7 +643,7 @@ export function registerSync(app: FastifyInstance) {
 
   app.post<{ Body: Partial<ManualOptions> }>('/api/manual-syncs/start', async (req) => {
     requireSudo(req);
-    if (manual.running) throw new ApiError(409, 'ALREADY_RUNNING', 'Đang có một lượt đồng bộ thủ công chạy.', 'inline');
+    if (manual.running) throw new ApiError(409, 'ALREADY_RUNNING', ['Đang có một lượt đồng bộ thủ công chạy.', 'A manual sync is already running.'], 'inline');
     const b = req.body ?? {};
     const o: ManualOptions = {
       type: b.type === 'comments' ? 'comments' : 'posts',
@@ -655,7 +655,7 @@ export function registerSync(app: FastifyInstance) {
       onlyMissing: !!b.onlyMissing && !b.fromFirstPage,
       fromFirstPage: b.type === 'comments' && !!b.fromFirstPage,
     };
-    if (!o.allPages && o.pageTo < o.pageFrom) throw new ApiError(400, 'INVALID_RANGE', 'Trang kết thúc phải lớn hơn hoặc bằng trang bắt đầu.', 'inline');
+    if (!o.allPages && o.pageTo < o.pageFrom) throw new ApiError(400, 'INVALID_RANGE', ['Trang kết thúc phải lớn hơn hoặc bằng trang bắt đầu.', 'The last page must be the same as or after the first page.'], 'inline');
     Object.assign(manual, {
       running: true,
       stopRequested: false,

@@ -1,15 +1,23 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { cfg, type AppConfig } from './config.ts';
 
+/**
+ * An error the API sends back. Write its message as [Vietnamese, English]; a plain string (an
+ * error passed through, a notice the user typed) is sent as it is in both languages.
+ */
 export class ApiError extends Error {
+  /** Sent instead of `message` when the request asks for English. */
+  readonly en: string;
   constructor(
     public status: number,
     public code: string,
-    message: string,
+    message: string | readonly [vi: string, en: string],
     /** Hint for the client on how to surface the error: toast | inline | silent | banner */
     public display: 'toast' | 'inline' | 'silent' | 'banner' = 'toast',
   ) {
-    super(message);
+    const [vi, en] = typeof message === 'string' ? [message, message] : message;
+    super(vi);
+    this.en = en;
   }
 }
 
@@ -31,7 +39,7 @@ export function assertNotPaused(req: FastifyRequest, feature: keyof AppConfig['m
 
 export function sendError(reply: FastifyReply, e: ApiError) {
   reply.header('error-message-type', e.display);
-  return reply.code(e.status).send({ success: false, code: e.code, message: e.message });
+  return reply.code(e.status).send({ success: false, code: e.code, message: lang(reply.request) === 'en' ? e.en : e.message });
 }
 
 export const intParam = (v: unknown, def: number, min = 1, max = Number.MAX_SAFE_INTEGER) => {

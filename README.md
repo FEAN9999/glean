@@ -30,9 +30,9 @@ npm start
 
 Rồi mở http://127.0.0.1:4318.
 
-Biến môi trường: `GLEAN_PORT` (mặc định 4318), `GLEAN_HOST` (mặc định 127.0.0.1, đặt `0.0.0.0` để mở ra mạng LAN), `GLEAN_DATA_DIR` (mặc định `./data`), `GLEAN_LOG`. Tên cũ `SANG_*` vẫn được nhận.
+Biến môi trường: `GLEAN_PORT` (mặc định 4318), `GLEAN_HOST` (mặc định 127.0.0.1, đặt `0.0.0.0` để mở ra mạng LAN), `GLEAN_DATA_DIR` (mặc định `./data`), `GLEAN_LOG`.
 
-Nâng cấp từ bản tên "Sàng": lần chạy đầu tiên tự đổi `data/sang.db` thành `data/glean.db` và giữ nguyên phiên đăng nhập.
+Nâng cấp từ bản tên "Sàng": lần chạy đầu tiên tự đổi `data/sang.db` thành `data/glean.db`, sau đó cần đăng nhập lại. Biến môi trường `SANG_*` không còn được nhận; dùng `GLEAN_*`.
 
 ## Diễn đàn mẫu
 
@@ -98,19 +98,28 @@ Thay thế công nghệ so với hệ thống gốc: Elasticsearch → SQLite FT
 
 ```
 server/            Fastify + node:sqlite
-  index.ts         khởi động, xác thực, SSE
-  db.ts            schema + FTS5
+  index.ts         khởi động, SSE
+  db.ts            schema + FTS5, các bước nâng cấp CSDL có đánh số
   config.ts        cấu hình động
-  auth.ts          JWT, refresh, TOTP
+  auth.ts          JWT, refresh, TOTP, chặn API khi chưa đăng nhập
+  http.ts          dạng lỗi và dạng trả về chung của API
+  events.ts        mã sự kiện realtime, gửi tới các trình duyệt đang mở
   search.ts        tìm bài viết / bình luận, lịch sử, gợi ý
   sync.ts          đồng bộ tự động + thủ công, nhật ký
+  archive.ts       phát hiện bình luận đã bị xóa trên diễn đàn
   scraper.ts       hàng đợi sàng, tải ảnh/video, lưu trữ
+  backup.ts        sao lưu theo lịch và khi cần, chép ảnh sang thư mục sao lưu
+  notify.ts        gửi tin Telegram
   system.ts        bảo trì, phiên bản, cấu hình
   media.ts         phục vụ /media
   net.ts           fetch qua proxy xoay vòng, health-check
   source/xenforo.ts  bộ đọc HTML kiểu XenForo
   demo/forum.ts    diễn đàn mẫu
+  test/setup.ts    thư mục dữ liệu tạm cho mỗi lượt test
 web/src/           React + Vite
+  pages/           từng màn hình
+  components/      khung trang, thành phần dùng chung
+  lib/             gọi API, realtime, tải dữ liệu theo trang, song ngữ
 ```
 
 ## Thiết kế

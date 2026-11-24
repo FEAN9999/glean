@@ -40,7 +40,7 @@ const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 function validate(keyword: string) {
   const min = cfg().search.minKeywordLength;
   const k = String(keyword ?? '').trim();
-  if (k.length < min) throw new ApiError(400, 'KEYWORD_TOO_SHORT', `Nhập tối thiểu ${min} ký tự.`, 'inline');
+  if (k.length < min) throw new ApiError(400, 'KEYWORD_TOO_SHORT', [`Nhập tối thiểu ${min} ký tự.`, `Type at least ${min} characters.`], 'inline');
   return k;
 }
 
@@ -129,7 +129,7 @@ interface CommentSearchBody {
 function resolveThreadId(v: CommentSearchBody['threadId']) {
   if (v == null || v === '') return null;
   const ref = parseThreadRef(String(v));
-  if (!ref) throw new ApiError(400, 'INVALID_THREAD', 'Không nhận ra link hoặc ID bài viết.', 'inline');
+  if (!ref) throw new ApiError(400, 'INVALID_THREAD', ['Không nhận ra link hoặc ID bài viết.', 'Not a thread link or ID.'], 'inline');
   return ref.threadId;
 }
 
@@ -300,7 +300,7 @@ export function registerSearch(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>('/api/threads/:id', async (req) => {
     const t = get('SELECT t.*, f.name forum_name FROM thread t LEFT JOIN forum f ON f.id=t.forum_id WHERE t.id=?', Number(req.params.id));
-    if (!t) throw new ApiError(404, 'NOT_FOUND', 'Chưa có bài này trong kho.');
+    if (!t) throw new ApiError(404, 'NOT_FOUND', ['Chưa có bài này trong kho.', 'This thread is not in the archive yet.']);
     return ok(camel(t));
   });
 

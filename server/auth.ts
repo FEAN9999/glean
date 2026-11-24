@@ -154,7 +154,7 @@ export function registerApiGuard(app: FastifyInstance) {
     if (!url.startsWith('/api/')) return;
     if (PUBLIC_API.some((r) => r.test(url))) return;
     const uid = userFromRequest(req);
-    if (uid == null) return sendError(reply, new ApiError(401, 'UNAUTHORIZED', 'Phiên đăng nhập đã hết hạn.', 'silent'));
+    if (uid == null) return sendError(reply, new ApiError(401, 'UNAUTHORIZED', ['Phiên đăng nhập đã hết hạn.', 'Your session has expired.'], 'silent'));
     req.userId = uid;
   });
 }
@@ -165,7 +165,7 @@ export function requireSudo(req: FastifyRequest) {
   if (!u?.totp_enabled) return;
   const body = verifyJwt<{ sub: number; scope: string }>(req.headers['x-sudo-token'] as string);
   if (!body || body.scope !== 'sudo' || body.sub !== u.id)
-    throw new ApiError(403, 'SUDO_REQUIRED', 'Cần nhập lại mã xác thực 2 lớp để thực hiện thao tác này.', 'inline');
+    throw new ApiError(403, 'SUDO_REQUIRED', ['Cần nhập lại mã xác thực 2 lớp để thực hiện thao tác này.', 'Enter your two-factor code again to do this.'], 'inline');
 }
 
 const loginAttempts = new Map<string, { n: number; until: number }>();
@@ -174,10 +174,10 @@ export function registerAuth(app: FastifyInstance) {
   app.get('/api/auth/status', async () => ok({ hasUser: !!getUser() }));
 
   app.post<{ Body: { username: string; password: string } }>('/api/auth/setup', async (req) => {
-    if (getUser()) throw new ApiError(409, 'ALREADY_SETUP', 'Tài khoản đã được tạo.');
+    if (getUser()) throw new ApiError(409, 'ALREADY_SETUP', ['Tài khoản đã được tạo.', 'The account has already been created.']);
     const { username, password } = req.body ?? ({} as any);
     if (!username?.trim() || !password || password.length < 8)
-      throw new ApiError(400, 'INVALID_INPUT', 'Tên đăng nhập bắt buộc, mật khẩu tối thiểu 8 ký tự.', 'inline');
+      throw new ApiError(400, 'INVALID_INPUT', ['Tên đăng nhập bắt buộc, mật khẩu tối thiểu 8 ký tự.', 'A username is required, and the password needs at least 8 characters.'], 'inline');
     run('INSERT INTO app_user(username, password_hash, created_at) VALUES(?,?,?)', username.trim(), hashPassword(password), now());
     return ok(issueTokens(getUser()!));
   });
@@ -185,14 +185,16 @@ export function registerAuth(app: FastifyInstance) {
   app.post<{ Body: { username: string; password: string } }>('/api/auth/login', async (req) => {
     const key = req.ip;
     const att = loginAttempts.get(key);
-    if (att && att.until > Date.now())
-      throw new ApiError(429, 'TOO_MANY_ATTEMPTS', `Thử lại sau ${Math.ceil((att.until - Date.now()) / 1000)} giây.`, 'inline');
+    if (att && att.until > Date.now()) {
+      const s = Math.ceil((att.until - Date.now()) / 1000);
+      throw new ApiError(429, 'TOO_MANY_ATTEMPTS', [`Thử lại sau ${s} giây.`, `Try again in ${s} seconds.`], 'inline');
+    }
     const { username, password } = req.body ?? ({} as any);
     const u = get<UserRow>('SELECT * FROM app_user WHERE username = ? COLLATE NOCASE', String(username ?? '').trim());
     if (!u || !verifyPassword(String(password ?? ''), u.password_hash)) {
       const n = (att?.n ?? 0) + 1;
       loginAttempts.set(key, { n, until: n >= 5 ? Date.now() + 60_000 * Math.min(10, n - 4) : 0 });
-      throw new ApiError(401, 'INVALID_CREDENTIALS', 'Sai tên đăng nhập hoặc mật khẩu.', 'inline');
+      throw new ApiError(401, 'INVALID_CREDENTIALS', ['Sai tên đăng nhập hoặc mật khẩu.', 'Wrong username or password.'], 'inline');
     }
     loginAttempts.delete(key);
     if (u.totp_enabled) return ok({ requires2fa: true, challenge: signJwt({ sub: u.id, scope: '2fa' }, 300) });
@@ -201,20 +203,20 @@ export function registerAuth(app: FastifyInstance) {
 
   app.post<{ Body: { challenge: string; code: string } }>('/api/auth/verify-2fa', async (req) => {
     const body = verifyJwt<{ sub: number; scope: string }>(req.body?.challenge);
-    if (!body || body.scope !== '2fa') throw new ApiError(401, 'CHALLENGE_EXPIRED', 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại.', 'inline');
+    if (!body || body.scope !== '2fa') throw new ApiError(401, 'CHALLENGE_EXPIRED', ['Phiên đăng nhập đã hết hạn, hãy đăng nhập lại.', 'The sign-in has expired. Sign in again.'], 'inline');
     const u = getUser(body.sub);
     if (!u?.totp_secret || !verifyTotp(u.totp_secret, req.body.code))
-      throw new ApiError(401, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
+      throw new ApiError(401, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     return ok(issueTokens(u));
   });
 
   app.post<{ Params: { userId: string; token: string } }>('/api/auth/refresh/:userId/:token', async (req) => {
     const row = get<{ user_id: number; expires_at: string }>('SELECT user_id, expires_at FROM refresh_token WHERE token=?', req.params.token);
     if (!row || row.user_id !== Number(req.params.userId) || row.expires_at < now())
-      throw new ApiError(401, 'REFRESH_INVALID', 'Phiên đã hết hạn.', 'silent');
+      throw new ApiError(401, 'REFRESH_INVALID', ['Phiên đã hết hạn.', 'The session has expired.'], 'silent');
     run('DELETE FROM refresh_token WHERE token=?', req.params.token);
     const u = getUser(row.user_id);
-    if (!u) throw new ApiError(401, 'REFRESH_INVALID', 'Phiên đã hết hạn.', 'silent');
+    if (!u) throw new ApiError(401, 'REFRESH_INVALID', ['Phiên đã hết hạn.', 'The session has expired.'], 'silent');
     return ok(issueTokens(u));
   });
 
@@ -227,7 +229,7 @@ export function registerAuth(app: FastifyInstance) {
 
   const me = async (req: FastifyRequest) => {
     const u = getUser(req.userId);
-    if (!u) throw new ApiError(401, 'UNAUTHORIZED', 'Chưa đăng nhập.', 'silent');
+    if (!u) throw new ApiError(401, 'UNAUTHORIZED', ['Chưa đăng nhập.', 'Not signed in.'], 'silent');
     return ok(publicUser(u));
   };
   app.get('/api/auth/me', me);
@@ -236,8 +238,8 @@ export function registerAuth(app: FastifyInstance) {
     const u = getUser(req.userId)!;
     const { currentPassword, newPassword } = req.body ?? ({} as any);
     if (!verifyPassword(String(currentPassword ?? ''), u.password_hash))
-      throw new ApiError(400, 'INVALID_PASSWORD', 'Mật khẩu hiện tại không đúng.', 'inline');
-    if (!newPassword || newPassword.length < 8) throw new ApiError(400, 'WEAK_PASSWORD', 'Mật khẩu mới tối thiểu 8 ký tự.', 'inline');
+      throw new ApiError(400, 'INVALID_PASSWORD', ['Mật khẩu hiện tại không đúng.', 'The current password is wrong.'], 'inline');
+    if (!newPassword || newPassword.length < 8) throw new ApiError(400, 'WEAK_PASSWORD', ['Mật khẩu mới tối thiểu 8 ký tự.', 'The new password needs at least 8 characters.'], 'inline');
     run('UPDATE app_user SET password_hash=? WHERE id=?', hashPassword(newPassword), u.id);
     run('DELETE FROM refresh_token WHERE user_id=?', u.id);
     return ok(issueTokens(getUser(u.id)!));
@@ -245,7 +247,7 @@ export function registerAuth(app: FastifyInstance) {
 
   app.post('/api/auth/2fa/setup', async (req) => {
     const u = getUser(req.userId)!;
-    if (u.totp_enabled) throw new ApiError(409, 'ALREADY_ENABLED', 'Xác thực 2 lớp đang bật.', 'inline');
+    if (u.totp_enabled) throw new ApiError(409, 'ALREADY_ENABLED', ['Xác thực 2 lớp đang bật.', 'Two-factor authentication is already on.'], 'inline');
     const secret = base32Encode(crypto.randomBytes(20));
     run('UPDATE app_user SET totp_pending_secret=? WHERE id=?', secret, u.id);
     const label = encodeURIComponent(`Glean:${u.username}`);
@@ -257,7 +259,7 @@ export function registerAuth(app: FastifyInstance) {
   app.post<{ Body: { code: string } }>('/api/auth/2fa/enable', async (req) => {
     const u = getUser(req.userId)!;
     if (!u.totp_pending_secret || !verifyTotp(u.totp_pending_secret, req.body?.code))
-      throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
+      throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     run('UPDATE app_user SET totp_secret=totp_pending_secret, totp_pending_secret=NULL, totp_enabled=1 WHERE id=?', u.id);
     return ok(publicUser(getUser(u.id)!));
   });
@@ -265,7 +267,7 @@ export function registerAuth(app: FastifyInstance) {
   app.post<{ Body: { code: string } }>('/api/auth/2fa/disable', async (req) => {
     const u = getUser(req.userId)!;
     if (!u.totp_enabled || !u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
-      throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
+      throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     run('UPDATE app_user SET totp_secret=NULL, totp_enabled=0 WHERE id=?', u.id);
     return ok(publicUser(getUser(u.id)!));
   });
@@ -274,7 +276,7 @@ export function registerAuth(app: FastifyInstance) {
     const u = getUser(req.userId)!;
     if (!u.totp_enabled) return ok({ sudoToken: null, required: false });
     if (!u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
-      throw new ApiError(400, 'INVALID_2FA_CODE', 'Mã xác thực không đúng.', 'inline');
+      throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     return ok({ sudoToken: signJwt({ sub: u.id, scope: 'sudo' }, 15 * 60), required: true, expiresInSeconds: 900 });
   });
 }

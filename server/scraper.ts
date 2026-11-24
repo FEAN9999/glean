@@ -543,17 +543,24 @@ const SOURCES = new Set(['direct', 'search-post', 'search-comment', 'home']);
 
 export function createScrape(input: string, source: string) {
   const ref = parseThreadRef(String(input ?? ''));
-  if (!ref) throw new ApiError(400, 'INVALID_THREAD', 'Không nhận ra link hoặc ID bài viết. Dán link dạng …/threads/ten-bai.12345/ hoặc chỉ số ID.', 'inline');
+  if (!ref) throw new ApiError(400, 'INVALID_THREAD', ['Không nhận ra link hoặc ID bài viết. Dán link dạng …/threads/ten-bai.12345/ hoặc chỉ số ID.', 'Not a thread link or ID. Paste a link like …/threads/thread-title.12345/ or just the ID.'], 'inline');
   if (ref.foreignHost && !ref.knownOldDomain) {
     const current = new URL(cfg().source.baseUrl);
     const isDemo = current.pathname.replace(/\/+$/, '').endsWith('/demo-forum');
+    const host = ref.foreignHost;
     throw new ApiError(
       409,
       'SOURCE_MISMATCH',
-      `Link thuộc ${ref.foreignHost}, nhưng Glean đang đọc từ ${isDemo ? 'diễn đàn mẫu' : current.host}. ` +
-        (isDemo
-          ? `Đổi "Địa chỉ diễn đàn" trong Cài đặt → Nguồn dữ liệu thành https://${ref.foreignHost} rồi dán lại link.`
-          : `Nếu ${ref.foreignHost} là tên miền khác của cùng diễn đàn, thêm https://${ref.foreignHost} vào "Tên miền cũ" trong Cài đặt → Nguồn dữ liệu; nếu là diễn đàn khác, đổi "Địa chỉ diễn đàn".`),
+      [
+        `Link thuộc ${host}, nhưng Glean đang đọc từ ${isDemo ? 'diễn đàn mẫu' : current.host}. ` +
+          (isDemo
+            ? `Đổi "Địa chỉ diễn đàn" trong Cài đặt → Nguồn dữ liệu thành https://${host} rồi dán lại link.`
+            : `Nếu ${host} là tên miền khác của cùng diễn đàn, thêm https://${host} vào "Tên miền cũ" trong Cài đặt → Nguồn dữ liệu; nếu là diễn đàn khác, đổi "Địa chỉ diễn đàn".`),
+        `The link is on ${host}, but Glean reads from ${isDemo ? 'the sample forum' : current.host}. ` +
+          (isDemo
+            ? `Change "Forum address" in Settings → Source to https://${host}, then paste the link again.`
+            : `If ${host} is another domain of the same forum, add https://${host} to "Previous domains" in Settings → Source; if it is a different forum, change "Forum address".`),
+      ],
       'inline',
     );
   }
@@ -599,7 +606,7 @@ export function createScrape(input: string, source: string) {
 
 function rank(id: number) {
   const s = get<{ status: number }>('SELECT status FROM scrape WHERE id=?', id);
-  if (!s) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lượt sàng.');
+  if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
   const waiting = get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status=? AND is_marked_deleted=0', ScrapeStatus.Waiting)!.n;
   if (s.status !== ScrapeStatus.Waiting) return { rank: s.status === ScrapeStatus.Processing ? 0 : null, waiting, status: s.status };
   const ahead = get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status=? AND is_marked_deleted=0 AND id<?', ScrapeStatus.Waiting, id)!.n;
@@ -655,7 +662,7 @@ export function registerScraper(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>('/api/scrapes/:id', async (req) => {
     const s = get('SELECT * FROM scrape WHERE id=?', Number(req.params.id));
-    if (!s) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lượt sàng.');
+    if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
     const sm: any = camel(s);
     sm.syncedCommentCount = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', sm.threadId)!.n;
     sm.failedImages = get<{ n: number }>('SELECT COUNT(*) n FROM scrape_image WHERE scrape_id=? AND (is_download_failed=1 OR is_bin=1)', sm.id)!.n;
@@ -699,7 +706,7 @@ export function registerScraper(app: FastifyInstance) {
   });
   app.get<{ Params: { id: string } }>('/api/scrapes/:id/synced-comments', async (req) => {
     const s = get<{ thread_id: number }>('SELECT thread_id FROM scrape WHERE id=?', Number(req.params.id));
-    if (!s) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lượt sàng.');
+    if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
     const page = intParam((req.query as any).page, 1);
     const size = intParam((req.query as any).size, 40, 1, 200);
     const rows = all('SELECT * FROM comment WHERE thread_id=? ORDER BY post_no LIMIT ? OFFSET ?', s.thread_id, size, (page - 1) * size);
@@ -720,9 +727,9 @@ export function registerScraper(app: FastifyInstance) {
     assertNotPaused(req, 'scrape');
     const id = Number(req.params.id);
     const s = get<{ status: number }>('SELECT status FROM scrape WHERE id=?', id);
-    if (!s) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lượt sàng.');
+    if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
     if (s.status === ScrapeStatus.Processing || s.status === ScrapeStatus.Waiting)
-      throw new ApiError(409, 'IN_QUEUE', 'Lượt sàng này đang trong hàng đợi.', 'toast');
+      throw new ApiError(409, 'IN_QUEUE', ['Lượt sàng này đang trong hàng đợi.', 'This sieve job is already in the queue.'], 'toast');
     // Re-running keeps everything already archived; see prepareRerun.
     prepareRerun(id);
     emit(Ev.NewScrape, summary(id), undefined, 'scrape');

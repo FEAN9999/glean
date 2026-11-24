@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import type { FastifyInstance } from 'fastify';
-import { DATA_DIR, camel, db, get, now, run } from './db.ts';
+import { DATA_DIR, DB_PATH, camel, get, now, run } from './db.ts';
 import { cfg } from './config.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
@@ -47,13 +48,13 @@ export function validateBackupDir(p: string): string {
   const dir = backupDirPath(p);
   const media = path.resolve(cfg().storage.basePath);
   if (isInside(dir, media) || path.resolve(dir, 'media') === media) {
-    throw new ApiError(400, 'INVALID_BACKUP_DIR', 'Thư mục sao lưu không được nằm trong thư mục ảnh hay trùng thư mục dữ liệu.', 'inline');
+    throw new ApiError(400, 'INVALID_BACKUP_DIR', ['Thư mục sao lưu không được nằm trong thư mục ảnh hay trùng thư mục dữ liệu.', 'The backup folder cannot be inside the media folder or be the data folder.'], 'inline');
   }
   try {
     fs.mkdirSync(dir, { recursive: true });
     if (!fs.statSync(dir).isDirectory()) throw new Error('không phải thư mục');
   } catch (e) {
-    throw new ApiError(400, 'INVALID_BACKUP_DIR', `Không dùng được thư mục sao lưu ${dir}: ${(e as Error).message}`, 'inline');
+    throw new ApiError(400, 'INVALID_BACKUP_DIR', [`Không dùng được thư mục sao lưu ${dir}: ${(e as Error).message}`, `Cannot use the backup folder ${dir}: ${(e as Error).message}`], 'inline');
   }
   return dir;
 }
@@ -123,6 +124,28 @@ export async function mirrorMedia(src: string, dest: string): Promise<MirrorResu
   return out;
 }
 
+/**
+ * Copies the database with VACUUM INTO on its own read-only connection in a worker thread, so a
+ * large archive does not stall every request while it is copied.
+ */
+function vacuumInto(dest: string) {
+  const code = `
+    const { DatabaseSync } = require('node:sqlite');
+    const { workerData } = require('node:worker_threads');
+    const d = new DatabaseSync(workerData.src, { readOnly: true });
+    try {
+      d.exec('PRAGMA busy_timeout = 5000');
+      d.exec("VACUUM INTO '" + workerData.dest.replace(/'/g, "''") + "'");
+    } finally {
+      d.close();
+    }`;
+  return new Promise<void>((resolve, reject) => {
+    const w = new Worker(code, { eval: true, workerData: { src: DB_PATH, dest } });
+    w.once('error', reject);
+    w.once('exit', (exit) => (exit === 0 ? resolve() : reject(new Error(`Sao lưu dừng giữa chừng (mã ${exit}).`))));
+  });
+}
+
 const getRun = (id: number) => camel<BackupRun>(get('SELECT * FROM backup_run WHERE id=?', id));
 
 async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
@@ -133,7 +156,7 @@ async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
     const dir = validateBackupDir(c.targetDir);
     const name = autoBackupName(new Date());
     const file = path.join(dir, name);
-    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    await vacuumInto(file);
     // The database copy is the backup; record it before the (slower, optional) media copy.
     run('UPDATE backup_run SET file=?, size_bytes=? WHERE id=?', name, fs.statSync(file).size, id);
     pruneAutoBackups(dir, Math.max(1, c.keep));

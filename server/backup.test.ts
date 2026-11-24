@@ -159,3 +159,28 @@ test('isBackupDue waits for the interval and does not retry a failure more than 
   updateConfig({ backup: { enabled: true } } as any, 0);
   assert.ok(get('SELECT 1 x FROM backup_run'));
 });
+
+test('the server keeps answering while a large database is copied', async () => {
+  // About 30 MB of filler, so the copy takes long enough to notice a stalled event loop.
+  run('CREATE TABLE filler(v TEXT)');
+  run("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300000) INSERT INTO filler SELECT printf('%0100d', i) FROM n");
+  const target = tmp('large');
+  updateConfig({ backup: { targetDir: target, includeMedia: false } } as any, 0);
+  let turns = 0;
+  let spinning = true;
+  const spin = () => {
+    turns++;
+    if (spinning) setImmediate(spin);
+  };
+  try {
+    setImmediate(spin);
+    const r = await runBackup('manual');
+    assert.equal(r.error, null);
+    assert.ok(r.sizeBytes! > 20_000_000);
+    assert.ok(turns > 20, `the event loop turned only ${turns} times during the copy`);
+  } finally {
+    spinning = false;
+    run('DROP TABLE filler');
+    updateConfig({ backup: { targetDir: '', includeMedia: true } } as any, 0);
+  }
+});

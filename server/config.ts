@@ -177,11 +177,6 @@ export function loadConfig(port: number): AppConfig {
   const rows = all<{ key: string; value: string }>('SELECT key, value FROM config');
   const stored: any = {};
   for (const r of rows) stored[r.key] = JSON.parse(r.value);
-  // Pre-rename installs persisted the old product name in the User-Agent sent to the forum.
-  if (typeof stored.source?.userAgent === 'string' && stored.source.userAgent.includes('SangPersonal/')) {
-    stored.source.userAgent = stored.source.userAgent.replace('SangPersonal/', 'GleanPersonal/');
-    saveSection('source', stored.source);
-  }
   const merged: AppConfig = cleanNumbers(deepMerge(defaults, stored), defaults, '');
   for (const key of Object.keys(merged) as (keyof AppConfig)[]) {
     if (!(key in stored)) saveSection(key, merged[key]);
@@ -258,7 +253,7 @@ export function unmaskPatch(patch: any) {
       const stored = old.get(key);
       // Without a stored line for this host:port:user there is no password to restore;
       // saving the line as is would make the mask itself the password.
-      if (!stored) throw new ApiError(400, 'PROXY_PASSWORD_REQUIRED', `Nhập lại mật khẩu cho proxy ${key} (đã đổi máy chủ, cổng hoặc tài khoản).`, 'inline');
+      if (!stored) throw new ApiError(400, 'PROXY_PASSWORD_REQUIRED', [`Nhập lại mật khẩu cho proxy ${key} (đã đổi máy chủ, cổng hoặc tài khoản).`, `Type the password for proxy ${key} again (its host, port or user changed).`], 'inline');
       return stored;
     });
   }
