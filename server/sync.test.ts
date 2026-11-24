@@ -95,7 +95,7 @@ test('syncThreadComments re-reads stored pages and detects edits and deletions',
       return { title: 'Chủ đề 50', forumId: 1, totalPages: 3, posts: forum[page] };
     };
     const r = await syncThreadComments(50, 2, { trigger: 'manual', shouldStop: () => false, fetchPage });
-    assert.deepEqual(r, { added: 0, edited: 1, deleted: 1, skipped: null });
+    assert.deepEqual(r, { added: 0, edited: 1, liked: 0, deleted: 1, skipped: null });
     assert.deepEqual(asked, [1, 2, 3]);
     assert.deepEqual(all<{ id: number }>('SELECT id FROM comment WHERE thread_id=50 AND deleted_at IS NOT NULL').map((x) => x.id), [1006]);
     assert.equal(get<{ edit_count: number }>('SELECT edit_count FROM comment WHERE id=1003')!.edit_count, 1);
@@ -340,4 +340,25 @@ test('manual comments sync from page 1 reads complete threads too', async () => 
   const o = r.json().data.options;
   assert.equal(o.fromFirstPage, true);
   assert.equal(o.onlyMissing, false);
+});
+
+test('the comments sync log says how many comments had their likes updated', async () => {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  try {
+    addThread(9401, 36, { commentCount: 2, synced: 3, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    upsertComments(9401, 1, [{ ...post(94001), likes: 1 }, { ...post(94002), likes: 2 }]);
+    upsertComments(9401, 2, [{ ...post(94003), likes: 0 }]);
+    // on the forum two of the three comments gained likes
+    const pages: Record<number, ParsedPost[]> = {
+      1: [{ ...post(94001), likes: 5 }, { ...post(94002), likes: 2 }],
+      2: [{ ...post(94003), likes: 1 }],
+    };
+    const fetchPage = async (_id: number, page: number): Promise<ParsedThreadPage> => ({ title: 'Chủ đề 9401', forumId: 36, totalPages: 2, posts: pages[page] });
+    const lines: string[] = [];
+    await syncCommentsForum({ id: 36, name: 'F36' }, [9401], 5, { trigger: 'manual', shouldStop: () => false, fetchPage, fromFirstPage: true, log: (l) => lines.push(l) });
+    const line = lines.find((l) => l.includes('bài 9401'));
+    assert.match(line ?? '', /\+0 bình luận, 2 bình luận cập nhật like/);
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+  }
 });

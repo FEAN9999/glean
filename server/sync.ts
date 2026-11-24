@@ -67,9 +67,10 @@ export function upsertThread(t: ListedThread, forumId: number): { action: 'new' 
  * in comment_revision (whitespace-only changes do not count); a post seen again loses any
  * "deleted on the forum" mark.
  */
-export function upsertComments(threadId: number, page: number, posts: ParsedPost[]): { added: number; edited: number } {
+export function upsertComments(threadId: number, page: number, posts: ParsedPost[]): { added: number; edited: number; liked: number } {
   let added = 0;
   let edited = 0;
+  let liked = 0; // stored comments whose like count changed
   for (const p of posts) {
     const id = p.postId || threadId * 100000 + p.postNo;
     const at = now();
@@ -119,7 +120,7 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
       p.editedAt,
       p.editedAt,
     );
-    run('UPDATE comment SET like_count=? WHERE id=? AND like_count<>?', p.likes ?? 0, id, p.likes ?? 0);
+    liked += Number(run('UPDATE comment SET like_count=? WHERE id=? AND like_count<>?', p.likes ?? 0, id, p.likes ?? 0).changes);
   }
   run(
     `UPDATE thread SET synced_comment_count=(SELECT COUNT(*) FROM comment WHERE thread_id=?),
@@ -128,7 +129,7 @@ export function upsertComments(threadId: number, page: number, posts: ParsedPost
     threadId,
     threadId,
   );
-  return { added, edited };
+  return { added, edited, liked };
 }
 
 function startHistory(type: SyncType, trigger: string, forum: number, forumName: string) {
@@ -266,7 +267,7 @@ const SKIP_REASON: Record<Exclude<ReconcileSkip, null>, string> = {
  * Stored pages do not count toward `maxPages`.
  */
 export async function syncThreadComments(threadId: number, maxPages: number, ctx: RunCtx) {
-  const out: { added: number; edited: number; deleted: number; skipped: ReconcileSkip } = { added: 0, edited: 0, deleted: 0, skipped: null };
+  const out: { added: number; edited: number; liked: number; deleted: number; skipped: ReconcileSkip } = { added: 0, edited: 0, liked: 0, deleted: 0, skipped: null };
   const t = get<{ comment_count: number; synced_comment_count: number }>('SELECT comment_count, synced_comment_count FROM thread WHERE id=?', threadId);
   if (!t) return out;
   const fetchPage = ctx.fetchPage ?? fetchThreadPage;
@@ -289,6 +290,7 @@ export async function syncThreadComments(threadId: number, maxPages: number, ctx
       const n = tx(() => upsertComments(threadId, p, r.posts));
       out.added += n.added;
       out.edited += n.edited;
+      out.liked += n.liked;
       ctx.onSaving?.(r.posts.length);
       return r.posts;
     } catch (e) {
@@ -365,7 +367,7 @@ export async function syncCommentsForum(
       }
       ctx.onPage?.({ forum: forum.id, forumName: forum.name, page: i, totalPages: threadIds.length, synced: count });
       ctx.log?.(
-        `[${forum.name}] bài ${id}: +${n.added} bình luận${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
+        `[${forum.name}] bài ${id}: +${n.added} bình luận${n.liked ? `, ${n.liked} bình luận cập nhật like` : ''}${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
       );
     });
     if (failure) throw (failure as { e: unknown }).e;

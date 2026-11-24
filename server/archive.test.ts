@@ -57,7 +57,7 @@ test('edit stores the previous version', () => {
   const t = seedThread([10]);
   const before = get<{ updated_at: string }>('SELECT updated_at FROM comment WHERE id=10')!;
   const r = upsertComments(t, 1, [post(10, 'nội dung mới', { editedAt: '2026-11-02T00:00:00.000Z' })]);
-  assert.deepEqual(r, { added: 0, edited: 1 });
+  assert.deepEqual(r, { added: 0, edited: 1, liked: 0 });
   const c = get<any>('SELECT content, edit_count, edited_at FROM comment WHERE id=10')!;
   assert.equal(c.content, 'nội dung mới');
   assert.equal(c.edit_count, 1);
@@ -73,7 +73,7 @@ test('whitespace-only change is not an edit', () => {
   const t = seedThread([]);
   upsertComments(t, 1, [post(20, 'a  b\n c')]);
   const r = upsertComments(t, 1, [post(20, 'a b c')]);
-  assert.deepEqual(r, { added: 0, edited: 0 });
+  assert.deepEqual(r, { added: 0, edited: 0, liked: 0 });
   assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM comment_revision WHERE comment_id=20')!.n, 0);
   assert.equal(get<{ edit_count: number }>('SELECT edit_count FROM comment WHERE id=20')!.edit_count, 0);
 });
