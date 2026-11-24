@@ -261,7 +261,6 @@ function Inner() {
     ['proxy', 'Proxy'],
     ['storage', t('Lưu trữ tệp', 'File storage')],
     ['search', t('Tìm kiếm', 'Search')],
-    ['ai', 'AI'],
     ['auth', t('Phiên đăng nhập', 'Sessions')],
     ['tg', 'Telegram'],
     ['pause', t('Tạm dừng tính năng', 'Pause features')],
@@ -362,7 +361,6 @@ function Inner() {
                 min: 1,
               })}
             </div>
-            {Text({ p: 'sync.commentServiceUrl', label: t('Địa chỉ dịch vụ bình luận (tùy chọn)', 'Comment service URL (optional)'), placeholder: 'http://…' })}
           </Section>
 
           <Section id="sieve" title={t('Sàng ảnh', 'Sieve')}>
@@ -401,10 +399,7 @@ function Inner() {
           <Section id="storage" title={t('Lưu trữ tệp', 'File storage')}>
             {Text({ p: 'storage.basePath', label: t('Thư mục lưu', 'Base folder') })}
             <div className="form-grid">
-              {Text({ p: 'storage.thumbnailDir', label: t('Thư mục ảnh thu nhỏ', 'Thumbnail folder') })}
               {Num({ p: 'storage.maxFileSizeMb', label: t('Kích thước tối đa (MB)', 'Max size (MB)'), min: 1 })}
-              {Num({ p: 'storage.chunkSizeMb', label: t('Kích thước mỗi phần tải lên (MB)', 'Upload chunk (MB)'), min: 1 })}
-              {Num({ p: 'storage.concurrentUploads', label: t('Tải lên đồng thời', 'Parallel uploads'), min: 1 })}
             </div>
             {Bool({ p: 'storage.transcodeVideoToHls', label: t('Chuyển video sang HLS bằng FFmpeg', 'Transcode video to HLS with FFmpeg') })}
             {Text({ p: 'storage.ffmpegPath', label: t('Đường dẫn FFmpeg', 'FFmpeg path') })}
@@ -423,13 +418,6 @@ function Inner() {
               {Num({ p: 'search.pageSize', label: t('Kết quả mỗi trang', 'Results per page'), min: 5 })}
               {Num({ p: 'search.minKeywordLength', label: t('Số ký tự tối thiểu', 'Minimum characters'), min: 1 })}
             </div>
-          </Section>
-
-          <Section id="ai" title="AI" desc={t('Lưu sẵn khóa API. Hiện chưa có tính năng nào dùng tới.', 'Stores API keys. No feature uses them yet.')}>
-            {Bool({ p: 'ai.chatGpt.enabled', label: 'ChatGPT' })}
-            {Text({ p: 'ai.chatGpt.apiKey', label: t('Khóa API ChatGPT', 'ChatGPT API key'), type: 'password' })}
-            {Bool({ p: 'ai.gemini.enabled', label: 'Gemini' })}
-            {Text({ p: 'ai.gemini.apiKey', label: t('Khóa API Gemini', 'Gemini API key'), type: 'password' })}
           </Section>
 
           <Section id="auth" title={t('Phiên đăng nhập', 'Sessions')} desc={t('Đổi khóa bí mật sẽ đăng xuất mọi thiết bị.', 'Changing the secret signs out every device.')}>

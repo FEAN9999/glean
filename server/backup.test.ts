@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cfg, loadConfig, updateConfig } from './config.ts';
 import { DATA_DIR, get, run } from './db.ts';
-import { autoBackupName, isBackupDue, mirrorMedia, pruneAutoBackups, runBackup, validateBackupDir } from './backup.ts';
+import { autoBackupName, backupStatus, isBackupDue, mirrorMedia, pruneAutoBackups, runBackup, validateBackupDir } from './backup.ts';
 import { ApiError } from './http.ts';
 
 loadConfig(0);
@@ -103,6 +103,23 @@ test('media is mirrored only into a folder the user chose', async () => {
   assert.equal(r.error, null);
   assert.equal(r.mediaCopied, 0);
   assert.equal(fs.existsSync(path.join(DATA_DIR, 'backups', 'media')), false);
+});
+
+test('the backup status lists the database copies in the chosen folder, newest first', () => {
+  const target = tmp('list');
+  write(path.join(target, 'glean-2026-10-01.db'), 'older copy');
+  write(path.join(target, 'glean-auto-20261101-000000.db'), 'aa');
+  write(path.join(target, 'notes.txt'), 'n');
+  fs.mkdirSync(path.join(target, 'media'));
+  fs.utimesSync(path.join(target, 'glean-2026-10-01.db'), new Date('2026-10-01'), new Date('2026-10-01'));
+  fs.utimesSync(path.join(target, 'glean-auto-20261101-000000.db'), new Date('2026-11-01'), new Date('2026-11-01'));
+  updateConfig({ backup: { targetDir: target } } as any, 0);
+  try {
+    const files = backupStatus().files.map((f) => [f.name, f.sizeBytes]);
+    assert.deepEqual(files, [['glean-auto-20261101-000000.db', 2], ['glean-2026-10-01.db', 10]]);
+  } finally {
+    updateConfig({ backup: { targetDir: '' } } as any, 0);
+  }
 });
 
 test('runBackup records an error when the folder is unusable', async () => {

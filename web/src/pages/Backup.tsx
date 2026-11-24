@@ -11,20 +11,15 @@ type AutoStatus = ReturnType<typeof backupStatus>;
 type BackupCfg = AppConfig['backup'];
 
 /** Scheduled backups: last run, next run, settings and "back up now". */
-function AutoBackup({ onRan }: { onRan: () => void }) {
+function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void }) {
   const { t } = useI18n();
   const { toast } = useUi();
-  const [st, setSt] = useState<AutoStatus | null>(null);
   const [form, setForm] = useState<BackupCfg | null>(null);
   const [saved, setSaved] = useState<BackupCfg | null>(null);
   const [busy, setBusy] = useState<'run' | 'save' | null>(null);
   const [error, setError] = useState('');
 
-  const loadStatus = useCallback(() => {
-    api.get<AutoStatus>('/backups/status', { quiet: true }).then((r) => setSt(r.data)).catch(() => {});
-  }, []);
   useEffect(() => {
-    loadStatus();
     api
       .get<AppConfig>('/systems/config', { quiet: true })
       .then((r) => {
@@ -32,7 +27,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
         setSaved(r.data.backup);
       })
       .catch((err) => setError((err as ApiErr).message));
-  }, [loadStatus]);
+  }, []);
 
   const runNow = async () => {
     setBusy('run');
@@ -41,8 +36,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
       const r = await api.post<BackupRun>('/backups/run', {}, { quiet: true });
       if (r.data.error) setError(r.data.error);
       else toast(t(`Đã sao lưu vào ${r.data.file}.`, `Backed up to ${r.data.file}.`));
-      loadStatus();
-      onRan();
+      reload();
     } catch (e) {
       setError((e as ApiErr).message);
     } finally {
@@ -58,7 +52,7 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
       setForm(r.data.backup);
       setSaved(r.data.backup);
       toast(t('Đã lưu cài đặt sao lưu.', 'Backup settings saved.'));
-      loadStatus();
+      reload();
     } catch (e) {
       setError((e as ApiErr).message);
     } finally {
@@ -154,79 +148,13 @@ function AutoBackup({ onRan }: { onRan: () => void }) {
   );
 }
 
-interface Tables {
-  tables: { name: string; rows: number }[];
-  backups: { name: string; sizeBytes: number; modifiedAt: string }[];
-  backupDir: string;
-}
-
-const TABLE_LABEL: Record<string, [string, string]> = {
-  app_user: ['Tài khoản', 'Account'],
-  config: ['Cấu hình', 'Configuration'],
-  forum: ['Chuyên mục', 'Sections'],
-  thread: ['Bài viết', 'Threads'],
-  comment: ['Bình luận', 'Comments'],
-  search_history: ['Lịch sử tìm kiếm', 'Search history'],
-  scrape: ['Lượt sàng', 'Sieve jobs'],
-  scrape_image: ['Ảnh đã sàng', 'Sieved images'],
-  scrape_video: ['Video đã sàng', 'Sieved videos'],
-  scrape_link: ['Liên kết đã sàng', 'Sieved links'],
-  scrape_comment: ['Bình luận đã sàng', 'Sieved comments'],
-  sync_history: ['Nhật ký đồng bộ', 'Sync log'],
-  sync_history_item: ['Chi tiết nhật ký', 'Sync log items'],
-  comment_revision: ['Bản sửa bình luận', 'Comment revisions'],
-  backup_run: ['Lịch sử sao lưu', 'Backup history'],
-};
-
 function Inner() {
   const { t } = useI18n();
-  const { toast } = useUi();
-  const [data, setData] = useState<Tables | null>(null);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [target, setTarget] = useState(() => `glean-${new Date().toISOString().slice(0, 10)}.db`);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [log, setLog] = useState<string[]>([]);
-
-  const load = useCallback(() => {
-    api
-      .get<Tables>('/clone/tables', { quiet: true })
-      .then((r) => setData(r.data))
-      .catch((err) => setError((err as ApiErr).message));
+  const [st, setSt] = useState<AutoStatus | null>(null);
+  const loadStatus = useCallback(() => {
+    api.get<AutoStatus>('/backups/status', { quiet: true }).then((r) => setSt(r.data)).catch(() => {});
   }, []);
-  useEffect(load, [load]);
-
-  const full = async () => {
-    setBusy('full');
-    setError('');
-    try {
-      const r = await api.post('/clone/execute', { mode: 'full', target }, { quiet: true });
-      setLog((l) => [t(`Sao lưu toàn bộ vào ${r.data.target} (${fmtBytes(r.data.sizeBytes)}) trong ${r.data.ms} ms.`, `Full backup to ${r.data.target} (${fmtBytes(r.data.sizeBytes)}) in ${r.data.ms} ms.`), ...l]);
-      toast(t('Đã sao lưu toàn bộ.', 'Full backup done.'));
-      load();
-    } catch (e) {
-      setError((e as ApiErr).message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const cloneSelected = async () => {
-    setBusy('tables');
-    setError('');
-    try {
-      for (const table of picked) {
-        const r = await api.post('/clone/table', { table, target }, { quiet: true });
-        setLog((l) => [t(`${r.data.table}: đã chép ${fmtNum(r.data.rows)} dòng sang ${target}`, `${r.data.table}: copied ${fmtNum(r.data.rows)} rows to ${target}`), ...l]);
-      }
-      toast(t(`Đã chép ${picked.length} bảng.`, `Copied ${picked.length} tables.`));
-      load();
-    } catch (e) {
-      setError((e as ApiErr).message);
-    } finally {
-      setBusy(null);
-    }
-  };
+  useEffect(loadStatus, [loadStatus]);
 
   return (
     <div className="page">
@@ -234,81 +162,23 @@ function Inner() {
         <h1 className="page-title">{t('Sao lưu', 'Backup')}</h1>
         <p className="page-lede">
           {t(
-            'Sao lưu tự động chép kho và ảnh theo lịch. Sao lưu tay bên dưới chỉ chép kho sang một tệp cơ sở dữ liệu khác, không kèm ảnh.',
-            'Automatic backup copies the archive and media on a schedule. The manual backup below copies only the archive into another database file, without media.',
+            'Glean chép kho dữ liệu theo lịch, kèm ảnh và video khi bạn chọn thư mục sao lưu. "Sao lưu ngay" chép ngay một bản.',
+            'Glean copies the archive on a schedule, with media when you choose a backup folder. "Back up now" makes a copy straight away.',
           )}
         </p>
       </header>
 
       <div className="cols">
         <div className="col-main">
-          <AutoBackup onRan={load} />
-          <div style={{ height: 24 }} />
-          <h2 className="section-title" style={{ paddingBottom: 10 }}>
-            {t('Sao lưu tay (chỉ kho)', 'Manual backup (archive only)')}
-          </h2>
-          <div className="rule-below stack" style={{ gap: 6, paddingBottom: 26 }}>
-            <div className="hstack" style={{ gap: 10, alignItems: 'flex-end' }}>
-              <label className="field" style={{ flex: 1, minWidth: 220, maxWidth: 420 }}>
-                <span>{t('Tệp đích', 'Target file')}</span>
-                <input className="input" value={target} onChange={(e) => setTarget(e.target.value)} />
-              </label>
-              <button className="btn btn-primary btn-lg" onClick={() => void full()} disabled={!!busy || !target.trim()}>
-                {busy === 'full' ? t('Đang sao lưu…', 'Backing up…') : t('Sao lưu toàn bộ', 'Back up everything')}
-              </button>
-            </div>
-            {data && (
-              <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
-                {t(`Lưu trong ${data.backupDir}`, `Saved in ${data.backupDir}`)}
-              </small>
-            )}
-            {error && (
-              <p className="error-text" role="alert" style={{ margin: 0 }}>
-                {error}
-              </p>
-            )}
-          </div>
-
-          <div className="section-head" style={{ alignItems: 'center', padding: '24px 0 4px' }}>
-            <h2 className="section-title">{t('Chép từng bảng', 'Copy single tables')}</h2>
-            <button className="btn" disabled={!picked.length || !!busy || !target.trim()} onClick={() => void cloneSelected()}>
-              {busy === 'tables'
-                ? t('Đang chép…', 'Copying…')
-                : picked.length
-                  ? t(`Chép ${picked.length} bảng đã chọn`, `Copy ${picked.length} selected tables`)
-                  : t('Chép bảng đã chọn', 'Copy selected tables')}
-            </button>
-          </div>
-          {data?.tables.map((tb) => (
-            <label key={tb.name} className="table-row">
-              <input
-                type="checkbox"
-                className="cb"
-                checked={picked.includes(tb.name)}
-                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, tb.name] : p.filter((x) => x !== tb.name)))}
-              />
-              <span style={{ fontWeight: 400 }}>{t(...(TABLE_LABEL[tb.name] ?? [tb.name, tb.name]))}</span>
-              <span className="muted" style={{ fontSize: 13 }}>
-                {tb.name}
-              </span>
-              <span className="r num">{fmtNum(tb.rows)}</span>
-            </label>
-          ))}
-          {log.length > 0 && (
-            <div className="log" style={{ marginTop: 16 }} role="log">
-              {log.map((l, i) => (
-                <div key={i}>{l}</div>
-              ))}
-            </div>
-          )}
+          <AutoBackup st={st} reload={loadStatus} />
         </div>
 
         <aside className="col-side" style={{ gap: 4 }}>
           <h2 className="section-title" style={{ paddingBottom: 2 }}>
             {t('Các tệp sao lưu', 'Backup files')}
           </h2>
-          {data && !data.backups.length && <p className="section-sub">{t('Chưa có tệp sao lưu nào.', 'No backup files yet.')}</p>}
-          {data?.backups.map((b) => (
+          {st && !st.files.length && <p className="section-sub">{t('Chưa có tệp sao lưu nào.', 'No backup files yet.')}</p>}
+          {st?.files.map((b) => (
             <div key={b.name} className="line" style={{ padding: '10px 0' }}>
               <span className="line-text">
                 <span className="line-title ellipsis">{b.name}</span>

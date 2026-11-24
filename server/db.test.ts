@@ -51,6 +51,30 @@ test('migrate backfills post ids of rows sieved before the upgrade', () => {
   assert.deepEqual(ids('scrape_link'), [[1, 778]]);
 });
 
+const version = (d: DatabaseSync) => (d.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+
+test('migrate records the schema version and skips steps a database already had', () => {
+  const d = legacyDb();
+  migrate(d);
+  assert.ok(version(d) > 0);
+  // The post-id backfill is part of an earlier step: rows added after it ran are left alone.
+  d.exec(`INSERT INTO scrape_comment(id, scrape_id, page, post_no, url) VALUES (9, 1, 1, 2, 'https://f.test/posts/779/')`);
+  migrate(d);
+  assert.equal((d.prepare('SELECT post_id FROM scrape_comment WHERE id=9').get() as any).post_id, null);
+});
+
+test('a step that fails leaves the database as it was, at the version before it', () => {
+  const d = legacyDb();
+  const steps = [(x: DatabaseSync) => x.exec('CREATE TABLE step_one(a)'), (x: DatabaseSync) => {
+    x.exec('CREATE TABLE step_two(a)');
+    throw new Error('step 2 failed');
+  }];
+  assert.throws(() => migrate(d, steps), /step 2 failed/);
+  assert.equal(version(d), 1);
+  const tables = d.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'step_%'").all().map((r: any) => r.name);
+  assert.deepEqual(tables, ['step_one']);
+});
+
 test('item lookups by post use an index', () => {
   const d = legacyDb();
   migrate(d);

@@ -223,14 +223,6 @@ CREATE TABLE IF NOT EXISTS sync_history_item (
 );
 CREATE INDEX IF NOT EXISTS ix_sync_history_item ON sync_history_item(history_id, id);
 
-CREATE TABLE IF NOT EXISTS upload_session (
-  id TEXT PRIMARY KEY,
-  file_name TEXT NOT NULL,
-  total_size INTEGER NOT NULL,
-  received INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-
 -- Earlier text of a comment, saved each time the forum version changes.
 CREATE TABLE IF NOT EXISTS comment_revision (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,41 +257,65 @@ export function ensureColumn(d: DatabaseSync, table: string, column: string, ddl
 
 const POST_ID_IN_URL = /(?:post-|\/posts\/)(\d+)/;
 
-/** In-place upgrade of databases created by earlier versions. Safe to run on every start. */
-export function migrate(d: DatabaseSync) {
-  ensureColumn(d, 'comment', 'edit_count', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(d, 'comment', 'edited_at', 'TEXT');
-  ensureColumn(d, 'comment', 'deleted_at', 'TEXT');
-  ensureColumn(d, 'scrape', 'run_no', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn(d, 'backup_run', 'media_error', 'TEXT');
-  ensureColumn(d, 'thread', 'view_count', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(d, 'thread', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(d, 'comment', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
-  if (d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread'").get())
-    d.exec(`CREATE INDEX IF NOT EXISTS ix_thread_views ON thread(view_count DESC);
-            CREATE INDEX IF NOT EXISTS ix_thread_likes ON thread(like_count DESC);`);
-  const items = ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'];
-  for (const t of items) {
-    ensureColumn(d, t, 'post_id', 'INTEGER');
-    ensureColumn(d, t, 'last_seen_run', 'INTEGER NOT NULL DEFAULT 1');
-    ensureColumn(d, t, 'missing_since', 'TEXT');
-    d.exec(`CREATE INDEX IF NOT EXISTS ix_${t}_post ON ${t}(scrape_id, post_id);
-            CREATE INDEX IF NOT EXISTS ix_${t}_postno ON ${t}(scrape_id, post_no, post_id);`);
-  }
-  // Rows sieved before post ids were kept: take the id from the comment's link, then give it to
-  // the media of the same post, so a later re-sieve matches them even when #n has shifted.
-  const legacy = d.prepare('SELECT id, url FROM scrape_comment WHERE post_id IS NULL AND url IS NOT NULL').all() as { id: number; url: string }[];
-  if (legacy.length) {
-    const set = d.prepare('UPDATE scrape_comment SET post_id=? WHERE id=?');
-    d.exec('BEGIN');
-    for (const r of legacy) {
-      const m = POST_ID_IN_URL.exec(r.url);
-      if (m) set.run(Number(m[1]), r.id);
+/**
+ * Upgrades for databases created by earlier versions, run once each and in order. PRAGMA
+ * user_version counts the steps a database has had. Add new steps at the end and never change a
+ * step that has shipped. Each step must also be safe on a new database, which the CREATE TABLE
+ * statements above already create in the latest shape (ensureColumn checks before it adds).
+ */
+const STEPS: ((d: DatabaseSync) => void)[] = [
+  // 1: everything added before steps were counted.
+  (d) => {
+    ensureColumn(d, 'comment', 'edit_count', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(d, 'comment', 'edited_at', 'TEXT');
+    ensureColumn(d, 'comment', 'deleted_at', 'TEXT');
+    ensureColumn(d, 'scrape', 'run_no', 'INTEGER NOT NULL DEFAULT 1');
+    ensureColumn(d, 'backup_run', 'media_error', 'TEXT');
+    ensureColumn(d, 'thread', 'view_count', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(d, 'thread', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(d, 'comment', 'like_count', 'INTEGER NOT NULL DEFAULT 0');
+    if (d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread'").get())
+      d.exec(`CREATE INDEX IF NOT EXISTS ix_thread_views ON thread(view_count DESC);
+              CREATE INDEX IF NOT EXISTS ix_thread_likes ON thread(like_count DESC);`);
+    const items = ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'];
+    for (const t of items) {
+      ensureColumn(d, t, 'post_id', 'INTEGER');
+      ensureColumn(d, t, 'last_seen_run', 'INTEGER NOT NULL DEFAULT 1');
+      ensureColumn(d, t, 'missing_since', 'TEXT');
+      d.exec(`CREATE INDEX IF NOT EXISTS ix_${t}_post ON ${t}(scrape_id, post_id);
+              CREATE INDEX IF NOT EXISTS ix_${t}_postno ON ${t}(scrape_id, post_no, post_id);`);
     }
-    for (const t of items.slice(0, 3))
-      d.exec(`UPDATE ${t} SET post_id=(SELECT c.post_id FROM scrape_comment c WHERE c.scrape_id=${t}.scrape_id
-                AND c.post_no=${t}.post_no AND c.post_id IS NOT NULL LIMIT 1) WHERE post_id IS NULL`);
-    d.exec('COMMIT');
+    // Rows sieved before post ids were kept: take the id from the comment's link, then give it to
+    // the media of the same post, so a later re-sieve matches them even when #n has shifted.
+    const legacy = d.prepare('SELECT id, url FROM scrape_comment WHERE post_id IS NULL AND url IS NOT NULL').all() as { id: number; url: string }[];
+    if (legacy.length) {
+      const set = d.prepare('UPDATE scrape_comment SET post_id=? WHERE id=?');
+      for (const r of legacy) {
+        const m = POST_ID_IN_URL.exec(r.url);
+        if (m) set.run(Number(m[1]), r.id);
+      }
+      for (const t of items.slice(0, 3))
+        d.exec(`UPDATE ${t} SET post_id=(SELECT c.post_id FROM scrape_comment c WHERE c.scrape_id=${t}.scrape_id
+                  AND c.post_no=${t}.post_no AND c.post_id IS NOT NULL LIMIT 1) WHERE post_id IS NULL`);
+    }
+  },
+  // 2: chunked uploads were removed; no screen ever used them.
+  (d) => d.exec('DROP TABLE IF EXISTS upload_session'),
+];
+
+/** Runs the steps a database has not had yet, each in its own transaction with its version number. */
+export function migrate(d: DatabaseSync, steps = STEPS) {
+  const at = (d.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+  for (let v = at; v < steps.length; v++) {
+    d.exec('BEGIN');
+    try {
+      steps[v](d);
+      d.exec(`PRAGMA user_version = ${v + 1}`);
+      d.exec('COMMIT');
+    } catch (e) {
+      d.exec('ROLLBACK');
+      throw e;
+    }
   }
 }
 migrate(db);

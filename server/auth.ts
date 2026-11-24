@@ -135,8 +135,7 @@ function issueTokens(u: UserRow) {
 
 export function userFromRequest(req: FastifyRequest): number | null {
   const h = req.headers.authorization;
-  const token = h?.startsWith('Bearer ') ? h.slice(7) : (req.query as any)?.access_token;
-  const body = verifyJwt<{ sub: number; scope: string }>(token);
+  const body = verifyJwt<{ sub: number; scope: string }>(h?.startsWith('Bearer ') ? h.slice(7) : undefined);
   return body?.scope === 'access' ? body.sub : null;
 }
 
@@ -232,7 +231,6 @@ export function registerAuth(app: FastifyInstance) {
     return ok(publicUser(u));
   };
   app.get('/api/auth/me', me);
-  app.get('/api/accounts/me', me);
 
   app.put<{ Body: { currentPassword: string; newPassword: string } }>('/api/accounts/change-password', async (req) => {
     const u = getUser(req.userId)!;

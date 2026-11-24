@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { all, get, db, DATA_DIR, DB_PATH } from './db.ts';
+import { all, get, DATA_DIR, DB_PATH } from './db.ts';
 import { cfg, loadConfig, maskedConfig, unmaskPatch, updateConfig } from './config.ts';
 import { emit, Ev, clientCount } from './events.ts';
 import { ApiError, ok } from './http.ts';
@@ -19,50 +19,6 @@ export const APP_VERSION = (() => {
   const stamp = fs.existsSync(indexHtml) ? fs.statSync(indexHtml).mtimeMs : Date.now();
   return `1.0.0+${crypto.createHash('sha1').update(String(stamp)).digest('hex').slice(0, 8)}`;
 })();
-
-/** Tables that hold real data and can be cloned (FTS shadow tables are rebuilt by triggers). */
-const CLONABLE = [
-  'app_user',
-  'config',
-  'forum',
-  'thread',
-  'comment',
-  'search_history',
-  'scrape',
-  'scrape_image',
-  'scrape_video',
-  'scrape_link',
-  'scrape_comment',
-  'sync_history',
-  'sync_history_item',
-  'comment_revision',
-  'backup_run',
-];
-
-function resolveTarget(p: string) {
-  const name = String(p ?? '').trim();
-  if (!name) throw new ApiError(400, 'INVALID_TARGET', 'Nhập tên tệp đích.', 'inline');
-  if (!/^[\w.\-]+\.db$/i.test(name)) throw new ApiError(400, 'INVALID_TARGET', 'Tên tệp chỉ gồm chữ, số, dấu gạch, và kết thúc bằng .db', 'inline');
-  const full = path.join(DATA_DIR, 'backups', name);
-  fs.mkdirSync(path.dirname(full), { recursive: true });
-  if (path.resolve(full) === path.resolve(DB_PATH)) throw new ApiError(400, 'INVALID_TARGET', 'Không thể ghi đè cơ sở dữ liệu đang dùng.', 'inline');
-  return full;
-}
-
-function cloneTable(table: string, target: string) {
-  if (!CLONABLE.includes(table)) throw new ApiError(400, 'INVALID_TABLE', `Bảng ${table} không được hỗ trợ.`);
-  const ddl = get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table)!.sql;
-  db.exec(`ATTACH DATABASE '${target.replace(/'/g, "''")}' AS clone_target`);
-  try {
-    db.exec(`DROP TABLE IF EXISTS clone_target.${table}`);
-    db.exec(ddl.replace(/CREATE TABLE (IF NOT EXISTS )?/i, 'CREATE TABLE clone_target.'));
-    db.exec(`INSERT INTO clone_target.${table} SELECT * FROM main.${table}`);
-    const n = get<{ n: number }>(`SELECT COUNT(*) n FROM clone_target.${table}`)!.n;
-    return { table, rows: n };
-  } finally {
-    db.exec('DETACH DATABASE clone_target');
-  }
-}
 
 export function registerSystem(app: FastifyInstance, port: number) {
   app.get('/api/systems/maintenance', async () => ok(cfg().maintenance));
@@ -160,41 +116,5 @@ export function registerSystem(app: FastifyInstance, port: number) {
       images: n('SELECT COUNT(*) n FROM scrape_image i JOIN scrape s ON s.id=i.scrape_id WHERE s.is_marked_deleted=0 AND i.current_url IS NOT NULL'),
       forums: all('SELECT f.id, f.name, COUNT(t.id) threads FROM forum f LEFT JOIN thread t ON t.forum_id=f.id GROUP BY f.id ORDER BY f.id'),
     });
-  });
-
-  /* ---- clone / backup ---- */
-  app.get('/api/clone/tables', async () => {
-    const tables = CLONABLE.map((t) => ({ name: t, rows: get<{ n: number }>(`SELECT COUNT(*) n FROM ${t}`)!.n }));
-    const dir = path.join(DATA_DIR, 'backups');
-    const backups = fs.existsSync(dir)
-      ? fs
-          .readdirSync(dir)
-          .filter((f) => f.endsWith('.db'))
-          .map((f) => {
-            const st = fs.statSync(path.join(dir, f));
-            return { name: f, sizeBytes: st.size, modifiedAt: st.mtime.toISOString() };
-          })
-          .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))
-      : [];
-    return ok({ tables, backups, backupDir: dir });
-  });
-
-  app.post<{ Body: { table: string; target: string } }>('/api/clone/table', async (req) => {
-    requireSudo(req);
-    return ok(cloneTable(req.body?.table, resolveTarget(req.body?.target)));
-  });
-
-  app.post<{ Body: { tables?: string[]; target: string; mode?: 'tables' | 'full' } }>('/api/clone/execute', async (req) => {
-    requireSudo(req);
-    const target = resolveTarget(req.body?.target);
-    const started = Date.now();
-    if (req.body?.mode === 'full') {
-      if (fs.existsSync(target)) fs.rmSync(target);
-      db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
-      return ok({ mode: 'full', target: path.basename(target), sizeBytes: fs.statSync(target).size, ms: Date.now() - started });
-    }
-    const tables = (req.body?.tables?.length ? req.body.tables : CLONABLE).filter((t) => CLONABLE.includes(t));
-    const results = tables.map((t) => cloneTable(t, target));
-    return ok({ mode: 'tables', target: path.basename(target), results, ms: Date.now() - started });
   });
 }

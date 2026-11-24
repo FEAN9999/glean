@@ -86,13 +86,13 @@ Giới hạn đã biết:
 | 3.3 Ảnh tải về máy (giữ link gốc để dự phòng, đánh dấu ảnh hỏng `isBin`), bài bị xóa vẫn xem bản lưu trữ | Có | |
 | 3.3 Xóa / sàng lại / làm mới, lịch tự xóa (cấu hình được, 0 = giữ mãi), trạng thái proxy, bỏ qua tên miền, cảnh báo đổi tên miền, hỏi trước khi mở link ngoài | Có | |
 | 3.4 Đồng bộ tự động theo chu kỳ, nhật ký + chi tiết từng lần, đồng bộ thủ công (loại, khoảng trang / tất cả, batch, chuyên mục, start/stop, tiến trình + log realtime) | Có | |
-| 3.5 Tạm dừng theo tính năng, thông báo hệ thống, buộc tải lại khi có phiên bản mới, clone/sao lưu, đăng nhập + 2FA TOTP, JWT + refresh token, đổi mật khẩu, trang quản trị hỏi lại mã 2FA | Có | |
+| 3.5 Tạm dừng theo tính năng, thông báo hệ thống, buộc tải lại khi có phiên bản mới, sao lưu theo lịch và khi cần, đăng nhập + 2FA TOTP, JWT + refresh token, đổi mật khẩu, trang quản trị hỏi lại mã 2FA | Có | |
 | 4 Cấu hình động lưu DB, nạp nóng | Có | Khóa bí mật được che khi gửi về trình duyệt |
 | 5.8 HTTP interceptor (Bearer, refresh single-flight, header `error-message-type`, retry có điều kiện) | Có | |
-| 5.9 Upload thường + upload theo phần | Có (API) | Chưa có màn hình nào cần tải tệp lên |
+| 5.9 Upload thường + upload theo phần | Không | Đã bỏ vì không có màn hình nào cần tải tệp lên |
 | Video chuyển HLS bằng FFmpeg | Có, tùy chọn | Chỉ chạy khi bật và máy có FFmpeg |
 
-Thay thế công nghệ so với hệ thống gốc: Elasticsearch → SQLite FTS5 (bỏ dấu khi "chứa từ", giữ dấu khi "đúng cụm từ"); SignalR → Server-Sent Events (cùng mã sự kiện, có join/leave group); Redis, Serilog, ElasticAPM không cần cho bản cá nhân. Khóa AI được lưu nhưng, giống bản gốc, chưa tính năng nào dùng tới. Ảnh thu nhỏ chưa được tạo (giao diện dùng ảnh gốc với `loading="lazy"`).
+Thay thế công nghệ so với hệ thống gốc: Elasticsearch → SQLite FTS5 (bỏ dấu khi "chứa từ", giữ dấu khi "đúng cụm từ"); SignalR → Server-Sent Events (cùng mã sự kiện, có join/leave group); Redis, Serilog, ElasticAPM không cần cho bản cá nhân. Không có mục khóa AI vì chưa tính năng nào dùng tới. Ảnh thu nhỏ chưa được tạo (giao diện dùng ảnh gốc với `loading="lazy"`).
 
 ## Cấu trúc
 
@@ -105,8 +105,8 @@ server/            Fastify + node:sqlite
   search.ts        tìm bài viết / bình luận, lịch sử, gợi ý
   sync.ts          đồng bộ tự động + thủ công, nhật ký
   scraper.ts       hàng đợi sàng, tải ảnh/video, lưu trữ
-  system.ts        bảo trì, phiên bản, cấu hình, sao lưu
-  media.ts         phục vụ /media, upload
+  system.ts        bảo trì, phiên bản, cấu hình
+  media.ts         phục vụ /media
   net.ts           fetch qua proxy xoay vòng, health-check
   source/xenforo.ts  bộ đọc HTML kiểu XenForo
   demo/forum.ts    diễn đàn mẫu

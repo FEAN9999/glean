@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { get, run, now } from './db.ts';
 import { cfg } from './config.ts';
-import { ApiError, ok } from './http.ts';
+import { ok } from './http.ts';
 import { signJwt, verifyJwt } from './auth.ts';
 
 const MIME: Record<string, string> = {
@@ -55,10 +53,6 @@ function safeJoin(root: string, rel: string) {
 }
 
 export function registerMedia(app: FastifyInstance) {
-  for (const type of ['application/octet-stream', 'image/*', 'video/*']) {
-    app.addContentTypeParser(type, { parseAs: 'buffer', bodyLimit: 1024 * 1024 * 1024 }, (_req, body, done) => done(null, body));
-  }
-
   app.post('/api/auth/browser-session', async (req, reply) => {
     reply.header('set-cookie', browserCookie(req.userId!));
     return ok(true);
@@ -76,53 +70,5 @@ export function registerMedia(app: FastifyInstance) {
     reply.header('cache-control', 'private, max-age=604800, immutable');
     if (ext === 'svg') reply.header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'");
     return reply.type(MIME[ext] ?? 'application/octet-stream').send(fs.createReadStream(full));
-  });
-
-  const uploadsDir = () => path.join(cfg().storage.basePath, 'uploads');
-  const cleanName = (n: string) =>
-    String(n ?? 'file')
-      .replace(/[^\w.\-]+/g, '_')
-      .slice(-80) || 'file';
-
-  /** Single-shot upload (raw body). Header `x-file-name` carries the original name. */
-  app.post('/api/media/upload', async (req) => {
-    const body = req.body as Buffer;
-    if (!Buffer.isBuffer(body) || !body.length) throw new ApiError(400, 'EMPTY', 'Tệp rỗng.', 'inline');
-    if (body.length > cfg().storage.maxFileSizeMb * 1024 * 1024)
-      throw new ApiError(413, 'TOO_LARGE', `Tệp vượt quá ${cfg().storage.maxFileSizeMb} MB.`, 'inline');
-    const name = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}-${cleanName(req.headers['x-file-name'] as string)}`;
-    fs.mkdirSync(uploadsDir(), { recursive: true });
-    fs.writeFileSync(path.join(uploadsDir(), name), body);
-    return ok({ url: `/media/uploads/${name}`, sizeBytes: body.length });
-  });
-
-  app.post<{ Body: { fileName: string; totalSize: number } }>('/api/media/chunks-init', async (req) => {
-    const total = Number(req.body?.totalSize);
-    if (!total || total > cfg().storage.maxFileSizeMb * 1024 * 1024)
-      throw new ApiError(413, 'TOO_LARGE', `Tệp vượt quá ${cfg().storage.maxFileSizeMb} MB.`, 'inline');
-    const id = crypto.randomUUID();
-    run('INSERT INTO upload_session(id, file_name, total_size, created_at) VALUES(?,?,?,?)', id, cleanName(req.body.fileName), total, now());
-    fs.mkdirSync(path.join(uploadsDir(), '.partial'), { recursive: true });
-    fs.writeFileSync(path.join(uploadsDir(), '.partial', id), Buffer.alloc(0));
-    return ok({ uploadId: id, chunkSize: cfg().storage.chunkSizeMb * 1024 * 1024, concurrentUploads: cfg().storage.concurrentUploads });
-  });
-
-  /** Chunks are appended in order: `?uploadId=&offset=` must equal bytes received so far. */
-  app.post<{ Querystring: { uploadId: string; offset: string } }>('/api/media/chunks-upload', async (req) => {
-    const s = get<{ id: string; file_name: string; total_size: number; received: number }>('SELECT * FROM upload_session WHERE id=?', req.query.uploadId);
-    if (!s) throw new ApiError(404, 'UPLOAD_NOT_FOUND', 'Phiên tải lên không tồn tại.');
-    const body = req.body as Buffer;
-    if (Number(req.query.offset) !== s.received) throw new ApiError(409, 'BAD_OFFSET', `Cần gửi từ byte ${s.received}.`);
-    const partial = path.join(uploadsDir(), '.partial', s.id);
-    fs.appendFileSync(partial, body);
-    const received = s.received + body.length;
-    run('UPDATE upload_session SET received=? WHERE id=?', received, s.id);
-    if (received >= s.total_size) {
-      const name = `${Date.now()}-${s.file_name}`;
-      fs.renameSync(partial, path.join(uploadsDir(), name));
-      run('DELETE FROM upload_session WHERE id=?', s.id);
-      return ok({ done: true, received, url: `/media/uploads/${name}` });
-    }
-    return ok({ done: false, received });
   });
 }

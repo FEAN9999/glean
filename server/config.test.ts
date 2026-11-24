@@ -59,6 +59,16 @@ test('a 0 already stored by an earlier version is read back at the limit', () =>
   }
 });
 
+test('a settings section an earlier version saved but no longer has is not loaded or sent to the browser', () => {
+  run(
+    "INSERT INTO config(key, value, updated_at) VALUES('ai', ?, '') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify({ chatGpt: { enabled: true, apiKey: 'sk-old-key' } }),
+  );
+  const sent = maskedConfig(loadConfig(0));
+  assert.equal('ai' in sent, false);
+  assert.equal(JSON.stringify(sent).includes('sk-old-key'), false);
+});
+
 test('a changed proxy user with a newly typed password is kept as typed', () => {
   withProxy('1.2.3.4:8080:alice:secret');
   assert.deepEqual(unmaskPatch({ proxy: { list: ['1.2.3.4:8080:bob:newpass'] } }).proxy.list, ['1.2.3.4:8080:bob:newpass']);

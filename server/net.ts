@@ -115,12 +115,6 @@ async function fetchWith<T>(url: string, opts: FetchOpts, read: (res: Response) 
   throw lastErr;
 }
 
-export async function fetchText(url: string, opts?: FetchOpts) {
-  const res = await fetchRaw(url, opts);
-  if (!res.ok) throw new HttpError(res.status, url);
-  return res.text();
-}
-
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function proxyStatus() {

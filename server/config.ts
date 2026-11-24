@@ -32,7 +32,6 @@ export interface AppConfig {
       /** Threads read at the same time (auto and manual sync); pages within a thread stay in order. */
       concurrentThreads: number;
     };
-    commentServiceUrl: string;
   };
   scraper: {
     concurrentPages: number;
@@ -47,15 +46,11 @@ export interface AppConfig {
   proxy: { enabled: boolean; list: string[]; healthCheckUrl: string };
   storage: {
     basePath: string;
-    thumbnailDir: string;
     maxFileSizeMb: number;
-    chunkSizeMb: number;
-    concurrentUploads: number;
     transcodeVideoToHls: boolean;
     ffmpegPath: string;
   };
   search: { semanticSearchUrl: string; semanticTopK: number; pageSize: number; minKeywordLength: number };
-  ai: { chatGpt: { enabled: boolean; apiKey: string }; gemini: { enabled: boolean; apiKey: string } };
   auth: { issuer: string; audience: string; secret: string; accessTokenMinutes: number; refreshTokenDays: number };
   telegram: { enabled: boolean; botToken: string; chatId: string; notifyScrapeFinished: boolean; notifySyncFailed: boolean };
   maintenance: { scrape: PauseFlag; searchPost: PauseFlag; searchComment: PauseFlag };
@@ -89,7 +84,6 @@ export function defaultConfig(port: number): AppConfig {
     sync: {
       posts: { enabled: true, pagesPerRun: 2, intervalMs: 5 * 60_000 },
       comments: { enabled: true, pagesPerRun: 2, intervalMs: 10 * 60_000, maxThreadsPerRun: 40, recheckPages: 2, recheckWithinHours: 48, concurrentThreads: 3 },
-      commentServiceUrl: '',
     },
     scraper: {
       concurrentPages: 3,
@@ -104,15 +98,11 @@ export function defaultConfig(port: number): AppConfig {
     proxy: { enabled: false, list: [], healthCheckUrl: '' },
     storage: {
       basePath: path.join(DATA_DIR, 'media'),
-      thumbnailDir: 'thumbs',
       maxFileSizeMb: 50,
-      chunkSizeMb: 5,
-      concurrentUploads: 3,
       transcodeVideoToHls: false,
       ffmpegPath: 'ffmpeg',
     },
     search: { semanticSearchUrl: '', semanticTopK: 8, pageSize: 20, minKeywordLength: 3 },
-    ai: { chatGpt: { enabled: false, apiKey: '' }, gemini: { enabled: false, apiKey: '' } },
     auth: {
       issuer: 'glean',
       audience: 'glean-web',
@@ -160,8 +150,6 @@ const NUMBER_MIN: Record<string, number> = {
   'scraper.concurrentPages': 1,
   'scraper.concurrentImageDownloads': 1,
   'storage.maxFileSizeMb': 1,
-  'storage.chunkSizeMb': 1,
-  'storage.concurrentUploads': 1,
   'search.semanticTopK': 1,
   'search.pageSize': 5,
   'search.minKeywordLength': 1,
@@ -232,7 +220,7 @@ export function updateConfig(patch: Partial<AppConfig>, port: number) {
 
 /** Secrets are masked when sent to the browser; a masked value sent back means "unchanged". */
 export const MASK = '••••••••';
-const SECRET_PATHS = ['auth.secret', 'ai.chatGpt.apiKey', 'ai.gemini.apiKey', 'telegram.botToken'];
+const SECRET_PATHS = ['auth.secret', 'telegram.botToken'];
 
 export function maskedConfig(c: AppConfig) {
   const copy = structuredClone(c) as any;

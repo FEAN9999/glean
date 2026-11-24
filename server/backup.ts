@@ -9,7 +9,8 @@ import { telegram } from './notify.ts';
 
 /**
  * Automatic backups: a full database copy on a schedule (newest `keep` copies kept) plus an
- * add-only mirror of the media folder. Manual backups from the Backup page are never pruned.
+ * add-only mirror of the media folder. Only glean-auto-* files are pruned; other files in the folder are
+ * left alone.
  */
 
 export interface BackupRun {
@@ -183,9 +184,23 @@ export function isBackupDue(at = new Date()): boolean {
   return true;
 }
 
+/** Database copies in a backup folder, newest first. */
+function backupFiles(dir: string) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.db'))
+    .map((e) => {
+      const st = fs.statSync(path.join(dir, e.name));
+      return { name: e.name, sizeBytes: st.size, modifiedAt: st.mtime.toISOString() };
+    })
+    .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+}
+
 export function backupStatus() {
   const c = cfg().backup;
   const okAt = lastSuccessAt();
+  const dir = backupDirPath(c.targetDir);
   const last = get('SELECT * FROM backup_run ORDER BY id DESC LIMIT 1');
   return {
     running: running != null,
@@ -193,7 +208,8 @@ export function backupStatus() {
     lastSuccessAt: okAt,
     /** null while enabled means "at the next check, within minutes". */
     nextDueAt: c.enabled && okAt ? new Date(Date.parse(okAt) + c.intervalHours * 3600_000).toISOString() : null,
-    dir: backupDirPath(c.targetDir),
+    dir,
+    files: backupFiles(dir),
   };
 }
 

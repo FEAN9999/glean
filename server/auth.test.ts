@@ -78,6 +78,12 @@ test('a browser-cookie token is not an access token', async () => {
   assert.equal((await app.inject({ url: '/api/auth/me', headers: bearer(accessToken) })).statusCode, 200);
 });
 
+test('an access token in the URL is not accepted, since URLs end up in logs and history', async () => {
+  const { accessToken } = (await login(PASSWORD)).json().data;
+  const res = await app.inject({ url: `/api/auth/me?access_token=${encodeURIComponent(accessToken)}` });
+  assert.equal(res.statusCode, 401);
+});
+
 test('changing the password ends every other session', async () => {
   const other = (await login(PASSWORD)).json().data;
   const mine = (await login(PASSWORD)).json().data;
