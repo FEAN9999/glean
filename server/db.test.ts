@@ -2,7 +2,7 @@ import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { ensureColumn, migrate } from './db.ts';
+import { db, ensureColumn, migrate } from './db.ts';
 
 /** A database shaped like one created before the data-preservation upgrade. */
 function legacyDb() {
@@ -84,6 +84,12 @@ test('item lookups by post use an index', () => {
     assert.match(JSON.stringify(byId), /USING INDEX ix_\w+_post\b/, t);
     assert.match(JSON.stringify(byNo), /USING INDEX ix_\w+_postno\b/, t);
   }
+});
+
+test('the overview counts threads per forum and deleted threads from an index', () => {
+  const plan = (sql: string) => JSON.stringify(db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all());
+  assert.match(plan('SELECT f.id, COUNT(t.id) threads FROM forum f LEFT JOIN thread t ON t.forum_id=f.id GROUP BY f.id'), /USING COVERING INDEX ix_thread_forum\b/);
+  assert.match(plan('SELECT COUNT(*) n FROM thread WHERE is_deleted=1'), /USING COVERING INDEX ix_thread_deleted\b/);
 });
 
 test('ensureColumn reports when it adds a column', () => {

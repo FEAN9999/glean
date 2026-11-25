@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS thread (
 CREATE INDEX IF NOT EXISTS ix_thread_created ON thread(created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_thread_comments ON thread(comment_count DESC);
 CREATE INDEX IF NOT EXISTS ix_thread_author ON thread(author COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS ix_thread_forum ON thread(forum_id);
+CREATE INDEX IF NOT EXISTS ix_thread_deleted ON thread(is_deleted);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS thread_fts USING fts5(
   title, content='thread', content_rowid='id', tokenize='unicode61 remove_diacritics 2'

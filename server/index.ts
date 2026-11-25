@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
-import fastifyStatic from '@fastify/static';
 import { loadConfig } from './config.ts';
 import { ApiError, sendError } from './http.ts';
 import { registerApiGuard, registerAuth } from './auth.ts';
@@ -12,6 +11,7 @@ import { registerSystem, APP_VERSION } from './system.ts';
 import { registerBackup, initBackup } from './backup.ts';
 import { registerMedia, cookieUser } from './media.ts';
 import { registerDemoForum } from './demo/forum.ts';
+import { registerWeb } from './web.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
 
@@ -74,13 +74,7 @@ registerDemoForum(app);
 
 /* ---- built web app (production) ---- */
 const webDist = path.resolve('dist/web');
-if (fs.existsSync(path.join(webDist, 'index.html'))) {
-  await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false });
-  app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith('/api/') || req.url.startsWith('/media/')) return reply.code(404).send({ success: false, code: 'NOT_FOUND' });
-    return reply.sendFile('index.html');
-  });
-}
+if (fs.existsSync(path.join(webDist, 'index.html'))) await registerWeb(app, webDist);
 
 await app.listen({ port: PORT, host: HOST });
 console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
