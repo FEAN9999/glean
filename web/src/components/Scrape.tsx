@@ -155,6 +155,13 @@ export function pageSplit(s: Scrape, lp?: LiveProgress) {
 export const scrapeTitle = (s: Pick<Scrape, 'threadTitle' | 'threadId'>, t: (vi: string, en: string) => string) =>
   s.threadTitle ?? t(`Bài #${s.threadId}`, `Thread #${s.threadId}`);
 
+/**
+ * What a job found out about its thread: still on the forum (true), deleted there (false), or
+ * nothing (null). Only a completed job knows; a failed one never got an answer it can vouch for.
+ */
+export const threadOnForum = (s: Pick<Scrape, 'status' | 'isThreadDeleted'>): boolean | null =>
+  s.status === ScrapeStatus.Completed ? !s.isThreadDeleted : null;
+
 /** The job Glean is working on right now: donut, page strip and download bar. */
 export function NowSieving({ s, lp }: { s: Scrape; lp?: LiveProgress }) {
   const { t } = useI18n();

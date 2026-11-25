@@ -6,7 +6,7 @@ import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useUi } from '../components/ui';
-import { ScrapeStatus, scrapeTitle, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
+import { ScrapeStatus, scrapeTitle, threadOnForum, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
 
@@ -624,6 +624,7 @@ export function SieveDetailPage() {
 
   const processing = s.status === ScrapeStatus.Processing;
   const finished = s.status === ScrapeStatus.Completed || s.status === ScrapeStatus.Failed;
+  const onForum = threadOnForum(s);
   const nextPages = new Set<number>();
   if (processing) for (let p = 1; p <= s.totalPages && nextPages.size < 3; p++) if (!done.has(p)) nextPages.add(p);
   const pagesDone = finished && !s.isThreadDeleted ? s.totalPages : Math.min(done.size, s.totalPages);
@@ -788,9 +789,9 @@ export function SieveDetailPage() {
           <div className="stack" style={{ gap: 4, fontSize: 13 }}>
             <Status tone="ok">{t(`${fmtNum(Math.max(0, s.totalImages - failed))} ảnh đã lưu`, `${fmtNum(Math.max(0, s.totalImages - failed))} images kept`)}</Status>
             {failed > 0 && <Status tone="bad">{t(`${fmtNum(failed)} ảnh không tải được`, `${fmtNum(failed)} images failed`)}</Status>}
-            {finished && (
+            {onForum !== null && (
               <span className="muted" style={{ paddingLeft: 17 }}>
-                {s.isThreadDeleted ? t('Bài gốc đã bị xóa trên diễn đàn', 'The thread was deleted on the forum') : t('Bài gốc còn trên diễn đàn', 'The thread is still on the forum')}
+                {onForum ? t('Bài gốc còn trên diễn đàn', 'The thread is still on the forum') : t('Bài gốc đã bị xóa trên diễn đàn', 'The thread was deleted on the forum')}
               </span>
             )}
           </div>
