@@ -105,23 +105,27 @@ export function SievePage() {
       return;
     }
     busy.current = true;
-    try {
-      const r = await api.get<Scrape[]>(`/scrapes/processed${!reset && cur ? `?cursor=${cur}` : ''}`, { quiet: true });
-      setItems((xs) => (reset ? r.data : [...xs, ...r.data]));
-      setCursor((r.nextCursor as number) ?? null);
-      setDone(!r.nextCursor);
-      setError(null);
-    } catch (e) {
-      setError((e as ApiErr).message);
-      if ((e as ApiErr).status) setDone(true);
-    } finally {
-      busy.current = false;
+    let next: { top: boolean; cur: number | null } | null = { top: reset, cur };
+    while (next) {
+      const { top, cur: from } = next;
+      next = null;
+      try {
+        const r = await api.get<Scrape[]>(`/scrapes/processed${!top && from ? `?cursor=${from}` : ''}`, { quiet: true });
+        setItems((xs) => (top ? r.data : [...xs, ...r.data]));
+        setCursor((r.nextCursor as number) ?? null);
+        setDone(!r.nextCursor);
+        setError(null);
+      } catch (e) {
+        setError((e as ApiErr).message);
+        if ((e as ApiErr).status) setDone(true);
+      }
       setLoaded(true);
       if (reloadAfter.current) {
         reloadAfter.current = false;
-        void load(true, null);
+        next = { top: true, cur: null };
       }
     }
+    busy.current = false;
   }, []);
 
   useEffect(() => {

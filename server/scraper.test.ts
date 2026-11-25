@@ -9,7 +9,7 @@ import type { ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
 // No network in tests: pages come from a fake reader and media is never downloaded.
-updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } } as any, 0);
+updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } }, 0);
 
 const A = 'http://x.test/a.jpg';
 const B = 'http://x.test/b.jpg';
@@ -107,7 +107,7 @@ test('prepareRerun on a deleted job drops its rows', () => {
   run('UPDATE scrape SET is_marked_deleted=1 WHERE id=?', id);
   prepareRerun(id);
   for (const t of ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment']) assert.equal(count(t, id), 0, t);
-  const s = get<any>('SELECT run_no, status, is_marked_deleted FROM scrape WHERE id=?', id)!;
+  const s = get<{ run_no: number; status: number; is_marked_deleted: number }>('SELECT run_no, status, is_marked_deleted FROM scrape WHERE id=?', id)!;
   assert.deepEqual([s.run_no, s.status, s.is_marked_deleted], [2, ScrapeStatus.Waiting, 0]);
 });
 
@@ -120,7 +120,7 @@ test("archiveFallback keeps the job's own data", () => {
   archiveFallback(id, threadId);
   assert.equal(images(id).length, 2);
   assert.equal(count('scrape_comment', id), 2);
-  const s = get<any>('SELECT status, is_thread_deleted, total_images FROM scrape WHERE id=?', id)!;
+  const s = get<{ status: number; is_thread_deleted: number; total_images: number }>('SELECT status, is_thread_deleted, total_images FROM scrape WHERE id=?', id)!;
   assert.deepEqual([s.status, s.is_thread_deleted, s.total_images], [ScrapeStatus.Completed, 1, 2]);
 });
 
@@ -190,7 +190,7 @@ test('an empty first page keeps the title and page count', async () => {
   const { id, threadId } = newScrape();
   run('UPDATE scrape SET total_pages=3 WHERE id=?', id);
   await assert.rejects(processScrape(id, forum(1, {}, '')), /trang 1/i);
-  const s = get<any>('SELECT thread_title, total_pages FROM scrape WHERE id=?', id)!;
+  const s = get<{ thread_title: string; total_pages: number }>('SELECT thread_title, total_pages FROM scrape WHERE id=?', id)!;
   assert.deepEqual([s.thread_title, s.total_pages], [`Chủ đề ${threadId}`, 3]);
 });
 

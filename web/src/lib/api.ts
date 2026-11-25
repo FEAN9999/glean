@@ -157,7 +157,7 @@ export async function request<T = unknown>(path: string, opts: ReqOpts = {}): Pr
     let res: Response;
     try {
       res = await fetch(`/api${path}`, { method, headers, body });
-    } catch (e) {
+    } catch {
       if (idempotent && attempt < 2) {
         attempt++;
         await new Promise((r) => setTimeout(r, 400 * attempt));

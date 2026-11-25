@@ -40,10 +40,10 @@ run('UPDATE comment SET deleted_at=? WHERE id=?', '2026-11-13T00:00:00.000Z', 70
 test('onlyChanged returns edited and deleted comments only', () => {
   const r = searchComments({ keyword: 'quanhdao', onlyChanged: true }, false);
   assert.equal(r.total, 2);
-  const byId = new Map(r.items.map((c: any) => [c.id, c]));
+  const byId = new Map(r.items.map((c) => [c.id, c]));
   assert.deepEqual([...byId.keys()].sort(), [7002, 7003]);
-  assert.equal(byId.get(7002).editCount, 1);
-  assert.equal(byId.get(7003).deletedAt, '2026-11-13T00:00:00.000Z');
+  assert.equal(byId.get(7002)?.editCount, 1);
+  assert.equal(byId.get(7003)?.deletedAt, '2026-11-13T00:00:00.000Z');
   assert.equal(searchComments({ keyword: 'quanhdao' }, false).total, 3);
 });
 
@@ -55,9 +55,9 @@ test('revisions route lists earlier versions, newest first', async () => {
   upsertComments(70, 1, [post(7002, 'quanhdao bản thứ ba')]);
   const app = Fastify();
   registerSearch(app);
-  const r = (await app.inject({ method: 'GET', url: '/api/comments/7002/revisions' })).json();
+  const r = (await app.inject({ method: 'GET', url: '/api/comments/7002/revisions' })).json<{ data: { content: string; capturedAt: string; replacedAt: string }[] }>();
   assert.deepEqual(
-    r.data.map((x: any) => x.content),
+    r.data.map((x) => x.content),
     ['quanhdao bản đã sửa', 'quanhdao bản đầu'],
   );
   assert.ok(r.data[0].capturedAt && r.data[0].replacedAt);

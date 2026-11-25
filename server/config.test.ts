@@ -29,24 +29,25 @@ test('a masked proxy password is never saved when the host, port or user changed
 
 test('a number setting below the limit the Settings form shows is saved at that limit', () => {
   // An emptied number field sends 0; 0 pages in parallel used to stall the sieve queue for good.
-  updateConfig({ scraper: { concurrentPages: 0 }, source: { postsPerPage: 0 }, search: { pageSize: 2 } } as any, 0);
+  updateConfig({ scraper: { concurrentPages: 0 }, source: { postsPerPage: 0 }, search: { pageSize: 2 } }, 0);
   try {
     assert.equal(cfg().scraper.concurrentPages, 1);
     assert.equal(cfg().source.postsPerPage, 1);
     assert.equal(cfg().search.pageSize, 5);
   } finally {
-    updateConfig({ scraper: { concurrentPages: 3 }, source: { postsPerPage: 20 }, search: { pageSize: 20 } } as any, 0);
+    updateConfig({ scraper: { concurrentPages: 3 }, source: { postsPerPage: 20 }, search: { pageSize: 20 } }, 0);
   }
 });
 
 test('a number setting may be 0 where 0 means off, but never negative or not a number', () => {
-  updateConfig({ scraper: { retentionHours: 0, batchDelayMs: -5, minCommentLength: 'abc' } } as any, 0);
+  // @ts-expect-error a string where a number belongs, as a hand-written request could send
+  updateConfig({ scraper: { retentionHours: 0, batchDelayMs: -5, minCommentLength: 'abc' } }, 0);
   try {
     assert.equal(cfg().scraper.retentionHours, 0);
     assert.equal(cfg().scraper.batchDelayMs, 0);
     assert.equal(cfg().scraper.minCommentLength, 12);
   } finally {
-    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
@@ -55,7 +56,7 @@ test('a 0 already stored by an earlier version is read back at the limit', () =>
   try {
     assert.equal(loadConfig(0).scraper.concurrentPages, 1);
   } finally {
-    updateConfig({ scraper: { concurrentPages: 3 } } as any, 0);
+    updateConfig({ scraper: { concurrentPages: 3 } }, 0);
   }
 });
 

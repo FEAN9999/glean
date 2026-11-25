@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiErr } from '../lib/api';
+import { api, ApiErr, type Envelope } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { useLatest } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
@@ -75,37 +75,45 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
   const [cursor, setCursor] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const loading = useRef(false);
+  const list = historyPath(scope, byAuthor);
+  const [shownList, setShownList] = useState(list);
+  if (shownList !== list) {
+    setShownList(list);
+    setItems([]);
+    setCursor(null);
+    setDone(false);
+  }
 
   const load = useCallback(
-    async (reset: boolean) => {
+    (reset: boolean) => {
       if (loading.current) return;
       loading.current = true;
-      try {
-        const c = reset ? '' : cursor ? `?cursor=${cursor}` : '';
-        const r = await api.get<HistoryItem[]>(historyPath(scope, byAuthor) + c, { quiet: true });
-        // keep live items that arrived (via realtime) while this page was loading
-        setItems((xs) => {
-          if (!reset) return [...xs, ...r.data];
-          const top = r.data[0]?.id ?? 0;
-          const live = xs.filter((x) => x.id > top);
-          const seen = new Set(live.map((x) => x.keyword.toLowerCase()));
-          return [...live, ...r.data.filter((x) => !seen.has(x.keyword.toLowerCase()))];
+      const c = reset ? '' : cursor ? `?cursor=${cursor}` : '';
+      api
+        .get<HistoryItem[]>(historyPath(scope, byAuthor) + c, { quiet: true })
+        .then(
+          (r) => {
+            // keep live items that arrived (via realtime) while this page was loading
+            setItems((xs) => {
+              if (!reset) return [...xs, ...r.data];
+              const top = r.data[0]?.id ?? 0;
+              const live = xs.filter((x) => x.id > top);
+              const seen = new Set(live.map((x) => x.keyword.toLowerCase()));
+              return [...live, ...r.data.filter((x) => !seen.has(x.keyword.toLowerCase()))];
+            });
+            setCursor(r.nextCursor as number | null);
+            setDone(!r.nextCursor);
+          },
+          () => setDone(true),
+        )
+        .finally(() => {
+          loading.current = false;
         });
-        setCursor(r.nextCursor as number | null);
-        setDone(!r.nextCursor);
-      } catch {
-        setDone(true);
-      } finally {
-        loading.current = false;
-      }
     },
     [scope, byAuthor, cursor],
   );
   useEffect(() => {
-    setItems([]);
-    setCursor(null);
-    setDone(false);
-    void load(true);
+    load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, byAuthor]);
   useEvent<HistoryItem>(historyEvent(scope, byAuthor), (m) =>
@@ -141,7 +149,7 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
           <span className="line-value">{t(`${fmtNum(h.resultCount)} kết quả`, `${fmtNum(h.resultCount)} results`)}</span>
         </button>
       ))}
-      <Sentinel onVisible={() => void load(false)} disabled={done} />
+      <Sentinel onVisible={() => load(false)} disabled={done} />
     </section>
   );
 }
@@ -165,27 +173,52 @@ export function SearchPage({ scope }: { scope: Scope }) {
 
   const [inThread, setInThread] = useState(!!thread);
   const [threadDraft, setThreadDraft] = useState(thread);
+  const [shownThread, setShownThread] = useState(thread);
+  if (shownThread !== thread) {
+    setShownThread(thread);
+    setInThread(!!thread);
+    setThreadDraft(thread);
+  }
   const [items, setItems] = useState<(PostItem | CommentItem)[]>([]);
   const [total, setTotal] = useState(0);
   const [otherScopeTotal, setOtherScopeTotal] = useState<number | null>(null);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [searched, setSearched] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [other, setOther] = useState<number | null>(null);
   const [suggest, setSuggest] = useState<Suggestion[]>([]);
   const [meta, setMeta] = useState<{ count: number; at: string | null } | null>(null);
+  // A new query or filter clears the results shown for the previous one.
+  const query = `${q}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}`;
+  const [shownQuery, setShownQuery] = useState(query);
+  // The query whose search last finished, and the page "Show more" is loading.
+  const [answered, setAnswered] = useState('');
+  const [morePage, setMorePage] = useState<number | null>(null);
+  if (shownQuery !== query) {
+    setShownQuery(query);
+    setItems([]);
+    setTotal(0);
+    setSearched(null);
+    setOther(null);
+    setOtherScopeTotal(null);
+    setSuggest([]);
+    setError('');
+    setMorePage(null);
+  }
+  // A query that cannot be searched is answered here, without asking the server.
+  const inputError =
+    q && q.length < 3
+      ? t('Nhập tối thiểu 3 ký tự.', 'Type at least 3 characters.')
+      : q && thread && parseThreadInput(thread) == null
+        ? t('Không nhận ra link hoặc ID bài viết trong phạm vi tìm.', 'The thread link or ID in the scope is not recognised.')
+        : '';
+  const busy = (!!q && !inputError && answered !== query) || morePage !== null;
 
   useEffect(() => {
     if (scope === 'posts')
       api.get<{ postCount: number; postUpdatedAt: string | null }>('/posts/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
     else api.get<{ commentCount: number; commentUpdatedAt: string | null }>('/comments/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
   }, [scope]);
-
-  useEffect(() => {
-    setInThread(!!thread);
-    setThreadDraft(thread);
-  }, [thread]);
 
   const setParam = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);
@@ -196,46 +229,33 @@ export function SearchPage({ scope }: { scope: Scope }) {
 
   const lastRun = useRef({ key: '', at: 0 });
   const latest = useLatest();
+  // Searches page `page` of the current query. It sets no state before the answer arrives, so the
+  // effect below can call it; a query that cannot be searched never reaches it (see inputError).
   const run = useCallback(
-    async (page: number) => {
-      const key = `${q}|${page}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}`;
+    (page: number) => {
+      const key = `${query}|${page}`;
       if (lastRun.current.key === key && Date.now() - lastRun.current.at < 600) return;
       lastRun.current = { key, at: Date.now() };
       // A newer run drops the answers of one still loading, so they cannot overwrite its results.
       const isLatest = latest();
-      setError('');
-      if (q.length < 3) {
-        setError(t('Nhập tối thiểu 3 ký tự.', 'Type at least 3 characters.'));
-        setBusy(false);
-        return;
-      }
       const threadId = thread ? parseThreadInput(thread) : null;
-      if (thread && threadId == null) {
-        setError(t('Không nhận ra link hoặc ID bài viết trong phạm vi tìm.', 'The thread link or ID in the scope is not recognised.'));
-        setBusy(false);
-        return;
-      }
-      setBusy(true);
-      if (page === 1) {
-        setOther(null);
-        setSuggest([]);
-        setOtherScopeTotal(null);
-      }
-      try {
-        const r =
-          scope === 'posts'
-            ? await api.post<PostItem[]>('/posts/search', { page, keyword: q, isSearchByAuthor: byAuthor, sortDescendingField: sort, isExactMatch: exact }, { quiet: true })
-            : await api.post<CommentItem[]>(
-                byAuthor ? '/comments/search-by-author' : '/comments/search',
-                { page, keyword: q, isExactMatch: exact, threadId, onlyChanged: changed },
-                { quiet: true },
-              );
-        if (!isLatest()) return;
-        setItems((xs) => (page === 1 ? r.data : [...xs, ...r.data]));
-        setTotal(r.total ?? 0);
-        setNextPage((r.nextPage as number | null) ?? null);
-        setSearched(q);
-        if (page === 1) {
+      const search: Promise<Envelope<(PostItem | CommentItem)[]>> =
+        scope === 'posts'
+          ? api.post<PostItem[]>('/posts/search', { page, keyword: q, isSearchByAuthor: byAuthor, sortDescendingField: sort, isExactMatch: exact }, { quiet: true })
+          : api.post<CommentItem[]>(
+              byAuthor ? '/comments/search-by-author' : '/comments/search',
+              { page, keyword: q, isExactMatch: exact, threadId, onlyChanged: changed },
+              { quiet: true },
+            );
+      search
+        .then(async (r) => {
+          if (!isLatest()) return;
+          setItems((xs) => (page === 1 ? r.data : [...xs, ...r.data]));
+          setTotal(r.total ?? 0);
+          setNextPage((r.nextPage as number | null) ?? null);
+          setSearched(q);
+          setError('');
+          if (page !== 1) return;
           // the other tab's count, so both tabs can show a number
           api
             .post<{ total: number }>(scope === 'posts' ? '/comments/search/count' : '/posts/search/count', { keyword: q, isSearchByAuthor: byAuthor, isExactMatch: exact }, { quiet: true })
@@ -256,26 +276,23 @@ export function SearchPage({ scope }: { scope: Scope }) {
               .then((s) => isLatest() && setSuggest(s.data))
               .catch(() => {});
           }
-        }
-      } catch (err) {
-        if (isLatest()) setError((err as ApiErr).message);
-      } finally {
-        if (isLatest()) setBusy(false);
-      }
+        })
+        .catch((err) => {
+          if (isLatest()) setError((err as ApiErr).message);
+        })
+        .finally(() => {
+          if (!isLatest()) return;
+          setAnswered(query);
+          setMorePage(null);
+        });
     },
-    [byAuthor, changed, exact, q, scope, sort, t, thread, latest],
+    [query, byAuthor, changed, exact, q, scope, sort, thread, latest],
   );
 
   // Run whenever the query or a filter in the URL changes.
   useEffect(() => {
-    setItems([]);
-    setTotal(0);
-    setSearched(null);
-    setOther(null);
-    setOtherScopeTotal(null);
-    setError('');
-    if (q) void run(1);
-  }, [run, q]);
+    if (q && !inputError) run(1);
+  }, [run, q, inputError]);
 
   const pick = (k: string) => setParam('q', k);
   const switchMode = (kw: string) => navigate(`${base}/${byAuthor ? 'tu-khoa' : 'nguoi-dang-bai'}?q=${encodeURIComponent(kw)}`);
@@ -405,9 +422,9 @@ export function SearchPage({ scope }: { scope: Scope }) {
 
       <div className="cols">
         <section className="col-main" style={{ paddingTop: 24 }} aria-live="polite">
-          {error && (
+          {(inputError || error) && (
             <p className="error-text" role="alert" style={{ marginTop: 0 }}>
-              {error}
+              {inputError || error}
             </p>
           )}
           {busy && !items.length && <Spinner label={scope === 'comments' ? t('Đang quét dữ liệu bình luận…', 'Scanning comments…') : t('Đang tìm…', 'Searching…')} />}
@@ -516,7 +533,14 @@ export function SearchPage({ scope }: { scope: Scope }) {
               ))}
 
           {nextPage && (
-            <button className="more-btn" disabled={busy} onClick={() => void run(nextPage)}>
+            <button
+              className="more-btn"
+              disabled={busy}
+              onClick={() => {
+                setMorePage(nextPage);
+                run(nextPage);
+              }}
+            >
               {busy
                 ? t('Đang tải…', 'Loading…')
                 : t(`Xem thêm ${fmtNum(Math.max(0, total - items.length))} kết quả`, `Show ${fmtNum(Math.max(0, total - items.length))} more`)}

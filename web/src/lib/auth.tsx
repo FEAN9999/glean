@@ -27,8 +27,12 @@ interface AuthCtx {
   logout: () => Promise<void>;
 }
 
-const Ctx = createContext<AuthCtx>(null as any);
-export const useAuth = () => useContext(Ctx);
+const Ctx = createContext<AuthCtx | null>(null);
+export const useAuth = () => {
+  const c = useContext(Ctx);
+  if (!c) throw new Error('useAuth needs an AuthProvider above it.');
+  return c;
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('loading');
@@ -39,22 +43,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(r.data);
   }, []);
 
-  const boot = useCallback(async () => {
-    try {
-      const st = await api.get<{ hasUser: boolean }>('/auth/status', { quiet: true });
-      if (!st.data.hasUser) return setStatus('setup');
-      if (!hasSession()) return setStatus('anon');
-      await reloadUser();
-      await establishBrowserSession();
-      connectRealtime();
-      setStatus('authed');
-    } catch {
-      setStatus(hasSession() ? 'anon' : 'anon');
-    }
-  }, [reloadUser]);
-
   useEffect(() => {
-    void boot();
+    api
+      .get<{ hasUser: boolean }>('/auth/status', { quiet: true })
+      .then(async (st) => {
+        if (!st.data.hasUser) return setStatus('setup');
+        if (!hasSession()) return setStatus('anon');
+        await reloadUser();
+        await establishBrowserSession();
+        connectRealtime();
+        setStatus('authed');
+      })
+      .catch(() => setStatus('anon'));
     return onAuthChange(() => {
       if (!hasSession()) {
         disconnectRealtime();
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus((s) => (s === 'setup' ? s : 'anon'));
       }
     });
-  }, [boot]);
+  }, [reloadUser]);
 
   const acceptTokens: AuthCtx['acceptTokens'] = async (d) => {
     setSession({ accessToken: d.accessToken, refreshToken: d.refreshToken, userId: d.userId });

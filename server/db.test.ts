@@ -18,7 +18,7 @@ function legacyDb() {
           INSERT INTO scrape(id, thread_id) VALUES (1, 5);`);
   return d;
 }
-const cols = (d: DatabaseSync, t: string) => d.prepare(`PRAGMA table_info(${t})`).all().map((c: any) => c.name as string);
+const cols = (d: DatabaseSync, t: string) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name as string);
 
 test('migrate adds new columns to a pre-upgrade database', () => {
   const d = legacyDb();
@@ -27,8 +27,8 @@ test('migrate adds new columns to a pre-upgrade database', () => {
   assert.ok(cols(d, 'scrape').includes('run_no'));
   for (const t of ['scrape_image', 'scrape_video', 'scrape_link', 'scrape_comment'])
     assert.ok(['post_id', 'last_seen_run', 'missing_since'].every((c) => cols(d, t).includes(c)), t);
-  assert.equal((d.prepare('SELECT edit_count FROM comment WHERE id=1').get() as any).edit_count, 0);
-  assert.equal((d.prepare('SELECT run_no FROM scrape WHERE id=1').get() as any).run_no, 1);
+  assert.equal(d.prepare('SELECT edit_count FROM comment WHERE id=1').get()?.edit_count, 0);
+  assert.equal(d.prepare('SELECT run_no FROM scrape WHERE id=1').get()?.run_no, 1);
 });
 
 test('migrate is a no-op the second time', () => {
@@ -45,7 +45,7 @@ test('migrate backfills post ids of rows sieved before the upgrade', () => {
           INSERT INTO scrape_image(id, scrape_id, page, post_no, origin_url) VALUES (1, 1, 1, 2, 'a.jpg'), (2, 1, 1, 4, 'b.jpg');
           INSERT INTO scrape_link(id, scrape_id, page, post_no, url) VALUES (1, 1, 1, 3, 'https://x.test');`);
   migrate(d);
-  const ids = (t: string) => d.prepare(`SELECT id, post_id FROM ${t} ORDER BY id`).all().map((r: any) => [r.id, r.post_id]);
+  const ids = (t: string) => d.prepare(`SELECT id, post_id FROM ${t} ORDER BY id`).all().map((r) => [r.id, r.post_id]);
   assert.deepEqual(ids('scrape_comment'), [[1, 777], [2, 778], [3, null]]);
   assert.deepEqual(ids('scrape_image'), [[1, 777], [2, null]]);
   assert.deepEqual(ids('scrape_link'), [[1, 778]]);
@@ -60,7 +60,7 @@ test('migrate records the schema version and skips steps a database already had'
   // The post-id backfill is part of an earlier step: rows added after it ran are left alone.
   d.exec(`INSERT INTO scrape_comment(id, scrape_id, page, post_no, url) VALUES (9, 1, 1, 2, 'https://f.test/posts/779/')`);
   migrate(d);
-  assert.equal((d.prepare('SELECT post_id FROM scrape_comment WHERE id=9').get() as any).post_id, null);
+  assert.equal(d.prepare('SELECT post_id FROM scrape_comment WHERE id=9').get()?.post_id, null);
 });
 
 test('a step that fails leaves the database as it was, at the version before it', () => {
@@ -71,7 +71,7 @@ test('a step that fails leaves the database as it was, at the version before it'
   }];
   assert.throws(() => migrate(d, steps), /step 2 failed/);
   assert.equal(version(d), 1);
-  const tables = d.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'step_%'").all().map((r: any) => r.name);
+  const tables = d.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'step_%'").all().map((r) => r.name);
   assert.deepEqual(tables, ['step_one']);
 });
 

@@ -187,12 +187,17 @@ async function suggestions(q: string, topK: number) {
         signal: AbortSignal.timeout(4000),
       });
       if (res.ok) {
-        const body: any = await res.json();
-        const ids: number[] = (body.results ?? body.data ?? body).map((r: any) => Number(r.id ?? r.threadId)).filter(Boolean);
+        type Hit = { id?: unknown; threadId?: unknown };
+        const body = (await res.json()) as Hit[] | { results?: Hit[]; data?: Hit[] };
+        const hits = Array.isArray(body) ? body : (body.results ?? body.data ?? []);
+        const ids: number[] = hits.map((r) => Number(r.id ?? r.threadId)).filter(Boolean);
         if (ids.length) {
-          const rows = all(`SELECT id, title, author, comment_count FROM thread WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
-          const byId = new Map(rows.map((r: any) => [r.id, r]));
-          return { source: 'semantic', items: camelAll(ids.map((id) => byId.get(id)).filter(Boolean) as any) };
+          const rows = all<{ id: number; title: string; author: string; comment_count: number }>(
+            `SELECT id, title, author, comment_count FROM thread WHERE id IN (${ids.map(() => '?').join(',')})`,
+            ...ids,
+          );
+          const byId = new Map(rows.map((r) => [r.id, r]));
+          return { source: 'semantic', items: camelAll(ids.map((id) => byId.get(id)).filter((r) => r !== undefined)) };
         }
       }
     } catch {

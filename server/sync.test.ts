@@ -2,7 +2,7 @@ import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cfg, loadConfig, updateConfig } from './config.ts';
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply } from 'fastify';
 import { all, get, run } from './db.ts';
 import { addClient, Ev, removeClient } from './events.ts';
 import { commentSyncStartPage, registerSync, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments, upsertThread } from './sync.ts';
@@ -60,11 +60,11 @@ test('threadsNeedingComments includes recently active threads', () => {
   addThread(22, 9, { commentCount: 2, synced: 3, lastPostAt: hoursAgo(1) }); // complete, recently active
   addThread(23, 9, { commentCount: 2, synced: 3, lastPostAt: hoursAgo(100) }); // complete, quiet
   assert.deepEqual(threadsNeedingComments(9, 40, at).sort(), [21, 22]);
-  updateConfig({ sync: { comments: { recheckPages: 0 } } } as any, 0);
+  updateConfig({ sync: { comments: { recheckPages: 0 } } }, 0);
   try {
     assert.deepEqual(threadsNeedingComments(9, 40, at), [21]);
   } finally {
-    updateConfig({ sync: { comments: { recheckPages: 2 } } } as any, 0);
+    updateConfig({ sync: { comments: { recheckPages: 2 } } }, 0);
   }
 });
 
@@ -77,7 +77,7 @@ test('threadsNeedingComments puts threads missing comments before re-checks', ()
 });
 
 test('syncThreadComments re-reads stored pages and detects edits and deletions', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } }, 0);
   try {
     // 6 posts on 3 pages are stored; on the forum 1003 was edited and 1006 deleted.
     addThread(50, 1, { commentCount: 5, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
@@ -100,12 +100,12 @@ test('syncThreadComments re-reads stored pages and detects edits and deletions',
     assert.deepEqual(all<{ id: number }>('SELECT id FROM comment WHERE thread_id=50 AND deleted_at IS NOT NULL').map((x) => x.id), [1006]);
     assert.equal(get<{ edit_count: number }>('SELECT edit_count FROM comment WHERE id=1003')!.edit_count, 1);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
 test('a skipped deletion check shows up in the sync log', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } }, 0);
   try {
     addThread(60, 20, { commentCount: 3, synced: 4, lastPostAt: '2026-11-13T00:00:00.000Z' });
     upsertComments(60, 1, [post(2001), post(2002)]);
@@ -122,7 +122,7 @@ test('a skipped deletion check shows up in the sync log', async () => {
     const actions = all<{ action: string }>('SELECT action FROM sync_history_item WHERE thread_id=60').map((x) => x.action);
     assert.deepEqual(actions, ['check-skipped']);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
@@ -137,7 +137,7 @@ const listed = (id: number): ListedThread => ({
 });
 
 test('posts sync skips a page that keeps failing and reads the rest', async () => {
-  updateConfig({ scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
   try {
     const lines: string[] = [];
     const synced: number[] = [];
@@ -160,12 +160,12 @@ test('posts sync skips a page that keeps failing and reads the rest', async () =
     assert.equal(h.sync_count, 2);
     assert.match(h.error ?? '', /trang 2\b/);
   } finally {
-    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
 test('posts sync stops after 3 failed pages in a row', async () => {
-  updateConfig({ scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
   try {
     let calls = 0;
     const fetchListPage = async (_forum: number, page: number) => {
@@ -177,12 +177,12 @@ test('posts sync stops after 3 failed pages in a row', async () => {
     assert.equal(calls, 4);
     assert.ok(get('SELECT id FROM thread WHERE id=3101'), 'the page read before the failures is kept');
   } finally {
-    updateConfig({ scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
 test('comments sync skips a thread that fails and reads the rest', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } }, 0);
   try {
     addThread(70, 32, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
     addThread(71, 32, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
@@ -196,13 +196,14 @@ test('comments sync skips a thread that fails and reads the rest', async () => {
     const h = get<{ error: string | null }>('SELECT error FROM sync_history WHERE forum=32')!;
     assert.match(h.error ?? '', /70/);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
   }
 });
 
 test('the manual sync "complete" event no longer says it is running', async () => {
-  const events: { type: number; data: any }[] = [];
-  const client = addClient({ raw: { write: (s: string) => s.startsWith('data:') && events.push(JSON.parse(s.slice(5))) } } as any, ['manual-sync']);
+  const events: { type: number; data: { running: boolean; saving: number; result: string | null } }[] = [];
+  const reply = { raw: { write: (s: string) => s.startsWith('data:') && events.push(JSON.parse(s.slice(5))) } };
+  const client = addClient(reply as unknown as FastifyReply, ['manual-sync']);
   try {
     const app = Fastify();
     registerSync(app);
@@ -220,7 +221,7 @@ test('the manual sync "complete" event no longer says it is running', async () =
 });
 
 test('comments sync reads several threads at once, up to concurrentThreads', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
   try {
     const ids = [80, 81, 82, 83, 84, 85];
     for (const id of ids) addThread(id, 33, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
@@ -237,12 +238,12 @@ test('comments sync reads several threads at once, up to concurrentThreads', asy
     assert.equal(most, 3);
     assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id BETWEEN 80 AND 85')!.n, 6);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
   }
 });
 
 test('parallel comments sync stops taking threads once failures pile up', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 2 } } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 2 } } }, 0);
   try {
     const ids = Array.from({ length: 20 }, (_, i) => 90 + i);
     for (const id of ids) addThread(id, 34, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
@@ -255,7 +256,7 @@ test('parallel comments sync stops taking threads once failures pile up', async 
     await assert.rejects(syncCommentsForum({ id: 34, name: 'F34' }, ids, 5, { trigger: 'manual', shouldStop: () => false, fetchPage }), /forum down/);
     assert.ok(calls <= 4, `stopped early, made ${calls} calls`);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
   }
 });
 
@@ -299,7 +300,7 @@ test('upsertComments keeps per-post likes and sums them on the thread', () => {
 
 /** Thread 9301 with 10 posts stored on 5 pages; on the forum the first post now has 5 likes. */
 async function readThread9301(ctx: { fromFirstPage?: boolean }) {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } }, 0);
   try {
     if (!get('SELECT 1 FROM thread WHERE id=9301')) {
       addThread(9301, 1, { commentCount: 9, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
@@ -315,7 +316,7 @@ async function readThread9301(ctx: { fromFirstPage?: boolean }) {
     await syncThreadComments(9301, 2, { trigger: 'manual', shouldStop: () => false, fetchPage, ...ctx });
     return asked;
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
   }
 }
 
@@ -343,7 +344,7 @@ test('manual comments sync from page 1 reads complete threads too', async () => 
 });
 
 test('the comments sync log says how many comments had their likes updated', async () => {
-  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } } as any, 0);
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 } }, 0);
   try {
     addThread(9401, 36, { commentCount: 2, synced: 3, lastPostAt: '2026-11-13T00:00:00.000Z' });
     upsertComments(9401, 1, [{ ...post(94001), likes: 1 }, { ...post(94002), likes: 2 }]);
@@ -359,6 +360,6 @@ test('the comments sync log says how many comments had their likes updated', asy
     const line = lines.find((l) => l.includes('bài 9401'));
     assert.match(line ?? '', /\+0 bình luận, 2 bình luận cập nhật like/);
   } finally {
-    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } } as any, 0);
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
   }
 });

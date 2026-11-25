@@ -613,7 +613,9 @@ function rank(id: number) {
   return { rank: ahead + 1, waiting, status: s.status };
 }
 
-function pageOf(table: string, id: number, q: any, extraWhere = '', extraParams: any[] = []) {
+type PageQuery = { page?: string; size?: string };
+
+function pageOf(table: string, id: number, q: PageQuery, extraWhere = '', extraParams: SQLInputValue[] = []) {
   const page = intParam(q.page, 1);
   const size = intParam(q.size, 40, 1, 200);
   const rows = all(
@@ -648,22 +650,22 @@ export function registerScraper(app: FastifyInstance) {
       cursor,
       size,
     );
-    const items = camelAll(rows).map((s: any) => ({
+    const items = camelAll<{ threadId: number }>(rows).map((s) => ({
       ...s,
       syncedCommentCount: get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.threadId)!.n,
     }));
     return ok(items, { nextCursor: rows.length === size ? rows.at(-1)!.id : null });
   });
 
-  app.get('/api/scrapes/check-proxy', async (req) => {
-    const fresh = (req.query as any).refresh === '1';
+  app.get<{ Querystring: { refresh?: string } }>('/api/scrapes/check-proxy', async (req) => {
+    const fresh = req.query.refresh === '1';
     return ok(fresh ? await checkProxies() : proxyStatus());
   });
 
   app.get<{ Params: { id: string } }>('/api/scrapes/:id', async (req) => {
     const s = get('SELECT * FROM scrape WHERE id=?', Number(req.params.id));
     if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
-    const sm: any = camel(s);
+    const sm = camel<{ id: number; threadId: number; status: number; runNo: number } & Record<string, unknown>>(s);
     sm.syncedCommentCount = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', sm.threadId)!.n;
     sm.failedImages = get<{ n: number }>('SELECT COUNT(*) n FROM scrape_image WHERE scrape_id=? AND (is_download_failed=1 OR is_bin=1)', sm.id)!.n;
     // While a job runs, only pages read in this run count as done (earlier runs' items are kept).
@@ -685,30 +687,30 @@ export function registerScraper(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>('/api/scrapes/:id/rank', async (req) => ok(rank(Number(req.params.id))));
 
-  app.get<{ Params: { id: string } }>('/api/scrapes/:id/images', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/images', async (req) => {
     const r = pageOf('scrape_image', Number(req.params.id), req.query);
     return ok(r.rows, { total: r.total, page: r.page, pageSize: r.size });
   });
-  app.get<{ Params: { id: string } }>('/api/scrapes/:id/videos', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/videos', async (req) => {
     const r = pageOf('scrape_video', Number(req.params.id), req.query);
     return ok(r.rows, { total: r.total, page: r.page, pageSize: r.size });
   });
-  app.get<{ Params: { id: string } }>('/api/scrapes/:id/links', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/links', async (req) => {
     const r = pageOf('scrape_link', Number(req.params.id), req.query);
     return ok(r.rows, { total: r.total, page: r.page, pageSize: r.size });
   });
-  app.get<{ Params: { id: string }; Querystring: { minLength?: string } }>('/api/scrapes/:id/comments', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: PageQuery & { minLength?: string } }>('/api/scrapes/:id/comments', async (req) => {
     const id = Number(req.params.id);
     const min = intParam(req.query.minLength, cfg().scraper.minCommentLength, 0, 1000);
     const r = pageOf('scrape_comment', id, req.query, 'AND length(content) >= ?', [min]);
     const all = get<{ n: number }>('SELECT COUNT(*) n FROM scrape_comment WHERE scrape_id=?', id)!.n;
     return ok(r.rows, { total: r.total, page: r.page, pageSize: r.size, removed: all - r.total, minLength: min });
   });
-  app.get<{ Params: { id: string } }>('/api/scrapes/:id/synced-comments', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/synced-comments', async (req) => {
     const s = get<{ thread_id: number }>('SELECT thread_id FROM scrape WHERE id=?', Number(req.params.id));
     if (!s) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lượt sàng.', 'Sieve job not found.']);
-    const page = intParam((req.query as any).page, 1);
-    const size = intParam((req.query as any).size, 40, 1, 200);
+    const page = intParam(req.query.page, 1);
+    const size = intParam(req.query.size, 40, 1, 200);
     const rows = all('SELECT * FROM comment WHERE thread_id=? ORDER BY post_no LIMIT ? OFFSET ?', s.thread_id, size, (page - 1) * size);
     const total = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.thread_id)!.n;
     return ok(camelAll(rows), { total, page, pageSize: size });

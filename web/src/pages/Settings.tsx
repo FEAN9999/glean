@@ -8,14 +8,17 @@ import type { AppConfig } from '../../../server/config';
 
 type Cfg = AppConfig;
 
-function getPath(o: any, p: string) {
-  return p.split('.').reduce((a, k) => a?.[k], o);
+type Obj = Record<string, unknown>;
+
+/** The value at a dotted path such as 'sync.posts.intervalMs'; T is what that field holds. */
+function getPath<T>(o: unknown, p: string): T | undefined {
+  return p.split('.').reduce<unknown>((a, k) => (a as Obj | null | undefined)?.[k], o) as T | undefined;
 }
-function setPath(o: any, p: string, v: unknown) {
+function setPath<T>(o: T, p: string, v: unknown): T {
   const copy = structuredClone(o);
   const keys = p.split('.');
-  let cur = copy;
-  for (const k of keys.slice(0, -1)) cur = cur[k];
+  let cur = copy as Obj;
+  for (const k of keys.slice(0, -1)) cur = cur[k] as Obj;
   cur[keys.at(-1)!] = v;
   return copy;
 }
@@ -190,14 +193,14 @@ function Inner() {
   const Text = ({ p, label, hint, type = 'text', placeholder }: { p: string; label: string; hint?: string; type?: string; placeholder?: string }) => (
     <label className="field">
       <span>{label}</span>
-      <input className="input" type={type} value={getPath(cfg, p) ?? ''} placeholder={placeholder} onChange={(e) => set(p, e.target.value)} autoComplete="off" />
+      <input className="input" type={type} value={getPath<string>(cfg, p) ?? ''} placeholder={placeholder} onChange={(e) => set(p, e.target.value)} autoComplete="off" />
       {hint && <small>{hint}</small>}
     </label>
   );
   const Num = ({ p, label, hint, min = 0, scale = 1 }: { p: string; label: string; hint?: string; min?: number; scale?: number }) => (
     <label className="field">
       <span>{label}</span>
-      <input className="input" type="number" min={min} value={Math.round((getPath(cfg, p) ?? 0) / scale)} onChange={(e) => set(p, Number(e.target.value) * scale)} />
+      <input className="input" type="number" min={min} value={Math.round((getPath<number>(cfg, p) ?? 0) / scale)} onChange={(e) => set(p, Number(e.target.value) * scale)} />
       {hint && <small>{hint}</small>}
     </label>
   );
@@ -207,7 +210,7 @@ function Inner() {
       <span>{label}</span>
       <textarea
         className="textarea"
-        value={(getPath(cfg, p) ?? []).join('\n')}
+        value={(getPath<string[]>(cfg, p) ?? []).join('\n')}
         placeholder={placeholder}
         onChange={(e) =>
           set(
@@ -466,7 +469,7 @@ function Inner() {
             ).map(([k, label]) => (
               <div key={k} className="stack" style={{ gap: 8 }}>
                 {Bool({ p: `maintenance.${k}.isPaused`, label: t(`Tạm dừng ${label.toLowerCase()}`, `Pause ${label.toLowerCase()}`) })}
-                {getPath(cfg, `maintenance.${k}.isPaused`) && Text({ p: `maintenance.${k}.message`, label: t('Thông điệp', 'Message') })}
+                {getPath<boolean>(cfg, `maintenance.${k}.isPaused`) && Text({ p: `maintenance.${k}.message`, label: t('Thông điệp', 'Message') })}
               </div>
             ))}
           </Section>

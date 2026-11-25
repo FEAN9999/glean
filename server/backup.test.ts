@@ -70,7 +70,7 @@ test('mirrorMedia carries on past a file it cannot copy', async () => {
 test('runBackup writes a database copy and records the run', async () => {
   const target = tmp('target');
   write(path.join(cfg().storage.basePath, 'scrapes', '1', '1.jpg'), 'img');
-  updateConfig({ backup: { targetDir: target, includeMedia: true } } as any, 0);
+  updateConfig({ backup: { targetDir: target, includeMedia: true } }, 0);
   const r = await runBackup('manual');
   assert.equal(r.error, null);
   assert.ok(r.finishedAt);
@@ -85,20 +85,20 @@ test('a media copy failure keeps the database copy and still counts as a backup'
   const target = tmp('target2');
   write(path.join(cfg().storage.basePath, 'scrapes', '2', 'x.jpg'), 'img');
   fs.mkdirSync(path.join(target, 'media', 'scrapes', '2', 'x.jpg'), { recursive: true });
-  updateConfig({ backup: { targetDir: target, includeMedia: true } } as any, 0);
+  updateConfig({ backup: { targetDir: target, includeMedia: true } }, 0);
   try {
     const r = await runBackup('auto');
     assert.equal(r.error, null);
     assert.ok(r.file && fs.existsSync(path.join(target, r.file)));
     assert.match(r.mediaError!, /x\.jpg/);
   } finally {
-    updateConfig({ backup: { targetDir: '' } } as any, 0);
+    updateConfig({ backup: { targetDir: '' } }, 0);
   }
 });
 
 test('media is mirrored only into a folder the user chose', async () => {
   write(path.join(cfg().storage.basePath, 'scrapes', '3', 'y.jpg'), 'img');
-  updateConfig({ backup: { targetDir: '', includeMedia: true } } as any, 0);
+  updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
   const r = await runBackup('manual');
   assert.equal(r.error, null);
   assert.equal(r.mediaCopied, 0);
@@ -113,25 +113,25 @@ test('the backup status lists the database copies in the chosen folder, newest f
   fs.mkdirSync(path.join(target, 'media'));
   fs.utimesSync(path.join(target, 'glean-2026-10-01.db'), new Date('2026-10-01'), new Date('2026-10-01'));
   fs.utimesSync(path.join(target, 'glean-auto-20261101-000000.db'), new Date('2026-11-01'), new Date('2026-11-01'));
-  updateConfig({ backup: { targetDir: target } } as any, 0);
+  updateConfig({ backup: { targetDir: target } }, 0);
   try {
     const files = backupStatus().files.map((f) => [f.name, f.sizeBytes]);
     assert.deepEqual(files, [['glean-auto-20261101-000000.db', 2], ['glean-2026-10-01.db', 10]]);
   } finally {
-    updateConfig({ backup: { targetDir: '' } } as any, 0);
+    updateConfig({ backup: { targetDir: '' } }, 0);
   }
 });
 
 test('runBackup records an error when the folder is unusable', async () => {
   const blocker = path.join(tmp('blocked'), 'a-file');
   write(blocker, 'not a folder');
-  updateConfig({ backup: { targetDir: blocker } } as any, 0);
+  updateConfig({ backup: { targetDir: blocker } }, 0);
   try {
     const r = await runBackup('auto');
     assert.ok(r.error);
     assert.equal(r.file, null);
   } finally {
-    updateConfig({ backup: { targetDir: '' } } as any, 0);
+    updateConfig({ backup: { targetDir: '' } }, 0);
   }
 });
 
@@ -154,9 +154,9 @@ test('isBackupDue waits for the interval and does not retry a failure more than 
   run('INSERT INTO backup_run(trigger, started_at, finished_at, error) VALUES(?,?,?,?)', 'auto', at(24).toISOString(), at(24).toISOString(), 'drive missing');
   assert.equal(isBackupDue(at(24.5)), false);
   assert.equal(isBackupDue(at(25)), true);
-  updateConfig({ backup: { enabled: false } } as any, 0);
+  updateConfig({ backup: { enabled: false } }, 0);
   assert.equal(isBackupDue(at(48)), false);
-  updateConfig({ backup: { enabled: true } } as any, 0);
+  updateConfig({ backup: { enabled: true } }, 0);
   assert.ok(get('SELECT 1 x FROM backup_run'));
 });
 
@@ -165,7 +165,7 @@ test('the server keeps answering while a large database is copied', async () => 
   run('CREATE TABLE filler(v TEXT)');
   run("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300000) INSERT INTO filler SELECT printf('%0100d', i) FROM n");
   const target = tmp('large');
-  updateConfig({ backup: { targetDir: target, includeMedia: false } } as any, 0);
+  updateConfig({ backup: { targetDir: target, includeMedia: false } }, 0);
   let turns = 0;
   let spinning = true;
   const spin = () => {
@@ -181,6 +181,6 @@ test('the server keeps answering while a large database is copied', async () => 
   } finally {
     spinning = false;
     run('DROP TABLE filler');
-    updateConfig({ backup: { targetDir: '', includeMedia: true } } as any, 0);
+    updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
   }
 });

@@ -1,4 +1,4 @@
-import { Component, createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
 import { ApiErr, api, setErrorSinks } from '../lib/api';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
@@ -26,8 +26,12 @@ interface UiCtx {
   refreshMaintenance: () => void;
 }
 
-const Ctx = createContext<UiCtx>(null as any);
-export const useUi = () => useContext(Ctx);
+const Ctx = createContext<UiCtx | null>(null);
+export const useUi = () => {
+  const c = useContext(Ctx);
+  if (!c) throw new Error('useUi needs a UiProvider above it.');
+  return c;
+};
 
 let seq = 0;
 
@@ -479,7 +483,9 @@ export function Pager({ page, total, size, onPage, unit }: { page: number; total
 export function Sentinel({ onVisible, disabled }: { onVisible: () => void; disabled?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const cb = useRef(onVisible);
-  cb.current = onVisible;
+  useLayoutEffect(() => {
+    cb.current = onVisible;
+  });
   useEffect(() => {
     if (disabled || !ref.current) return;
     const io = new IntersectionObserver((es) => es[0].isIntersecting && cb.current(), { rootMargin: '200px' });

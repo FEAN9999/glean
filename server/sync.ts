@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { all, get, run, now, tx, camelAll, camel } from './db.ts';
 import { cfg, onConfigChange } from './config.ts';
 import { emit, Ev } from './events.ts';
@@ -588,7 +588,8 @@ async function runManual(o: ManualOptions) {
 /* ---------------- routes ---------------- */
 
 export function registerSync(app: FastifyInstance) {
-  const list = (type: SyncType) => async (req: any) => {
+  type PageQuery = { page?: string; size?: string };
+  const list = (type: SyncType) => async (req: FastifyRequest<{ Querystring: PageQuery }>) => {
     const page = intParam(req.query.page, 1);
     const size = intParam(req.query.size, 20, 1, 100);
     const rows = all(
@@ -608,7 +609,7 @@ export function registerSync(app: FastifyInstance) {
     ok(get<{ n: number }>("SELECT COUNT(*) n FROM sync_history WHERE type='comments'")!.n),
   );
 
-  const items = async (req: any) => {
+  const items = async (req: FastifyRequest<{ Params: { id: string }; Querystring: PageQuery }>) => {
     const id = Number(req.params.id);
     const h = get('SELECT * FROM sync_history WHERE id=?', id);
     if (!h) throw new ApiError(404, 'NOT_FOUND', ['Không tìm thấy lần đồng bộ này.', 'Sync run not found.']);

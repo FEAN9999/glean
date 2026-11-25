@@ -596,10 +596,14 @@ export function SieveDetailPage() {
 
   const [picked, setPicked] = useState<Picked | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
-  useEffect(() => {
+  // Another job, or this one sieved again: the picked image may be gone.
+  const shown = `${id}/${version}`;
+  const [shownJob, setShownJob] = useState(shown);
+  if (shownJob !== shown) {
+    setShownJob(shown);
     setPicked(null);
     setZoom(null);
-  }, [id, version]);
+  }
 
   if (notFound)
     return (

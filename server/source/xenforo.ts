@@ -303,7 +303,7 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
     });
     const text = clone
       .text()
-      .replace(/[ \t ]+/g, ' ')
+      .replace(/[ \t\u00a0]+/g, ' ')
       .replace(/\n\s*\n+/g, '\n')
       .trim();
 

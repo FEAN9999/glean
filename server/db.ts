@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS backup_run (
 /** Adds a column when the table lacks it (CREATE TABLE IF NOT EXISTS never alters existing tables). */
 export function ensureColumn(d: DatabaseSync, table: string, column: string, ddl: string): boolean {
   const info = d.prepare(`PRAGMA table_info(${table})`).all();
-  if (info.length === 0 || info.some((c: any) => c.name === column)) return false;
+  if (info.length === 0 || info.some((c) => c.name === column)) return false;
   d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   return true;
 }
@@ -366,7 +366,7 @@ export function tx<T>(fn: () => T): T {
 }
 
 /** snake_case row → camelCase object, 0/1 flag columns starting with is_/display_ become booleans. */
-export function camel<T = any>(row: Record<string, unknown> | undefined): T {
+export function camel<T = Record<string, unknown>>(row: Record<string, unknown> | undefined): T {
   if (!row) return row as T;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
@@ -375,4 +375,4 @@ export function camel<T = any>(row: Record<string, unknown> | undefined): T {
   }
   return out as T;
 }
-export const camelAll = <T = any>(rows: Record<string, unknown>[]) => rows.map((r) => camel<T>(r));
+export const camelAll = <T = Record<string, unknown>>(rows: Record<string, unknown>[]) => rows.map((r) => camel<T>(r));

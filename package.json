@@ -11,6 +11,7 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
     "test": "node --import tsx --import ./server/test/setup.ts --test \"server/**/*.test.ts\" \"web/**/*.test.ts\""
   },
   "engines": {
@@ -28,14 +29,18 @@
     "undici": "^7.30.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.5",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.73.0",
     "vite": "^6.4.5"
   }
 }

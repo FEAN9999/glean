@@ -26,12 +26,19 @@ export interface PagedData<T> {
  * starts empty; refiltering the same list keeps the old rows until the new ones arrive. A failed load
  * keeps what is shown and sets `error`, so a failure does not look like an empty list.
  */
-export function usePaged<T>(path: string, size: number, extra = '', deps: unknown[] = []) {
+export function usePaged<T>(path: string, size: number, extra = '') {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PagedData<T> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const latest = useLatest();
-  const shownPath = useRef(path);
+  const list = `${path}?size=${size}${extra}`;
+  const [shown, setShown] = useState({ path, list });
+  if (shown.list !== list) {
+    setShown({ path, list });
+    if (shown.path !== path) setData(null);
+    setError(null);
+    setPage(1);
+  }
   const load = useCallback(
     (p: number) => {
       const isLatest = latest();
@@ -48,16 +55,7 @@ export function usePaged<T>(path: string, size: number, extra = '', deps: unknow
     },
     [path, size, extra, latest],
   );
-  useEffect(() => {
-    if (shownPath.current !== path) {
-      shownPath.current = path;
-      setData(null);
-    }
-    setError(null);
-    setPage(1);
-    load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, ...deps]);
+  useEffect(() => load(1), [load]);
   return {
     data,
     error,

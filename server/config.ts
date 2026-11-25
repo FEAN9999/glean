@@ -125,13 +125,21 @@ const listeners: Listener[] = [];
 let current: AppConfig;
 let defaults: AppConfig;
 
-function deepMerge<T>(base: T, patch: any): T {
-  if (Array.isArray(base) || typeof base !== 'object' || base === null) return (patch ?? base) as T;
-  const out: any = { ...base };
-  for (const k of Object.keys(base as any)) {
-    if (patch && k in patch) out[k] = deepMerge((base as any)[k], patch[k]);
+type DeepPartial<T> = T extends unknown[] ? T : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
+/** A settings change: any fields at any depth. Lists are replaced whole, like deepMerge does. */
+export type ConfigPatch = DeepPartial<AppConfig>;
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+function deepMerge<T>(base: T, patch: unknown): T {
+  if (!isObj(base)) return (patch ?? base) as T;
+  const p = patch as Obj | null | undefined;
+  const out: Obj = { ...base };
+  for (const k of Object.keys(base)) {
+    if (p && k in p) out[k] = deepMerge(base[k], p[k]);
   }
-  return out;
+  return out as T;
 }
 
 /**
@@ -160,22 +168,22 @@ const NUMBER_MIN: Record<string, number> = {
 };
 
 /** Number settings come back as numbers within their limits; a value that is not a number takes the default. */
-function cleanNumbers(value: any, def: any, at: string): any {
+function cleanNumbers<T>(value: T, def: unknown, at: string): T {
   if (typeof def === 'number') {
     const n = typeof value === 'number' ? value : value === '' || value == null ? NaN : Number(value);
-    return Number.isFinite(n) ? Math.max(NUMBER_MIN[at] ?? 0, n) : def;
+    return (Number.isFinite(n) ? Math.max(NUMBER_MIN[at] ?? 0, n) : def) as T;
   }
-  if (!def || typeof def !== 'object' || Array.isArray(def) || !value || typeof value !== 'object') return value;
-  const out = { ...value };
+  if (!isObj(def) || !value || typeof value !== 'object') return value;
+  const out = { ...value } as Obj;
   for (const k of Object.keys(def)) if (k in out) out[k] = cleanNumbers(out[k], def[k], at ? `${at}.${k}` : k);
-  return out;
+  return out as T;
 }
 
 /** Loads config from DB, filling gaps from defaults. Persists any missing sections. */
 export function loadConfig(port: number): AppConfig {
   defaults ??= defaultConfig(port);
   const rows = all<{ key: string; value: string }>('SELECT key, value FROM config');
-  const stored: any = {};
+  const stored: Obj = {};
   for (const r of rows) stored[r.key] = JSON.parse(r.value);
   const merged: AppConfig = cleanNumbers(deepMerge(defaults, stored), defaults, '');
   for (const key of Object.keys(merged) as (keyof AppConfig)[]) {
@@ -203,7 +211,7 @@ export function onConfigChange(l: Listener) {
 }
 
 /** Partial update of any sections; hot-reloads listeners. */
-export function updateConfig(patch: Partial<AppConfig>, port: number) {
+export function updateConfig(patch: ConfigPatch, port: number) {
   for (const key of Object.keys(patch) as (keyof AppConfig)[]) {
     if (!(key in current)) continue;
     saveSection(key, cleanNumbers(deepMerge(current[key], patch[key]), defaults[key], key));
@@ -217,37 +225,36 @@ export function updateConfig(patch: Partial<AppConfig>, port: number) {
 export const MASK = '••••••••';
 const SECRET_PATHS = ['auth.secret', 'telegram.botToken'];
 
-export function maskedConfig(c: AppConfig) {
-  const copy = structuredClone(c) as any;
+/** The object that holds the last key of a dotted path such as 'auth.secret', and that key. */
+function holderOf(root: unknown, path: string): [Obj | undefined, string] {
+  const parts = path.split('.');
+  let o = root;
+  for (const k of parts.slice(0, -1)) o = isObj(o) ? o[k] : undefined;
+  return [isObj(o) ? o : undefined, parts.at(-1)!];
+}
+
+export function maskedConfig(c: AppConfig): AppConfig {
+  const copy = structuredClone(c);
   for (const p of SECRET_PATHS) {
-    const parts = p.split('.');
-    let o = copy;
-    for (const k of parts.slice(0, -1)) o = o[k];
-    const last = parts.at(-1)!;
-    if (o[last]) o[last] = MASK;
+    const [o, last] = holderOf(copy, p);
+    if (o?.[last]) o[last] = MASK;
   }
-  copy.proxy.list = copy.proxy.list.map((line: string) => {
+  copy.proxy.list = copy.proxy.list.map((line) => {
     const [h, port, user, pass] = line.split(':');
     return pass ? `${h}:${port}:${user}:${MASK}` : line;
   });
   return copy;
 }
 
-export function unmaskPatch(patch: any) {
+export function unmaskPatch<T>(patch: T): T {
   for (const p of SECRET_PATHS) {
-    const parts = p.split('.');
-    let o = patch;
-    let cur: any = current;
-    for (const k of parts.slice(0, -1)) {
-      o = o?.[k];
-      cur = cur?.[k];
-    }
-    const last = parts.at(-1)!;
-    if (o && o[last] === MASK) o[last] = cur[last];
+    const [o, last] = holderOf(patch, p);
+    if (o && o[last] === MASK) o[last] = holderOf(current, p)[0]?.[last];
   }
-  if (Array.isArray(patch?.proxy?.list)) {
+  const proxy = isObj(patch) ? patch.proxy : undefined;
+  if (isObj(proxy) && Array.isArray(proxy.list)) {
     const old = new Map(current.proxy.list.map((l) => [l.split(':').slice(0, 3).join(':'), l]));
-    patch.proxy.list = patch.proxy.list.map((line: string) => {
+    proxy.list = proxy.list.map((line: string) => {
       if (!line.endsWith(MASK)) return line;
       const key = line.split(':').slice(0, 3).join(':');
       const stored = old.get(key);

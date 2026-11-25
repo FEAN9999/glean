@@ -39,16 +39,16 @@ export function signJwt(payload: Record<string, unknown>, ttlSeconds: number) {
   return `${head}.${pl}.${sig}`;
 }
 
-export function verifyJwt<T = any>(token: string | undefined): T | null {
+export function verifyJwt<T>(token: string | undefined): T | null {
   if (!token) return null;
   const [head, pl, sig] = token.split('.');
   if (!head || !pl || !sig) return null;
   const a = cfg().auth;
   const expect = crypto.createHmac('sha256', a.secret).update(`${head}.${pl}`).digest('base64url');
   if (expect.length !== sig.length || !crypto.timingSafeEqual(Buffer.from(expect), Buffer.from(sig))) return null;
-  const body = JSON.parse(Buffer.from(pl, 'base64url').toString());
+  const body = JSON.parse(Buffer.from(pl, 'base64url').toString()) as { exp: number; iss: string; aud: string };
   if (body.exp < Date.now() / 1000 || body.iss !== a.issuer || body.aud !== a.audience) return null;
-  return body;
+  return body as T;
 }
 
 /* ---------------- TOTP (RFC 6238) ---------------- */
@@ -175,7 +175,7 @@ export function registerAuth(app: FastifyInstance) {
 
   app.post<{ Body: { username: string; password: string } }>('/api/auth/setup', async (req) => {
     if (getUser()) throw new ApiError(409, 'ALREADY_SETUP', ['Tài khoản đã được tạo.', 'The account has already been created.']);
-    const { username, password } = req.body ?? ({} as any);
+    const { username, password }: Partial<typeof req.body> = req.body ?? {};
     if (!username?.trim() || !password || password.length < 8)
       throw new ApiError(400, 'INVALID_INPUT', ['Tên đăng nhập bắt buộc, mật khẩu tối thiểu 8 ký tự.', 'A username is required, and the password needs at least 8 characters.'], 'inline');
     run('INSERT INTO app_user(username, password_hash, created_at) VALUES(?,?,?)', username.trim(), hashPassword(password), now());
@@ -189,7 +189,7 @@ export function registerAuth(app: FastifyInstance) {
       const s = Math.ceil((att.until - Date.now()) / 1000);
       throw new ApiError(429, 'TOO_MANY_ATTEMPTS', [`Thử lại sau ${s} giây.`, `Try again in ${s} seconds.`], 'inline');
     }
-    const { username, password } = req.body ?? ({} as any);
+    const { username, password }: Partial<typeof req.body> = req.body ?? {};
     const u = get<UserRow>('SELECT * FROM app_user WHERE username = ? COLLATE NOCASE', String(username ?? '').trim());
     if (!u || !verifyPassword(String(password ?? ''), u.password_hash)) {
       const n = (att?.n ?? 0) + 1;
@@ -236,7 +236,7 @@ export function registerAuth(app: FastifyInstance) {
 
   app.put<{ Body: { currentPassword: string; newPassword: string } }>('/api/accounts/change-password', async (req) => {
     const u = getUser(req.userId)!;
-    const { currentPassword, newPassword } = req.body ?? ({} as any);
+    const { currentPassword, newPassword }: Partial<typeof req.body> = req.body ?? {};
     if (!verifyPassword(String(currentPassword ?? ''), u.password_hash))
       throw new ApiError(400, 'INVALID_PASSWORD', ['Mật khẩu hiện tại không đúng.', 'The current password is wrong.'], 'inline');
     if (!newPassword || newPassword.length < 8) throw new ApiError(400, 'WEAK_PASSWORD', ['Mật khẩu mới tối thiểu 8 ký tự.', 'The new password needs at least 8 characters.'], 'inline');

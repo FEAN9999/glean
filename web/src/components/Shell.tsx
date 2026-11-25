@@ -80,17 +80,19 @@ function Omnibox({ narrow }: { narrow: boolean }) {
   const [params] = useSearchParams();
   const create = useCreateScrape();
   const onSearch = SEARCH_ROUTE.test(loc.pathname);
-  const [value, setValue] = useState('');
+  // Mirror the query of the search page; start empty everywhere else.
+  const routeQuery = onSearch ? (params.get('q') ?? '') : '';
+  const route = loc.pathname + loc.search;
+  const [shownRoute, setShownRoute] = useState(route);
+  const [value, setValue] = useState(routeQuery);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [focused, setFocused] = useState(false);
-
-  // Mirror the query of the search page; start empty everywhere else.
-  useEffect(() => {
-    setValue(onSearch ? (params.get('q') ?? '') : '');
+  if (shownRoute !== route) {
+    setShownRoute(route);
+    setValue(routeQuery);
     setError('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loc.pathname, loc.search]);
+  }
 
   const v = value.trim();
   const threadId = v && (isLinkLike(v) || /^\d+$/.test(v)) ? parseThreadInput(v) : null;

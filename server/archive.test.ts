@@ -58,11 +58,11 @@ test('edit stores the previous version', () => {
   const before = get<{ updated_at: string }>('SELECT updated_at FROM comment WHERE id=10')!;
   const r = upsertComments(t, 1, [post(10, 'nội dung mới', { editedAt: '2026-11-02T00:00:00.000Z' })]);
   assert.deepEqual(r, { added: 0, edited: 1, liked: 0 });
-  const c = get<any>('SELECT content, edit_count, edited_at FROM comment WHERE id=10')!;
+  const c = get<{ content: string; edit_count: number; edited_at: string | null }>('SELECT content, edit_count, edited_at FROM comment WHERE id=10')!;
   assert.equal(c.content, 'nội dung mới');
   assert.equal(c.edit_count, 1);
   assert.equal(c.edited_at, '2026-11-02T00:00:00.000Z');
-  const revs = all<any>('SELECT content, captured_at, replaced_at FROM comment_revision WHERE comment_id=10');
+  const revs = all<{ content: string; captured_at: string; replaced_at: string | null }>('SELECT content, captured_at, replaced_at FROM comment_revision WHERE comment_id=10');
   assert.equal(revs.length, 1);
   assert.equal(revs[0].content, 'bình luận 10');
   assert.equal(revs[0].captured_at, before.updated_at);

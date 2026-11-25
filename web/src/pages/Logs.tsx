@@ -137,6 +137,16 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   const [data, setData] = useState<{ history: History; items: Item[]; total: number } | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Another sync run: start again from nothing.
+  const run = `${kind}/${id}`;
+  const [shownRun, setShownRun] = useState(run);
+  if (shownRun !== run) {
+    setShownRun(run);
+    setData(null);
+    setMissing(false);
+    setError(null);
+    setPage(1);
+  }
   const size = 50;
   const latest = useLatest();
   const load = useCallback(
@@ -157,13 +167,7 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
     },
     [id, kind, latest],
   );
-  useEffect(() => {
-    setData(null);
-    setMissing(false);
-    setError(null);
-    setPage(1);
-    load(1);
-  }, [load]);
+  useEffect(() => load(1), [load]);
 
   if (missing) return <div className="page"><Empty title={t('Không tìm thấy lần đồng bộ này', 'Sync run not found')} /></div>;
   if (!data)

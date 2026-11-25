@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { establishBrowserSession } from './api';
 import type { Ev as ServerEv } from '../../../server/events';
 
@@ -116,7 +116,9 @@ export function useRealtimeConnected() {
  */
 export function useEvent<T = unknown>(types: number | number[], handler: (m: RtMessage<T>) => void) {
   const ref = useRef(handler);
-  ref.current = handler;
+  useLayoutEffect(() => {
+    ref.current = handler;
+  });
   const key = Array.isArray(types) ? types.join(',') : String(types);
   useEffect(() => {
     const set = new Set(key.split(',').map(Number));

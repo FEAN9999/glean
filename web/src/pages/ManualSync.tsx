@@ -100,7 +100,8 @@ function Inner() {
   const [st, setSt] = useState<SyncStatus | null>(null);
   const [logs, setLogs] = useState<{ at: string; line: string }[]>([]);
   const [error, setError] = useState('');
-  const [tick, setTick] = useState(0);
+  // Local clock so the elapsed time moves between progress events; set whenever a status arrives.
+  const [now, setNow] = useState(() => Date.now());
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -109,20 +110,21 @@ function Inner() {
       .get<SyncStatus>('/manual-syncs/status', { quiet: true })
       .then((r) => {
         setSt(r.data);
+        setNow(Date.now());
         setLogs(r.data.logs);
       })
       .catch((err) => setError((err as ApiErr).message));
   }, []);
 
-  // local clock so elapsed time moves between progress events
   useEffect(() => {
     if (!st?.running) return;
-    const h = setInterval(() => setTick((x) => x + 1), 1000);
+    const h = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(h);
   }, [st?.running]);
 
   const onStatus = (s: SyncStatus) => {
     setSt(s);
+    setNow(Date.now());
     setLogs((old) => {
       const seen = new Set(old.map((l) => l.at + l.line));
       return [...old, ...s.logs.filter((l) => !seen.has(l.at + l.line))].slice(-300);
@@ -157,8 +159,7 @@ function Inner() {
   };
 
   const running = !!st?.running;
-  const elapsed = st?.startedAt ? (running ? Math.round((Date.now() - Date.parse(st.startedAt)) / 1000) : st.elapsedSeconds) : 0;
-  void tick;
+  const elapsed = st?.startedAt ? (running ? Math.round((now - Date.parse(st.startedAt)) / 1000) : st.elapsedSeconds) : 0;
   const o = st?.options;
   const runScope = o
     ? [
