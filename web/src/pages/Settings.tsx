@@ -23,6 +23,20 @@ function setPath<T>(o: T, p: string, v: unknown): T {
   return copy;
 }
 
+/**
+ * Shown under a number field while the number typed is under the field's limit. The server saves
+ * the limit in its place (server/config.ts, NUMBER_MIN), so the form says so before the save.
+ */
+export function LimitNote({ value, min }: { value: number; min: number }) {
+  const { t } = useI18n();
+  if (value >= min) return null;
+  return (
+    <small role="status" style={{ color: 'var(--bad-ink)' }}>
+      {t(`Nhỏ nhất là ${min}. Khi lưu, số này sẽ thành ${min}.`, `The minimum is ${min}. Saving changes this number to ${min}.`)}
+    </small>
+  );
+}
+
 function Section({ id, title, desc, children }: { id: string; title: string; desc?: string; children: ReactNode }) {
   return (
     <fieldset id={id}>
@@ -197,13 +211,17 @@ function Inner() {
       {hint && <small>{hint}</small>}
     </label>
   );
-  const Num = ({ p, label, hint, min = 0, scale = 1 }: { p: string; label: string; hint?: string; min?: number; scale?: number }) => (
-    <label className="field">
-      <span>{label}</span>
-      <input className="input" type="number" min={min} value={Math.round((getPath<number>(cfg, p) ?? 0) / scale)} onChange={(e) => set(p, Number(e.target.value) * scale)} />
-      {hint && <small>{hint}</small>}
-    </label>
-  );
+  const Num = ({ p, label, hint, min = 0, scale = 1 }: { p: string; label: string; hint?: string; min?: number; scale?: number }) => {
+    const shown = Math.round((getPath<number>(cfg, p) ?? 0) / scale);
+    return (
+      <label className="field">
+        <span>{label}</span>
+        <input className="input" type="number" min={min} value={shown} onChange={(e) => set(p, Number(e.target.value) * scale)} />
+        {hint && <small>{hint}</small>}
+        <LimitNote value={shown} min={min} />
+      </label>
+    );
+  };
   const Bool = ({ p, label }: { p: string; label: string }) => <Switch key={p} label={label} checked={!!getPath(cfg, p)} onChange={(v) => set(p, v)} />;
   const Lines = ({ p, label, hint, placeholder }: { p: string; label: string; hint?: string; placeholder?: string }) => (
     <label className="field">
