@@ -16,7 +16,9 @@ export async function registerWeb(app: FastifyInstance, root: string) {
     },
   });
   app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith('/api/') || req.url.startsWith('/media/')) return reply.code(404).send({ success: false, code: 'NOT_FOUND' });
+    // A file missing under /assets/ is a missing file, not a route of the app: the page shell sent
+    // in its place would be run as a script and leave a blank page.
+    if (['/api/', '/media/', '/assets/'].some((p) => req.url.startsWith(p))) return reply.code(404).send({ success: false, code: 'NOT_FOUND' });
     return reply.sendFile('index.html');
   });
 }

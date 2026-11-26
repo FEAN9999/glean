@@ -30,3 +30,14 @@ test('hashed assets are cached for good, while the page shell is checked on ever
     assert.equal(page.headers['cache-control'], 'public, max-age=0', url);
   }
 });
+
+// Regression: ISSUE-005 — a missing file under /assets/ answered 200 with the page shell
+// Found by /qa on 2026-11-26
+// Report: .gstack/qa-reports/qa-report-localhost-2026-11-26.md
+test('a missing file under /assets/ answers 404, not the page shell', async () => {
+  const app = await appWithBuild();
+  // the script of an earlier build, still asked for by a page that was open during the update
+  const gone = await app.inject({ url: '/assets/index-0ldha5h.js' });
+  assert.equal(gone.statusCode, 404);
+  assert.doesNotMatch(gone.body, /id="root"/);
+});
