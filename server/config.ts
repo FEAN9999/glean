@@ -179,6 +179,43 @@ function cleanNumbers<T>(value: T, def: unknown, at: string): T {
   return out as T;
 }
 
+/**
+ * The dotted path of the first value in `value` whose type differs from the default `def`, or null.
+ * A missing value means "unchanged". Number settings outside lists are fixed by cleanNumbers.
+ */
+function wrongType(value: unknown, def: unknown, at: string, inList = false): string | null {
+  if (value == null && !inList) return null;
+  if (typeof def === 'number') return inList && !Number.isFinite(value) ? at : null;
+  if (Array.isArray(def)) {
+    if (!Array.isArray(value)) return at;
+    // A list that is empty by default (proxy.list, source.previousBaseUrls) holds text.
+    const item: unknown = def.length ? def[0] : '';
+    for (const [i, v] of value.entries()) {
+      const w = wrongType(v, item, `${at}[${i}]`, true);
+      if (w) return w;
+    }
+    return null;
+  }
+  if (isObj(def)) {
+    if (!isObj(value)) return at;
+    for (const k of Object.keys(def)) {
+      // An item of a list replaces the old one whole, so it needs every field.
+      const w = k in value || inList ? wrongType(value[k], def[k], at ? `${at}.${k}` : k, inList) : null;
+      if (w) return w;
+    }
+    return null;
+  }
+  return typeof value === typeof def ? null : at;
+}
+
+/** Refuses a settings change with a value of the wrong type, before any of it is stored. */
+export function assertPatchTypes(patch: unknown) {
+  const w = wrongType(patch, defaults, '');
+  if (w == null) return;
+  const name = w || 'settings';
+  throw new ApiError(400, 'INVALID_SETTING', [`Giá trị của ${name} không đúng kiểu.`, `${name} has a value of the wrong type.`], 'inline');
+}
+
 /** Loads config from DB, filling gaps from defaults. Persists any missing sections. */
 export function loadConfig(port: number): AppConfig {
   defaults ??= defaultConfig(port);

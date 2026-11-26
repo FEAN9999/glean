@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { all, get, DATA_DIR, DB_PATH } from './db.ts';
-import { cfg, loadConfig, maskedConfig, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
+import { assertPatchTypes, cfg, loadConfig, maskedConfig, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
 import { emit, Ev, clientCount } from './events.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
@@ -28,6 +28,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
 
   app.put<{ Body: ConfigPatch }>('/api/systems/config', async (req) => {
     requireSudo(req);
+    assertPatchTypes(req.body);
     const patch = unmaskPatch(structuredClone(req.body ?? {}));
     if (patch.backup && 'targetDir' in patch.backup) {
       patch.backup.targetDir = String(patch.backup.targetDir ?? '').trim();
