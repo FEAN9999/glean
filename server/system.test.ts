@@ -47,3 +47,15 @@ test('a setting with the right type is still saved, and a missing value leaves t
   const { proxy, source } = (await settings()).json().data;
   assert.deepEqual([proxy.list, proxy.enabled, source.forums], [['10.0.0.1:8080'], false, [{ id: 7, name: 'Xe' }]]);
 });
+
+// Regression: ISSUE-011 — the forum address took any scheme, while "Find sections" needs http(s).
+// Found by /qa-only on 2026-11-26.
+test('the forum address must start with http:// or https://', async () => {
+  const before = (await settings()).json().data.source.baseUrl;
+  for (const baseUrl of ['ftp://forum.example.org', 'javascript:alert(1)', 'file:///C:/forum']) {
+    const r = await save({ source: { baseUrl } });
+    assert.deepEqual([r.statusCode, r.json().code], [400, 'INVALID_URL'], baseUrl);
+  }
+  assert.equal((await settings()).json().data.source.baseUrl, before);
+  assert.equal((await save({ source: { baseUrl: 'https://forum.example.org' } })).statusCode, 200);
+});

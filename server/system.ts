@@ -36,7 +36,8 @@ export function registerSystem(app: FastifyInstance, port: number) {
     }
     if (patch.source?.baseUrl) {
       try {
-        new URL(patch.source.baseUrl);
+        // http(s) only, as discover-forums and the reader need
+        if (!/^https?:$/.test(new URL(patch.source.baseUrl).protocol)) throw new Error();
       } catch {
         throw new ApiError(400, 'INVALID_URL', ['Địa chỉ nguồn không hợp lệ.', 'The source address is not valid.'], 'inline');
       }
