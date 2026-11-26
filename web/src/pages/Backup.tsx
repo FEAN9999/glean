@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiErr } from '../lib/api';
-import { useI18n } from '../lib/i18n';
+import { unpack, useI18n } from '../lib/i18n';
 import { fmtAgo, fmtBytes, fmtDate, fmtNum } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
 import { Status, Switch, useUi } from '../components/ui';
@@ -12,7 +12,7 @@ type BackupCfg = AppConfig['backup'];
 
 /** Scheduled backups: last run, next run, settings and "back up now". */
 function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { toast } = useUi();
   const [form, setForm] = useState<BackupCfg | null>(null);
   const [saved, setSaved] = useState<BackupCfg | null>(null);
@@ -34,7 +34,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
     setError('');
     try {
       const r = await api.post<BackupRun>('/backups/run', {}, { quiet: true });
-      if (r.data.error) setError(r.data.error);
+      if (r.data.error) setError(unpack(r.data.error, lang));
       else toast(t(`Đã sao lưu vào ${r.data.file}.`, `Backed up to ${r.data.file}.`));
       reload();
     } catch (e) {
@@ -68,7 +68,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
   const [tone, text] = st?.running
     ? (['acc', t('Đang sao lưu…', 'Backing up…')] as const)
     : last?.error
-      ? (['bad', t(`Lần gần nhất lỗi (${fmtAgo(last.finishedAt)}): ${last.error}`, `Last run failed (${fmtAgo(last.finishedAt)}): ${last.error}`)] as const)
+      ? (['bad', t(`Lần gần nhất lỗi (${fmtAgo(last.finishedAt)}): `, `Last run failed (${fmtAgo(last.finishedAt)}): `) + unpack(last.error, lang)] as const)
       : last?.file
         ? ([
             'ok',
@@ -97,7 +97,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
           </small>
           {!st?.running && !last?.error && last?.mediaError && (
             <p className="error-text" role="alert" style={{ margin: 0, fontSize: 12.5 }}>
-              {t(`Kho dữ liệu đã sao lưu, nhưng ${last.mediaError}`, `The database was backed up, but media failed: ${last.mediaError}`)}
+              {t('Kho dữ liệu đã sao lưu, nhưng ', 'The database was backed up, but ') + unpack(last.mediaError, lang)}
             </p>
           )}
         </div>

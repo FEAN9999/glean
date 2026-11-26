@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
-import { useI18n } from '../lib/i18n';
+import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum, fmtTime } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
@@ -87,7 +87,7 @@ function AutoRows() {
 }
 
 function Inner() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [forums, setForums] = useState<{ id: number; name: string }[]>([]);
   const [type, setType] = useState<'posts' | 'comments'>('posts');
   const [allPages, setAllPages] = useState(false);
@@ -315,7 +315,7 @@ function Inner() {
                 ) : st.result === 'stopped' ? (
                   <Status tone="off">{t('Đã dừng theo yêu cầu.', 'Stopped on request.')}</Status>
                 ) : st.result === 'failed' ? (
-                  <Status tone="bad">{`${t('Đồng bộ lỗi:', 'Sync failed:')} ${st.error}`}</Status>
+                  <Status tone="bad">{`${t('Đồng bộ lỗi:', 'Sync failed:')} ${unpack(st.error ?? '', lang)}`}</Status>
                 ) : null}
               </div>
               <div className="log" ref={logRef} role="log" aria-label={t('Nhật ký chạy', 'Run log')}>
@@ -323,7 +323,7 @@ function Inner() {
                 {logs.map((l, i) => (
                   <div key={i}>
                     <time>{new Date(l.at).toLocaleTimeString()}</time>
-                    {l.line}
+                    {unpack(l.line, lang)}
                   </div>
                 ))}
               </div>

@@ -91,6 +91,9 @@ test('a media copy failure keeps the database copy and still counts as a backup'
     assert.equal(r.error, null);
     assert.ok(r.file && fs.existsSync(path.join(target, r.file)));
     assert.match(r.mediaError!, /x\.jpg/);
+    // Regression: ISSUE-003 — failure text stayed Vietnamese in the English UI (/qa, 2026-11-26)
+    assert.match(r.mediaError!, /"vi":"1 tệp ảnh\/video không chép được — /);
+    assert.match(r.mediaError!, /"en":"1 media file could not be copied: /);
   } finally {
     updateConfig({ backup: { targetDir: '' } }, 0);
   }
@@ -130,6 +133,9 @@ test('runBackup records an error when the folder is unusable', async () => {
     const r = await runBackup('auto');
     assert.ok(r.error);
     assert.equal(r.file, null);
+    // Regression: ISSUE-003 — failure text stayed Vietnamese in the English UI (/qa, 2026-11-26)
+    assert.match(r.error, /"vi":"Không dùng được thư mục sao lưu /);
+    assert.match(r.error, /"en":"Cannot use the backup folder /);
   } finally {
     updateConfig({ backup: { targetDir: '' } }, 0);
   }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type ApiErr } from '../lib/api';
 import { useLatest, usePaged } from '../lib/load';
-import { useI18n } from '../lib/i18n';
+import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Empty, ExternalLink, Pager, Spinner, Status, useUi } from '../components/ui';
@@ -36,7 +36,7 @@ function KindTabs({ kind }: { kind: Kind }) {
 }
 
 export function SyncLogPage({ kind }: { kind: Kind }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { toast } = useUi();
   const size = 20;
   const { data, error, page, setPage, reload } = usePaged<History>(`/sync-histories/${kind}`, size);
@@ -88,7 +88,7 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
                     <span className="gt-title">{h.forumName}</span>
                     {h.error && (
                       <span className="error-text" style={{ display: 'block', margin: '2px 0 0' }}>
-                        {h.error}
+                        {unpack(h.error, lang)}
                       </span>
                     )}
                   </span>
@@ -132,7 +132,7 @@ interface Item {
 
 export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   const { id } = useParams();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ history: History; items: Item[]; total: number } | null>(null);
   const [missing, setMissing] = useState(false);
@@ -193,7 +193,7 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
       </header>
       {h.error && (
         <div className="notice notice-rust" style={{ marginBottom: 16 }}>
-          {h.error}
+          {unpack(h.error, lang)}
         </div>
       )}
       {error && (

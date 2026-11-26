@@ -5,7 +5,7 @@ import Fastify from 'fastify';
 import { loadConfig, updateConfig } from './config.ts';
 import { all, get, now, run } from './db.ts';
 import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus } from './scraper.ts';
-import type { ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
+import { ThreadGoneError, type ParsedPost, type ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
 // No network in tests: pages come from a fake reader and media is never downloaded.
@@ -215,4 +215,19 @@ test('deleting a job while it is sieved stops it without recording a failure', a
   });
   const s = get<{ status: number; error: string | null }>('SELECT status, error FROM scrape WHERE id=?', id)!;
   assert.deepEqual([s.status, s.error], [ScrapeStatus.NotProcessed, null]);
+});
+
+// Regression: ISSUE-003 — failure text stayed Vietnamese in the English UI
+// Found by /qa on 2026-11-26
+// Report: .gstack/qa-reports/qa-report-localhost-2026-11-26.md
+test('a failed sieve keeps its reason in Vietnamese and in English', async () => {
+  const { id, threadId } = newScrape();
+  // the forum has no such thread, and nothing of it is archived
+  await runScrape(id, async () => {
+    throw new ThreadGoneError(threadId, 404);
+  });
+  const s = get<{ status: number; error: string | null }>('SELECT status, error FROM scrape WHERE id=?', id)!;
+  assert.equal(s.status, ScrapeStatus.Failed);
+  assert.match(s.error ?? '', new RegExp(`"vi":"Không tìm thấy bài #${threadId} `));
+  assert.match(s.error ?? '', new RegExp(`"en":"Thread #${threadId} was not found `));
 });

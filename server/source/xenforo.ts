@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { cfg } from '../config.ts';
 import { fetchPage, HttpError } from '../net.ts';
+import { BiError } from '../bilingual.ts';
 
 /** Adapter for XenForo-2-style forums: forum listing pages and thread pages. */
 
@@ -209,9 +210,15 @@ export async function fetchThreadPage(threadId: number, page: number): Promise<P
   if (!res.ok) {
     const body = res.text;
     if (/challenge-platform|cf-chl|Just a moment/i.test(body))
-      throw new Error(`Diễn đàn đang chặn truy cập tự động (HTTP ${res.status}, trang kiểm tra chống bot). Thử lại sau.`);
+      throw new BiError([
+        `Diễn đàn đang chặn truy cập tự động (HTTP ${res.status}, trang kiểm tra chống bot). Thử lại sau.`,
+        `The forum is blocking automated access (HTTP ${res.status}, anti-bot check page). Try again later.`,
+      ]);
     if (res.status === 403)
-      throw new Error(`Diễn đàn từ chối truy cập bài #${threadId} (HTTP 403). Bài có thể chỉ dành cho thành viên đã đăng nhập.`);
+      throw new BiError([
+        `Diễn đàn từ chối truy cập bài #${threadId} (HTTP 403). Bài có thể chỉ dành cho thành viên đã đăng nhập.`,
+        `The forum refused access to thread #${threadId} (HTTP 403). The thread may be for signed-in members only.`,
+      ]);
     throw new HttpError(res.status, url);
   }
   const pageUrl = res.url || url;

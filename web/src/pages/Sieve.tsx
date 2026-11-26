@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
-import { useI18n } from '../lib/i18n';
+import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDuration, fmtNum } from '../lib/format';
 import { Empty, PausedNotice, Sentinel, useUi } from '../components/ui';
@@ -59,12 +59,12 @@ function useOverview() {
 /* ---------------- Kho: everything sieved so far ---------------- */
 
 function LibraryRow({ s }: { s: Scrape }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const failed = s.status === ScrapeStatus.Failed;
   const sub = s.isThreadDeleted
     ? t('Đã xóa trên diễn đàn · còn bản lưu', 'Deleted on the forum · archived copy kept')
     : failed
-      ? `${t('Thất bại', 'Failed')}${s.error ? ` · ${s.error}` : ''}`
+      ? `${t('Thất bại', 'Failed')}${s.error ? ` · ${unpack(s.error, lang)}` : ''}`
       : t(`Bài #${s.threadId}`, `Thread #${s.threadId}`);
   return (
     <Link to={`/sang/${s.id}`} className="gtr lib-row">

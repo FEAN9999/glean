@@ -149,7 +149,7 @@ test('posts sync skips a page that keeps failing and reads the rest', async () =
       trigger: 'manual',
       shouldStop: () => false,
       fetchListPage,
-      log: (l) => lines.push(l),
+      log: (l) => lines.push(l[0]),
       onPage: (p) => synced.push(p.synced),
     });
     assert.equal(n, 2);
@@ -162,6 +162,41 @@ test('posts sync skips a page that keeps failing and reads the rest', async () =
   } finally {
     updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
   }
+});
+
+// Regression: ISSUE-003 — failure text stayed Vietnamese in the English UI
+// Found by /qa on 2026-11-26
+// Report: .gstack/qa-reports/qa-report-localhost-2026-11-26.md
+test('a skipped page is logged and noted in the history in both languages', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
+  try {
+    const lines: (readonly [vi: string, en: string])[] = [];
+    const fetchListPage = async (_forum: number, page: number) => {
+      if (page === 2) throw new Error('timeout');
+      return { threads: [listed(3700 + page)], totalPages: 3 };
+    };
+    await syncPostsForum({ id: 37, name: 'F37' }, 1, 'all', { trigger: 'manual', shouldStop: () => false, fetchListPage, log: (l) => lines.push(l) });
+    assert.ok(
+      lines.some(([vi, en]) => vi === '[F37] trang 2: lỗi — timeout. Bỏ qua, chạy tiếp.' && en === '[F37] page 2: error: timeout. Skipped, the run goes on.'),
+      JSON.stringify(lines),
+    );
+    const h = get<{ error: string | null }>('SELECT error FROM sync_history WHERE forum=37')!;
+    assert.equal(
+      h.error,
+      JSON.stringify({ vi: 'Bỏ qua [F37] trang 2 vì lỗi — chạy lại để lấy phần này.', en: 'Skipped [F37] page 2 because of errors. Run the sync again to fetch this part.' }),
+    );
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
+  }
+});
+
+test('the manual sync log is written in both languages', async () => {
+  const app = Fastify();
+  registerSync(app);
+  // a forum id that is not configured: the run has nothing to read and finishes at once, without the network
+  const r = await app.inject({ method: 'POST', url: '/api/manual-syncs/start', payload: { type: 'posts', pageFrom: 1, pageTo: 1, forums: [999999] } });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().data.logs.at(-1).line, JSON.stringify({ vi: 'Hoàn tất: 0 bản ghi.', en: 'Done: 0 records.' }));
 });
 
 test('posts sync stops after 3 failed pages in a row', async () => {
@@ -356,7 +391,7 @@ test('the comments sync log says how many comments had their likes updated', asy
     };
     const fetchPage = async (_id: number, page: number): Promise<ParsedThreadPage> => ({ title: 'Chủ đề 9401', forumId: 36, totalPages: 2, posts: pages[page] });
     const lines: string[] = [];
-    await syncCommentsForum({ id: 36, name: 'F36' }, [9401], 5, { trigger: 'manual', shouldStop: () => false, fetchPage, fromFirstPage: true, log: (l) => lines.push(l) });
+    await syncCommentsForum({ id: 36, name: 'F36' }, [9401], 5, { trigger: 'manual', shouldStop: () => false, fetchPage, fromFirstPage: true, log: (l) => lines.push(l[0]) });
     const line = lines.find((l) => l.includes('bài 9401'));
     assert.match(line ?? '', /\+0 bình luận, 2 bình luận cập nhật like/);
   } finally {

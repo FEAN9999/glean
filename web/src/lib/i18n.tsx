@@ -11,6 +11,20 @@ export function currentLang(): Lang {
   }
 }
 
+/**
+ * A text the server wrote in both languages (`pack` in server/bilingual.ts): a sieve failure
+ * reason, a sync log line, a backup error. A plain text is shown as it is.
+ */
+export function unpack(text: string, lang: Lang): string {
+  if (!text.startsWith('{"vi":')) return text;
+  try {
+    const both = JSON.parse(text) as { vi: string; en: string };
+    return lang === 'en-US' ? both.en : both.vi;
+  } catch {
+    return text;
+  }
+}
+
 interface I18n {
   lang: Lang;
   setLang: (l: Lang) => void;

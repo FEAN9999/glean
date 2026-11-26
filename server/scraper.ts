@@ -12,6 +12,7 @@ import { fetchThreadPage, parseThreadRef, threadUrl, ThreadGoneError, type Parse
 import { ensureForum, upsertComments } from './sync.ts';
 import { reconcileDeletions } from './archive.ts';
 import { telegram } from './notify.ts';
+import { BiError, biOf, pack, type Bi } from './bilingual.ts';
 
 export const ScrapeStatus = { None: 0, Waiting: 1, Processing: 2, Completed: 3, Failed: 4, NotProcessed: 5 } as const;
 
@@ -48,20 +49,20 @@ function summary(id: number) {
   return camel(get('SELECT * FROM scrape WHERE id=?', id));
 }
 
-function failScrape(id: number, error: string) {
+function failScrape(id: number, error: Bi) {
   const s = get<{ started_at: string | null }>('SELECT started_at FROM scrape WHERE id=?', id);
   run(
     'UPDATE scrape SET status=?, error=?, finished_at=?, handling_seconds=? WHERE id=?',
     ScrapeStatus.Failed,
-    error,
+    pack(error),
     now(),
     s?.started_at ? (Date.now() - Date.parse(s.started_at)) / 1000 : null,
     id,
   );
   const sm = summary(id);
   emit(Ev.UpdateScrape, sm, undefined, 'scrape');
-  emit(Ev.FinishScrape, sm, error, 'scrape');
-  if (cfg().telegram.notifyScrapeFinished) void telegram(`Glean: lượt sàng #${id} thất bại — ${error}`);
+  emit(Ev.FinishScrape, sm, pack(error), 'scrape');
+  if (cfg().telegram.notifyScrapeFinished) void telegram(`Glean: lượt sàng #${id} thất bại — ${error[0]}`);
 }
 
 const isCancelled = (id: number) => !!get<{ x: number }>('SELECT 1 x FROM scrape WHERE id=? AND (is_marked_deleted=1 OR status<>?)', id, ScrapeStatus.Processing);
@@ -294,7 +295,7 @@ function finish(id: number, extra: { isThreadDeleted?: boolean } = {}) {
 export async function runScrape(id: number, fetchPage: typeof fetchThreadPage = fetchThreadPage) {
   await processScrape(id, fetchPage).catch((e) => {
     if (e instanceof Cancelled) run('UPDATE scrape SET status=?, finished_at=? WHERE id=?', ScrapeStatus.NotProcessed, now(), id);
-    else failScrape(id, (e as Error).message);
+    else failScrape(id, biOf(e));
   });
 }
 
@@ -314,7 +315,10 @@ export async function processScrape(id: number, fetchPage: typeof fetchThreadPag
   // A thread page always holds at least one post: an empty one is an error page, so stop before
   // anything (title, page count, missing marks) is overwritten from it.
   const emptyPage = (page: number) =>
-    new Error(`Trang ${page} của bài #${s.thread_id} không có bài viết nào, có thể diễn đàn trả về trang lỗi. Lượt sàng dừng lại, dữ liệu đã có được giữ nguyên.`);
+    new BiError([
+      `Trang ${page} của bài #${s.thread_id} không có bài viết nào, có thể diễn đàn trả về trang lỗi. Lượt sàng dừng lại, dữ liệu đã có được giữ nguyên.`,
+      `Page ${page} of thread #${s.thread_id} has no posts; the forum may have returned an error page. The sieve stopped and the data already saved is kept.`,
+    ]);
   if (first.posts.length === 0) throw emptyPage(1);
   const totalPages = first.totalPages;
   run('UPDATE scrape SET thread_title=?, total_pages=? WHERE id=?', first.title, totalPages, id);
@@ -378,9 +382,11 @@ export function archiveFallback(id: number, threadId: number) {
   );
   const synced = get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', threadId)!.n;
   if (!prev && !synced) {
-    throw new Error(
-      `Không tìm thấy bài #${threadId} trên ${new URL(cfg().source.baseUrl).host}: bài không tồn tại hoặc đã bị xóa, và Glean chưa có bản lưu trữ nào của bài này.`,
-    );
+    const host = new URL(cfg().source.baseUrl).host;
+    throw new BiError([
+      `Không tìm thấy bài #${threadId} trên ${host}: bài không tồn tại hoặc đã bị xóa, và Glean chưa có bản lưu trữ nào của bài này.`,
+      `Thread #${threadId} was not found on ${host}: it does not exist or was deleted, and Glean has no archived copy of it.`,
+    ]);
   }
   run('UPDATE scrape SET thread_title=?, total_pages=? WHERE id=?', prev?.thread_title ?? t?.title ?? `Bài ${threadId}`, prev?.total_pages ?? 0, id);
   if (prev) copyArchive(prev.id, id);

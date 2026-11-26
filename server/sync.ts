@@ -8,6 +8,7 @@ import { requireSudo } from './auth.ts';
 import { telegram } from './notify.ts';
 import { pool, sleep } from './net.ts';
 import { normalizeText, reconcileDeletions, type ReconcileSkip } from './archive.ts';
+import { biOf, pack, type Bi } from './bilingual.ts';
 
 type SyncType = 'posts' | 'comments';
 
@@ -138,8 +139,8 @@ function startHistory(type: SyncType, trigger: string, forum: number, forumName:
       .lastInsertRowid,
   );
 }
-function finishHistory(id: number, count: number, error?: string) {
-  run('UPDATE sync_history SET sync_count=?, sync_finished_at=?, error=? WHERE id=?', count, now(), error ?? null, id);
+function finishHistory(id: number, count: number, error?: Bi) {
+  run('UPDATE sync_history SET sync_count=?, sync_finished_at=?, error=? WHERE id=?', count, now(), error ? pack(error) : null, id);
 }
 function addItem(historyId: number, threadId: number, title: string, author: string, action: string, delta: number) {
   run(
@@ -160,7 +161,7 @@ export interface RunCtx {
   shouldStop: () => boolean;
   onPage?: (info: { forum: number; forumName: string; page: number; totalPages: number; synced: number }) => void;
   onSaving?: (n: number) => void;
-  log?: (line: string) => void;
+  log?: (line: Bi) => void;
   batchSize?: number;
   /** Page reader; defaults to the live forum (tests pass a fake). */
   fetchPage?: typeof fetchThreadPage;
@@ -179,9 +180,9 @@ const MAX_FAILURES_IN_A_ROW = 3;
  */
 function skipper(ctx: RunCtx) {
   let inRow = 0;
-  const skipped: string[] = [];
+  const skipped: Bi[] = [];
   return {
-    async run<T>(label: string, step: () => Promise<T>): Promise<T | undefined> {
+    async run<T>(label: Bi, step: () => Promise<T>): Promise<T | undefined> {
       try {
         const v = await step();
         inRow = 0;
@@ -189,12 +190,19 @@ function skipper(ctx: RunCtx) {
       } catch (e) {
         if (++inRow >= MAX_FAILURES_IN_A_ROW) throw e;
         skipped.push(label);
-        ctx.log?.(`${label}: lỗi — ${(e as Error).message}. Bỏ qua, chạy tiếp.`);
+        const [vi, en] = biOf(e);
+        ctx.log?.([`${label[0]}: lỗi — ${vi}. Bỏ qua, chạy tiếp.`, `${label[1]}: error: ${en}. Skipped, the run goes on.`]);
         return undefined;
       }
     },
     /** For the sync log: which steps were skipped, so they can be run again. */
-    summary: () => (skipped.length ? `Bỏ qua ${skipped.join(', ')} vì lỗi — chạy lại để lấy phần này.` : undefined),
+    summary: (): Bi | undefined =>
+      skipped.length
+        ? [
+            `Bỏ qua ${skipped.map((l) => l[0]).join(', ')} vì lỗi — chạy lại để lấy phần này.`,
+            `Skipped ${skipped.map((l) => l[1]).join(', ')} because of errors. Run the sync again to fetch this part.`,
+          ]
+        : undefined,
   };
 }
 
@@ -224,14 +232,14 @@ export async function syncPostsForum(forum: { id: number; name: string }, from: 
     let total = to === 'all' ? Infinity : to;
     while (page <= total && !ctx.shouldStop()) {
       const p = page;
-      const r = await skip.run(`[${forum.name}] trang ${p}`, () => fetchList(forum.id, p));
+      const r = await skip.run([`[${forum.name}] trang ${p}`, `[${forum.name}] page ${p}`], () => fetchList(forum.id, p));
       if (r) {
         if (to === 'all') total = r.totalPages;
         else total = Math.min(to, r.totalPages);
         buffer.push(...r.threads);
         if (buffer.length >= (ctx.batchSize ?? 1)) flush();
         ctx.onPage?.({ forum: forum.id, forumName: forum.name, page, totalPages: total, synced: count });
-        ctx.log?.(`[${forum.name}] trang ${page}/${total}: ${r.threads.length} bài`);
+        ctx.log?.([`[${forum.name}] trang ${page}/${total}: ${r.threads.length} bài`, `[${forum.name}] page ${page}/${total}: ${r.threads.length} threads`]);
       }
       page++;
       if (cfg().scraper.batchDelayMs) await sleep(cfg().scraper.batchDelayMs);
@@ -241,7 +249,7 @@ export async function syncPostsForum(forum: { id: number; name: string }, from: 
     return count;
   } catch (e) {
     flush();
-    finishHistory(hid, count, (e as Error).message);
+    finishHistory(hid, count, biOf(e));
     throw e;
   }
 }
@@ -256,10 +264,10 @@ export function commentSyncStartPage(o: { syncedCount: number; perPage: number; 
   return Math.max(1, Math.min(forward, o.storedMaxPage - o.recheckPages + 1));
 }
 
-const SKIP_REASON: Record<Exclude<ReconcileSkip, null>, string> = {
-  'empty-page': 'có trang trả về không có bài nào',
-  'missing-id': 'có bài không đọc được ID',
-  'too-many': 'quá nhiều bình luận cùng biến mất, có thể do lỗi đọc trang',
+const SKIP_REASON: Record<Exclude<ReconcileSkip, null>, Bi> = {
+  'empty-page': ['có trang trả về không có bài nào', 'a page came back with no posts'],
+  'missing-id': ['có bài không đọc được ID', 'a post had no readable ID'],
+  'too-many': ['quá nhiều bình luận cùng biến mất, có thể do lỗi đọc trang', 'too many comments disappeared at once, possibly a page read error'],
 };
 
 /**
@@ -296,7 +304,10 @@ export async function syncThreadComments(threadId: number, maxPages: number, ctx
     } catch (e) {
       if (e instanceof ThreadGoneError) {
         run('UPDATE thread SET is_deleted=1, updated_at=? WHERE id=?', now(), threadId);
-        ctx.log?.(`Bài ${threadId} không còn trên diễn đàn (HTTP ${e.status}) — giữ bản lưu trữ.`);
+        ctx.log?.([
+          `Bài ${threadId} không còn trên diễn đàn (HTTP ${e.status}) — giữ bản lưu trữ.`,
+          `Thread ${threadId} is no longer on the forum (HTTP ${e.status}); the archived copy is kept.`,
+        ]);
         return null;
       }
       throw e;
@@ -326,7 +337,10 @@ export async function syncThreadComments(threadId: number, maxPages: number, ctx
     const r = tx(() => reconcileDeletions(threadId, read, { startsAtFirstPage: start === 1, endsAtLastPage: lastRead >= totalPages }));
     out.deleted = r.deleted;
     out.skipped = r.skipped;
-    if (r.skipped) ctx.log?.(`Bài ${threadId}: bỏ qua kiểm tra bình luận bị xóa (${SKIP_REASON[r.skipped]}).`);
+    if (r.skipped) {
+      const [vi, en] = SKIP_REASON[r.skipped];
+      ctx.log?.([`Bài ${threadId}: bỏ qua kiểm tra bình luận bị xóa (${vi}).`, `Thread ${threadId}: the check for deleted comments was skipped (${en}).`]);
+    }
   }
   return out;
 }
@@ -349,7 +363,7 @@ export async function syncCommentsForum(
       if (failure || ctx.shouldStop()) return;
       let n: Awaited<ReturnType<typeof syncThreadComments>> | undefined;
       try {
-        n = await skip.run(`[${forum.name}] bài ${id}`, () => syncThreadComments(id, pagesPerThread, ctx));
+        n = await skip.run([`[${forum.name}] bài ${id}`, `[${forum.name}] thread ${id}`], () => syncThreadComments(id, pagesPerThread, ctx));
       } catch (e) {
         failure ??= { e };
         return;
@@ -366,15 +380,16 @@ export async function syncCommentsForum(
         count += n.added;
       }
       ctx.onPage?.({ forum: forum.id, forumName: forum.name, page: i, totalPages: threadIds.length, synced: count });
-      ctx.log?.(
+      ctx.log?.([
         `[${forum.name}] bài ${id}: +${n.added} bình luận${n.liked ? `, ${n.liked} bình luận cập nhật like` : ''}${n.edited ? `, ~${n.edited} sửa` : ''}${n.deleted ? `, −${n.deleted} xóa` : ''} (${i}/${threadIds.length})`,
-      );
+        `[${forum.name}] thread ${id}: +${n.added} comments${n.liked ? `, ${n.liked} with updated likes` : ''}${n.edited ? `, ~${n.edited} edited` : ''}${n.deleted ? `, −${n.deleted} deleted` : ''} (${i}/${threadIds.length})`,
+      ]);
     });
     if (failure) throw (failure as { e: unknown }).e;
     finishHistory(hid, count, skip.summary());
     return count;
   } catch (e) {
-    finishHistory(hid, count, (e as Error).message);
+    finishHistory(hid, count, biOf(e));
     throw e;
   }
 }
@@ -422,8 +437,9 @@ export async function runAutoSync(type: SyncType) {
     lastAuto[type] = { at: now(), error: null };
     emit(Ev.AutoSyncFinished, { type, count: total, finishedAt: lastAuto[type].at });
   } catch (e) {
-    lastAuto[type] = { at: now(), error: (e as Error).message };
-    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ tự động (${type}) lỗi — ${(e as Error).message}`);
+    const error = biOf(e);
+    lastAuto[type] = { at: now(), error: pack(error) };
+    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ tự động (${type}) lỗi — ${error[0]}`);
   } finally {
     autoRunning[type] = false;
   }
@@ -495,8 +511,8 @@ function manualStatus() {
   return { ...rest, stopRequested, elapsedSeconds };
 }
 
-function mlog(line: string) {
-  manual.logs.push({ at: now(), line });
+function mlog(line: Bi) {
+  manual.logs.push({ at: now(), line: pack(line) });
   if (manual.logs.length > 300) manual.logs.splice(0, manual.logs.length - 300);
 }
 
@@ -535,7 +551,7 @@ async function runManual(o: ManualOptions) {
       if (manual.stopRequested) break;
       manual.forum = f.id;
       manual.forumName = f.name;
-      mlog(`Bắt đầu ${o.type === 'posts' ? 'bài viết' : 'bình luận'} — ${f.name}`);
+      mlog([`Bắt đầu ${o.type === 'posts' ? 'bài viết' : 'bình luận'} — ${f.name}`, `Starting ${o.type === 'posts' ? 'threads' : 'comments'}: ${f.name}`]);
       if (o.type === 'posts') {
         done += await syncPostsForum(f, o.allPages ? 1 : o.pageFrom, o.allPages ? 'all' : o.pageTo, ctx);
       } else {
@@ -548,7 +564,7 @@ async function runManual(o: ManualOptions) {
           const seen = new Set<number>();
           const skip = skipper(ctx);
           for (let p = o.pageFrom; p <= o.pageTo && !manual.stopRequested; p++) {
-            const r = await skip.run(`[${f.name}] trang ${p}`, () => fetchForumPage(f.id, p));
+            const r = await skip.run([`[${f.name}] trang ${p}`, `[${f.name}] page ${p}`], () => fetchForumPage(f.id, p));
             if (!r) continue;
             tx(() => r.threads.forEach((t) => upsertThread(t, f.id)));
             r.threads.forEach((t) => seen.add(t.id));
@@ -560,21 +576,22 @@ async function runManual(o: ManualOptions) {
             ids = ids.filter((id) => needing.has(id));
           }
         }
-        if (o.onlyMissing) mlog(`[${f.name}] ${ids.length} bài cần tải bình luận.`);
+        if (o.onlyMissing) mlog([`[${f.name}] ${ids.length} bài cần tải bình luận.`, `[${f.name}] ${ids.length} threads need their comments fetched.`]);
         done += await syncCommentsForum(f, ids, Number.MAX_SAFE_INTEGER, ctx);
       }
       manual.totalSynced = done;
       progress(true);
     }
     manual.result = manual.stopRequested ? 'stopped' : 'completed';
-    mlog(manual.stopRequested ? 'Đã dừng theo yêu cầu.' : `Hoàn tất: ${manual.totalSynced} bản ghi.`);
+    mlog(manual.stopRequested ? ['Đã dừng theo yêu cầu.', 'Stopped on request.'] : [`Hoàn tất: ${manual.totalSynced} bản ghi.`, `Done: ${manual.totalSynced} records.`]);
     manual.finishedAt = now();
   } catch (e) {
+    const [vi, en] = biOf(e);
     manual.result = 'failed';
-    manual.error = (e as Error).message;
+    manual.error = pack([vi, en]);
     manual.finishedAt = now();
-    mlog(`Lỗi: ${manual.error}`);
-    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ thủ công lỗi — ${manual.error}`);
+    mlog([`Lỗi: ${vi}`, `Error: ${en}`]);
+    if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ thủ công lỗi — ${vi}`);
   } finally {
     manual.running = false;
     manual.stopRequested = false;
@@ -683,7 +700,7 @@ export function registerSync(app: FastifyInstance) {
     requireSudo(req);
     if (!manual.running) return ok(manualStatus());
     manual.stopRequested = true;
-    mlog('Đang dừng…');
+    mlog(['Đang dừng…', 'Stopping…']);
     progress(true);
     return ok(manualStatus());
   });

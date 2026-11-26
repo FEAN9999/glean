@@ -7,6 +7,7 @@ import { cfg } from './config.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
 import { telegram } from './notify.ts';
+import { BiError, biOf, pack, type Bi } from './bilingual.ts';
 
 /**
  * Automatic backups: a full database copy on a schedule (newest `keep` copies kept) plus an
@@ -23,8 +24,9 @@ export interface BackupRun {
   sizeBytes: number | null;
   mediaCopied: number;
   mediaBytes: number;
-  /** Media files that could not be copied; the database copy still counts as a backup. */
+  /** Media files that could not be copied; the database copy still counts as a backup. In both languages (bilingual.ts, pack). */
   mediaError: string | null;
+  /** Why the run failed, in both languages (bilingual.ts, pack). */
   error: string | null;
 }
 
@@ -52,9 +54,10 @@ export function validateBackupDir(p: string): string {
   }
   try {
     fs.mkdirSync(dir, { recursive: true });
-    if (!fs.statSync(dir).isDirectory()) throw new Error('không phải thư mục');
+    if (!fs.statSync(dir).isDirectory()) throw new BiError(['không phải thư mục', 'not a folder']);
   } catch (e) {
-    throw new ApiError(400, 'INVALID_BACKUP_DIR', [`Không dùng được thư mục sao lưu ${dir}: ${(e as Error).message}`, `Cannot use the backup folder ${dir}: ${(e as Error).message}`], 'inline');
+    const [vi, en] = biOf(e);
+    throw new ApiError(400, 'INVALID_BACKUP_DIR', [`Không dùng được thư mục sao lưu ${dir}: ${vi}`, `Cannot use the backup folder ${dir}: ${en}`], 'inline');
   }
   return dir;
 }
@@ -142,7 +145,9 @@ function vacuumInto(dest: string) {
   return new Promise<void>((resolve, reject) => {
     const w = new Worker(code, { eval: true, workerData: { src: DB_PATH, dest } });
     w.once('error', reject);
-    w.once('exit', (exit) => (exit === 0 ? resolve() : reject(new Error(`Sao lưu dừng giữa chừng (mã ${exit}).`))));
+    w.once('exit', (exit) =>
+      exit === 0 ? resolve() : reject(new BiError([`Sao lưu dừng giữa chừng (mã ${exit}).`, `The backup stopped partway (code ${exit}).`])),
+    );
   });
 }
 
@@ -165,20 +170,25 @@ async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
     if (c.includeMedia && String(c.targetDir ?? '').trim()) {
       media = await mirrorMedia(cfg().storage.basePath, path.join(dir, 'media')).catch((e) => ({ ...media, failed: 1, firstError: (e as Error).message }));
     }
-    const mediaError = media.failed ? `${media.failed} tệp ảnh/video không chép được — ${media.firstError}` : null;
+    const mediaError: Bi | null = media.failed
+      ? [
+          `${media.failed} tệp ảnh/video không chép được — ${media.firstError}`,
+          `${media.failed} media file${media.failed === 1 ? '' : 's'} could not be copied: ${media.firstError}`,
+        ]
+      : null;
     run(
       'UPDATE backup_run SET finished_at=?, media_copied=?, media_bytes=?, media_error=? WHERE id=?',
       now(),
       media.copied,
       media.bytes,
-      mediaError,
+      mediaError && pack(mediaError),
       id,
     );
-    if (mediaError && c.notifyOnFail) void telegram(`Glean: ${label} xong kho dữ liệu nhưng ${mediaError}`);
+    if (mediaError && c.notifyOnFail) void telegram(`Glean: ${label} xong kho dữ liệu nhưng ${mediaError[0]}`);
   } catch (e) {
-    const msg = (e as Error).message;
-    run('UPDATE backup_run SET finished_at=?, error=? WHERE id=?', now(), msg, id);
-    if (cfg().backup.notifyOnFail) void telegram(`Glean: ${label} lỗi — ${msg}`);
+    const msg = biOf(e);
+    run('UPDATE backup_run SET finished_at=?, error=? WHERE id=?', now(), pack(msg), id);
+    if (cfg().backup.notifyOnFail) void telegram(`Glean: ${label} lỗi — ${msg[0]}`);
   }
   return getRun(id);
 }

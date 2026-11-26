@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type ApiErr } from '../lib/api';
-import { useI18n } from '../lib/i18n';
+import { unpack, useI18n } from '../lib/i18n';
 import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
@@ -543,7 +543,7 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
 export function SieveDetailPage() {
   const { id: idParam } = useParams();
   const id = Number(idParam);
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { toast } = useUi();
   const navigate = useNavigate();
   const label = useStatusLabel();
@@ -705,7 +705,7 @@ export function SieveDetailPage() {
         )}
         {s.error && (
           <div className="notice notice-rust" style={{ marginBottom: 20 }}>
-            {s.error}
+            {unpack(s.error, lang)}
           </div>
         )}
         {s.status === ScrapeStatus.Waiting && (
