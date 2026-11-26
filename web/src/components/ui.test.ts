@@ -3,10 +3,36 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
-import { Empty, pageItems } from './ui.tsx';
+import { Empty, pageItems, toastTimers } from './ui.tsx';
 
-// Smaller observation of the /qa run on 2026-11-26 (.gstack/qa-reports/qa-report-localhost-2026-11-26.md):
-// the not-found page had no heading.
+// Smaller observations of the /qa run on 2026-11-26 (.gstack/qa-reports/qa-report-localhost-2026-11-26.md):
+// a toast with a button closed while the pointer was on its way to it; the not-found page had no heading.
+
+test('a toast left alone closes after its time', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const closed: number[] = [];
+  toastTimers((id) => closed.push(id)).start(7, 4500);
+  t.mock.timers.tick(4499);
+  assert.deepEqual(closed, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(closed, [7]);
+});
+
+test('a toast is kept while it is pointed at or focused, and closes once that ends', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const closed: number[] = [];
+  const timers = toastTimers((id) => closed.push(id));
+  timers.start(1, 9000);
+  t.mock.timers.tick(8000);
+  timers.hold(1); // the pointer reaches the toast one second before it would close
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(closed, []);
+  timers.start(1, 9000); // the pointer leaves
+  t.mock.timers.tick(8999);
+  assert.deepEqual(closed, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(closed, [1]);
+});
 
 test('an empty state that is the whole page carries the page heading', () => {
   assert.match(renderToString(createElement(Empty, { title: 'Không có trang này', page: true })), /<h1>Không có trang này<\/h1>/);

@@ -35,19 +35,48 @@ export const useUi = () => {
 
 let seq = 0;
 
+/**
+ * Closes each toast after its time. `hold` keeps one open (the pointer is on it, or the keyboard
+ * focus is in it); `start` again gives it its full time back.
+ */
+export function toastTimers(close: (id: number) => void) {
+  const pending = new Map<number, ReturnType<typeof setTimeout>>();
+  const hold = (id: number) => {
+    clearTimeout(pending.get(id));
+    pending.delete(id);
+  };
+  const start = (id: number, ms: number) => {
+    hold(id);
+    pending.set(
+      id,
+      setTimeout(() => {
+        pending.delete(id);
+        close(id);
+      }, ms),
+    );
+  };
+  return { start, hold };
+}
+
+const toastLife = (x: Toast) => (x.kind === 'error' ? 7000 : x.action ? 9000 : 4500);
+
 export function UiProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [timers] = useState(() => toastTimers((id) => setToasts((ts) => ts.filter((x) => x.id !== id))));
   const [external, setExternal] = useState<string | null>(null);
   const [maintenance, setMaintenance] = useState<Maintenance | null>(null);
   const [needReload, setNeedReload] = useState(false);
   const bootVersion = useRef<string | null>(null);
 
-  const toast = useCallback((text: string, kind: Toast['kind'] = 'info', action?: Toast['action']) => {
-    const id = ++seq;
-    setToasts((ts) => [...ts.slice(-3), { id, text, kind, action }]);
-    setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), kind === 'error' ? 7000 : action ? 9000 : 4500);
-  }, []);
+  const toast = useCallback(
+    (text: string, kind: Toast['kind'] = 'info', action?: Toast['action']) => {
+      const x: Toast = { id: ++seq, text, kind, action };
+      setToasts((ts) => [...ts.slice(-3), x]);
+      timers.start(x.id, toastLife(x));
+    },
+    [timers],
+  );
 
   const refreshMaintenance = useCallback(() => {
     api
@@ -101,7 +130,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toasts" aria-live="polite">
         {toasts.map((x) => (
-          <div key={x.id} className={`toast ${x.kind === 'error' ? 'error' : ''}`}>
+          <div
+            key={x.id}
+            className={`toast ${x.kind === 'error' ? 'error' : ''}`}
+            // A toast does not close while it is pointed at or focused: its button may be about to be pressed.
+            onMouseEnter={() => timers.hold(x.id)}
+            onMouseLeave={() => timers.start(x.id, toastLife(x))}
+            onFocus={() => timers.hold(x.id)}
+            onBlur={() => timers.start(x.id, toastLife(x))}
+          >
             <span>{x.text}</span>
             {x.action && (
               <button
