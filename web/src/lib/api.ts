@@ -1,4 +1,4 @@
-import { currentLang } from './i18n';
+import { currentLang, type Both } from './i18n';
 
 /**
  * HTTP client:
@@ -13,18 +13,20 @@ export interface Envelope<T> {
   data: T;
   total?: number;
   message?: string;
+  messages?: Both;
   code?: string;
   [k: string]: unknown;
 }
 
+/** `message` is in the language the page had when the error came; `both` is for a page that can change language while it shows. */
 export class ApiErr extends Error {
   constructor(
     public status: number,
     public code: string,
-    message: string,
+    public both: Both,
     public display: 'toast' | 'inline' | 'silent' | 'banner',
   ) {
-    super(message);
+    super(currentLang() === 'en-US' ? both.en : both.vi);
   }
 }
 
@@ -163,8 +165,7 @@ export async function request<T = unknown>(path: string, opts: ReqOpts = {}): Pr
         await new Promise((r) => setTimeout(r, 400 * attempt));
         continue;
       }
-      const message = currentLang() === 'en-US' ? 'Cannot reach the server. Check that Glean is running.' : 'Không kết nối được máy chủ. Kiểm tra máy chủ Glean có đang chạy không.';
-      const err = new ApiErr(0, 'NETWORK', message, 'toast');
+      const err = new ApiErr(0, 'NETWORK', { vi: 'Không kết nối được máy chủ. Kiểm tra máy chủ Glean có đang chạy không.', en: 'Cannot reach the server. Check that Glean is running.' }, 'toast');
       if (!opts.quiet) toastSink(err);
       throw err;
     }
@@ -175,7 +176,8 @@ export async function request<T = unknown>(path: string, opts: ReqOpts = {}): Pr
     const json = (await res.json().catch(() => null)) as Envelope<T> | null;
     if (res.ok && json?.success) return json;
     const display = (res.headers.get('error-message-type') as ApiErr['display']) ?? 'toast';
-    const err = new ApiErr(res.status, json?.code ?? 'ERROR', json?.message ?? `${currentLang() === 'en-US' ? 'Error' : 'Lỗi'} ${res.status}`, display);
+    const both = json?.messages ?? (json?.message ? { vi: json.message, en: json.message } : { vi: `Lỗi ${res.status}`, en: `Error ${res.status}` });
+    const err = new ApiErr(res.status, json?.code ?? 'ERROR', both, display);
     if (err.code === 'SUDO_REQUIRED') {
       sudoToken = null;
       sudoListeners.forEach((l) => l());

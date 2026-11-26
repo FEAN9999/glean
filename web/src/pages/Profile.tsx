@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api, ApiErr, setSession, getSession } from '../lib/api';
 import { useAuth, type Tokens } from '../lib/auth';
-import { useI18n } from '../lib/i18n';
+import { useI18n, type Both } from '../lib/i18n';
 import { fmtDate } from '../lib/format';
 import { useTheme } from '../components/Shell';
 import { OtpInput, useUi } from '../components/ui';
@@ -12,12 +12,13 @@ function PasswordForm() {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
   const [again, setAgain] = useState('');
-  const [error, setError] = useState('');
+  // Kept in both languages: the language is changed on this very page, while the error may still show.
+  const [error, setError] = useState<Both | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    if (next !== again) return setError(t('Hai mật khẩu mới chưa khớp nhau.', 'The new passwords do not match.'));
+    setError(null);
+    if (next !== again) return setError({ vi: 'Hai mật khẩu mới chưa khớp nhau.', en: 'The new passwords do not match.' });
     setBusy(true);
     try {
       const r = await api.put<Tokens>('/accounts/change-password', { currentPassword: cur, newPassword: next }, { quiet: true });
@@ -27,7 +28,7 @@ function PasswordForm() {
       setAgain('');
       toast(t('Đã đổi mật khẩu. Các thiết bị khác đã bị đăng xuất.', 'Password changed. Other devices were signed out.'));
     } catch (err) {
-      setError((err as ApiErr).message);
+      setError((err as ApiErr).both);
     } finally {
       setBusy(false);
     }
@@ -46,7 +47,7 @@ function PasswordForm() {
         <span>{t('Nhập lại mật khẩu mới', 'Repeat new password')}</span>
         <input className="input" type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
       </label>
-      {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
+      {error && <p className="error-text" style={{ margin: 0 }}>{t(error.vi, error.en)}</p>}
       <div>
         <button className="btn" disabled={busy}>
           {t('Đổi mật khẩu', 'Change password')}
@@ -62,17 +63,17 @@ function TwoFactor() {
   const { user, reloadUser } = useAuth();
   const [setup, setSetup] = useState<{ secret: string; qrDataUrl: string } | null>(null);
   const [code, setCode] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Both | null>(null);
   const [disabling, setDisabling] = useState(false);
 
   const begin = async () => {
-    setError('');
+    setError(null);
     const r = await api.post<{ secret: string; qrDataUrl: string }>('/auth/2fa/setup');
     setSetup(r.data);
   };
   const enable = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError(null);
     try {
       await api.post('/auth/2fa/enable', { code }, { quiet: true });
       setSetup(null);
@@ -80,12 +81,12 @@ function TwoFactor() {
       await reloadUser();
       toast(t('Đã bật xác thực 2 lớp.', 'Two-factor authentication is on.'));
     } catch (err) {
-      setError((err as ApiErr).message);
+      setError((err as ApiErr).both);
     }
   };
   const disable = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError(null);
     try {
       await api.post('/auth/2fa/disable', { code }, { quiet: true });
       setDisabling(false);
@@ -93,7 +94,7 @@ function TwoFactor() {
       await reloadUser();
       toast(t('Đã tắt xác thực 2 lớp.', 'Two-factor authentication is off.'));
     } catch (err) {
-      setError((err as ApiErr).message);
+      setError((err as ApiErr).both);
     }
   };
 
@@ -125,7 +126,7 @@ function TwoFactor() {
         ) : (
           <form onSubmit={disable} className="stack" style={{ gap: 14 }}>
             {codeInput}
-            {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
+            {error && <p className="error-text" style={{ margin: 0 }}>{t(error.vi, error.en)}</p>}
             <div className="hstack">
               <button className="btn" style={{ color: 'var(--bad-ink)' }} disabled={code.length !== 6}>
                 {t('Xác nhận tắt', 'Confirm turning off')}
@@ -173,7 +174,7 @@ function TwoFactor() {
           {setup.secret.match(/.{1,4}/g)?.join(' ')}
         </code>
       </p>
-      {error && <p className="error-text">{error}</p>}
+      {error && <p className="error-text">{t(error.vi, error.en)}</p>}
     </form>
   );
 }

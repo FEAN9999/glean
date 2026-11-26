@@ -39,7 +39,13 @@ export function assertNotPaused(req: FastifyRequest, feature: keyof AppConfig['m
 
 export function sendError(reply: FastifyReply, e: ApiError) {
   reply.header('error-message-type', e.display);
-  return reply.code(e.status).send({ success: false, code: e.code, message: lang(reply.request) === 'en' ? e.en : e.message });
+  // `messages` has both languages, so a page can show the error again after its language is changed.
+  return reply.code(e.status).send({
+    success: false,
+    code: e.code,
+    message: lang(reply.request) === 'en' ? e.en : e.message,
+    messages: { vi: e.message, en: e.en },
+  });
 }
 
 export const intParam = (v: unknown, def: number, min = 1, max = Number.MAX_SAFE_INTEGER) => {

@@ -2,6 +2,12 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 export type Lang = 'vi-VN' | 'en-US';
 
+/** A text in both languages, kept so it can be shown again after the language is changed: t(x.vi, x.en). */
+export interface Both {
+  vi: string;
+  en: string;
+}
+
 const KEY = 'lang';
 export function currentLang(): Lang {
   try {
