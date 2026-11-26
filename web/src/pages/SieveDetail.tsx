@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
@@ -95,6 +95,23 @@ function useTabPages<T>(path: string, size: number, extra = '') {
 function TabLoading({ error, label }: { error: string | null; label: string }) {
   const { t } = useI18n();
   return error ? <Empty title={t('Không tải được', 'Could not load')}>{error}</Empty> : <Spinner label={label} />;
+}
+
+/**
+ * What a tab with nothing in it says. A failed job did not read the thread to the end, so "none"
+ * would be a guess; its tabs say that the thread was not read instead.
+ */
+export function TabEmpty({ failed, title, children }: { failed: boolean; title: string; children?: ReactNode }) {
+  const { t } = useI18n();
+  if (!failed) return <Empty title={title}>{children}</Empty>;
+  return (
+    <Empty title={t('Chưa đọc xong bài', 'The thread was not read to the end')}>
+      {t(
+        'Lượt sàng thất bại trước khi đọc xong bài, nên chưa biết ở đây có gì. Bấm "Sàng lại" để thử lần nữa.',
+        'The sieve failed before it finished reading the thread, so what belongs here is not known. Use "Sieve again" to retry.',
+      )}
+    </Empty>
+  );
 }
 
 /** A later page failed: the rows shown are from the page before. */
@@ -248,12 +265,12 @@ function useTileSize() {
 
 const IMAGES_PER_PAGE = 48;
 
-function ImagesTab({ id, selectedId, onPick }: { id: number; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
+function ImagesTab({ id, failed, selectedId, onPick }: { id: number; failed: boolean; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
   const { t } = useI18n();
   const [tileSize, setTileSize] = useTileSize();
   const { data, error, page, setPage } = useTabPages<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE);
   if (!data) return <TabLoading error={error} label={t('Đang tải ảnh', 'Loading images')} />;
-  if (!data.total) return <Empty title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</Empty>;
+  if (!data.total) return <TabEmpty failed={failed} title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</TabEmpty>;
   const viewable = data.items.filter(isViewable);
   const sizes: { key: TileSize; label: string; hint: string }[] = [
     { key: 's', label: t('Nhỏ', 'Small'), hint: t('Nhiều ảnh trên một hàng', 'Many images per row') },
@@ -398,11 +415,11 @@ function VideoPlayer({ v }: { v: Vid }) {
 
 const VIDEOS_PER_PAGE = 12;
 
-function VideosTab({ id }: { id: number }) {
+function VideosTab({ id, failed }: { id: number; failed: boolean }) {
   const { t } = useI18n();
   const { data, error, page, setPage } = useTabPages<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE);
   if (!data) return <TabLoading error={error} label={t('Đang tải video', 'Loading videos')} />;
-  if (!data.total) return <Empty title={t('Không có video', 'No videos')} />;
+  if (!data.total) return <TabEmpty failed={failed} title={t('Không có video', 'No videos')} />;
   return (
     <>
       <TabError error={error} />
@@ -438,11 +455,11 @@ function VideosTab({ id }: { id: number }) {
   );
 }
 
-function LinksTab({ id }: { id: number }) {
+function LinksTab({ id, failed }: { id: number; failed: boolean }) {
   const { t } = useI18n();
   const { data, error, page, setPage } = useTabPages<Lnk>(`/scrapes/${id}/links`, 40);
   if (!data) return <TabLoading error={error} label={t('Đang tải liên kết', 'Loading links')} />;
-  if (!data.total) return <Empty title={t('Không có liên kết', 'No links')} />;
+  if (!data.total) return <TabEmpty failed={failed} title={t('Không có liên kết', 'No links')} />;
   return (
     <>
       <TabError error={error} />
@@ -468,7 +485,7 @@ function LinksTab({ id }: { id: number }) {
   );
 }
 
-function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
+function CommentsTab({ id, failed, synced }: { id: number; failed: boolean; synced?: boolean }) {
   const { t } = useI18n();
   const [minLength, setMinLength] = useState(12);
   const [applied, setApplied] = useState(12);
@@ -502,7 +519,7 @@ function CommentsTab({ id, synced }: { id: number; synced?: boolean }) {
       {!data ? (
         <TabLoading error={error} label={t('Đang tải bình luận', 'Loading comments')} />
       ) : !data.total ? (
-        <Empty title={t('Không có bình luận', 'No comments')} />
+        <TabEmpty failed={failed} title={t('Không có bình luận', 'No comments')} />
       ) : (
         <>
           <TabError error={error} />
@@ -623,7 +640,8 @@ export function SieveDetailPage() {
     );
 
   const processing = s.status === ScrapeStatus.Processing;
-  const finished = s.status === ScrapeStatus.Completed || s.status === ScrapeStatus.Failed;
+  const jobFailed = s.status === ScrapeStatus.Failed;
+  const finished = s.status === ScrapeStatus.Completed || jobFailed;
   const onForum = threadOnForum(s);
   const nextPages = new Set<number>();
   if (processing) for (let p = 1; p <= s.totalPages && nextPages.size < 3; p++) if (!done.has(p)) nextPages.add(p);
@@ -751,6 +769,7 @@ export function SieveDetailPage() {
           {tab === 'images' && (
             <ImagesTab
               id={id}
+              failed={jobFailed}
               selectedId={picked?.img.id ?? null}
               onPick={(p, open) => {
                 setPicked(p);
@@ -758,10 +777,11 @@ export function SieveDetailPage() {
               }}
             />
           )}
-          {tab === 'videos' && <VideosTab id={id} />}
-          {tab === 'links' && <LinksTab id={id} />}
-          {tab === 'comments' && <CommentsTab id={id} />}
-          {tab === 'synced-comments' && <CommentsTab id={id} synced />}
+          {tab === 'videos' && <VideosTab id={id} failed={jobFailed} />}
+          {tab === 'links' && <LinksTab id={id} failed={jobFailed} />}
+          {tab === 'comments' && <CommentsTab id={id} failed={jobFailed} />}
+          {/* Archived comments come from syncing, not from this job: "none" is a fact there even when the job failed. */}
+          {tab === 'synced-comments' && <CommentsTab id={id} failed={false} synced />}
         </div>
       </div>
 
