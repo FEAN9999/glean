@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig, updateConfig } from './config.ts';
 import { all, get, now, run } from './db.ts';
-import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
+import { archiveFallback, createScrape, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
 import { ThreadGoneError, type ParsedPost, type ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -256,4 +256,45 @@ test('a failed sieve keeps its reason in Vietnamese and in English', async () =>
   assert.equal(s.status, ScrapeStatus.Failed);
   assert.match(s.error ?? '', new RegExp(`"vi":"Không tìm thấy bài #${threadId} `));
   assert.match(s.error ?? '', new RegExp(`"en":"Thread #${threadId} was not found `));
+});
+
+// Regression: ISSUE-009 — sieving a thread again made a second job: the Archive listed the thread
+// twice and its images were saved twice. Found by /qa-only on 2026-11-26.
+// Report: .gstack/qa-reports/run-20261126T151753Z/qa-report-mixed-xamvn-clone-2026-11-26.md
+test('sieving a thread that has a finished job runs that job again, keeping what it holds', () => {
+  // paused, so the queued job is not read in the background
+  updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0);
+  try {
+    for (const status of [ScrapeStatus.Completed, ScrapeStatus.Failed]) {
+      const { id, threadId } = newScrape();
+      savePageItems(id, 1, [post(111, 1, [A])], 1);
+      run('UPDATE scrape SET status=? WHERE id=?', status, id);
+
+      const r = createScrape(String(threadId), 'direct');
+      assert.deepEqual([r.scrape.id, r.reused, r.rerun], [id, true, true], `status ${status}`);
+      assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE thread_id=?', threadId)!.n, 1);
+      assert.equal(get<{ status: number }>('SELECT status FROM scrape WHERE id=?', id)!.status, ScrapeStatus.Waiting);
+      assert.equal(count('scrape_image', id), 1);
+    }
+  } finally {
+    updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
+  }
+});
+
+test('sieving a thread whose job is still queued, or was deleted, works as before', () => {
+  updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0);
+  try {
+    const queued = newScrape();
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Waiting, queued.id);
+    const again = createScrape(String(queued.threadId), 'direct');
+    assert.deepEqual([again.scrape.id, again.reused, again.rerun], [queued.id, true, false]);
+
+    const deleted = newScrape();
+    run('UPDATE scrape SET status=?, is_marked_deleted=1 WHERE id=?', ScrapeStatus.Completed, deleted.id);
+    const fresh = createScrape(String(deleted.threadId), 'direct');
+    assert.notEqual(fresh.scrape.id, deleted.id);
+    assert.deepEqual([fresh.reused, fresh.rerun], [false, false]);
+  } finally {
+    updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
+  }
 });

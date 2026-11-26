@@ -60,12 +60,12 @@ export function useCreateScrape() {
   const navigate = useNavigate();
   return useCallback(
     async (input: string, source: string, opts: { navigate?: boolean; askNavigate?: boolean } = {}) => {
-      const r = await api.post<{ scrape: Scrape; reused: boolean; domainWarning: null | { host: string; knownOldDomain: boolean; currentHost: string } }>(
+      const r = await api.post<{ scrape: Scrape; reused: boolean; rerun: boolean; domainWarning: null | { host: string; knownOldDomain: boolean; currentHost: string } }>(
         '/scrapes/create-scrape',
         { url: input, source },
         { quiet: true },
       );
-      const { scrape, reused, domainWarning } = r.data;
+      const { scrape, reused, rerun, domainWarning } = r.data;
       if (domainWarning) {
         toast(
           domainWarning.knownOldDomain
@@ -82,7 +82,11 @@ export function useCreateScrape() {
       if (opts.navigate) navigate(`/sang/${scrape.id}`);
       else if (opts.askNavigate)
         toast(
-          reused ? t('Bài này đã có trong hàng đợi.', 'This thread is already queued.') : t('Đã đưa bài vào hàng đợi sàng.', 'Thread added to the sieve queue.'),
+          rerun
+            ? t('Bài này đã sàng trước đây. Glean sàng lại vào lượt cũ, giữ những gì đã lưu.', 'This thread was sieved before. Glean sieves it again into the same job, keeping what it saved.')
+            : reused
+              ? t('Bài này đã có trong hàng đợi.', 'This thread is already queued.')
+              : t('Đã đưa bài vào hàng đợi sàng.', 'Thread added to the sieve queue.'),
           'info',
           { label: t('Xem tiến trình', 'View progress'), run: () => navigate(`/sang/${scrape.id}`) },
         );

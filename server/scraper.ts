@@ -582,17 +582,24 @@ export function createScrape(input: string, source: string) {
       'inline',
     );
   }
-  const existing = get<{ id: number }>(
-    'SELECT id FROM scrape WHERE thread_id=? AND status IN (?,?) AND is_marked_deleted=0 ORDER BY id DESC LIMIT 1',
+  // A thread keeps one job: a queued one is left as it is, a finished one runs again (as Retry
+  // does), so the Archive lists the thread once and its files are not saved twice.
+  const existing = get<{ id: number; status: number }>(
+    'SELECT id, status FROM scrape WHERE thread_id=? AND is_marked_deleted=0 ORDER BY id DESC LIMIT 1',
     ref.threadId,
-    ScrapeStatus.Waiting,
-    ScrapeStatus.Processing,
   );
   let id: number;
   let reused = false;
+  let rerun = false;
   if (existing) {
     id = existing.id;
     reused = true;
+    if (existing.status !== ScrapeStatus.Waiting && existing.status !== ScrapeStatus.Processing) {
+      rerun = true;
+      prepareRerun(id);
+      emit(Ev.NewScrape, summary(id), undefined, 'scrape');
+      kick();
+    }
   } else {
     const t = get<{ title: string }>('SELECT title FROM thread WHERE id=?', ref.threadId);
     id = Number(
@@ -612,6 +619,7 @@ export function createScrape(input: string, source: string) {
   return {
     scrape: summary(id),
     reused,
+    rerun,
     domainWarning: ref.foreignHost
       ? {
           host: ref.foreignHost,
