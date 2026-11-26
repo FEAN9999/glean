@@ -484,6 +484,16 @@ async function hasFfmpeg() {
 }
 export const ffmpegStatus = () => hasFfmpeg();
 
+/**
+ * Another address of the same video file, tried when its own link fails. cdn.anh.moe sends
+ * /sN/<file> to sN.amvideo.cfd, whose bucket was closed (403, found on 2026-11-26); the same
+ * files are served from sN.amvideo.cyou, where save.moe and zpi.cx already send theirs.
+ */
+export function videoMirror(url: string): string | null {
+  const m = /^https:\/\/cdn\.anh\.moe\/(s\d+)\/([^/?#]+)$/.exec(url);
+  return m ? `https://${m[1]}.amvideo.cyou/${m[2]}` : null;
+}
+
 async function downloadVideos(id: number) {
   const rows = all<{ id: number; origin_url: string }>("SELECT id, origin_url FROM scrape_video WHERE scrape_id=? AND kind='file' AND current_url IS NULL", id);
   const dir = scrapeDir(id);
@@ -491,7 +501,9 @@ async function downloadVideos(id: number) {
   const maxBytes = cfg().storage.maxFileSizeMb * 1024 * 1024;
   await pool(rows, 2, async (r) => {
     try {
-      const res = await fetchRaw(r.origin_url, { retries: 1, timeoutMs: 120_000 });
+      let res = await fetchRaw(r.origin_url, { retries: 1, timeoutMs: 120_000 });
+      const mirror = videoMirror(r.origin_url);
+      if (!res.ok && mirror) res = await fetchRaw(mirror, { retries: 1, timeoutMs: 120_000 });
       if (!res.ok) return;
       const len = Number(res.headers.get('content-length') ?? 0);
       if (len > maxBytes) return;
@@ -699,7 +711,8 @@ export function registerScraper(app: FastifyInstance) {
   });
   app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/videos', async (req) => {
     const r = pageOf('scrape_video', Number(req.params.id), req.query);
-    return ok(r.rows, { total: r.total, page: r.page, pageSize: r.size });
+    const rows = (r.rows as { originUrl: string; kind: string }[]).map((v) => ({ ...v, mirrorUrl: v.kind === 'file' ? videoMirror(v.originUrl) : null }));
+    return ok(rows, { total: r.total, page: r.page, pageSize: r.size });
   });
   app.get<{ Params: { id: string }; Querystring: PageQuery }>('/api/scrapes/:id/links', async (req) => {
     const r = pageOf('scrape_link', Number(req.params.id), req.query);

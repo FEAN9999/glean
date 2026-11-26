@@ -29,6 +29,8 @@ interface Vid {
   kind: 'file' | 'embed';
   currentUrl: string | null;
   hlsUrl: string | null;
+  /** Another address of the same file, tried when its own link fails. */
+  mirrorUrl: string | null;
   missingSince?: string | null;
 }
 interface Lnk {
@@ -376,15 +378,14 @@ const pauseOthers = (e: SyntheticEvent<HTMLVideoElement>) => {
 
 /**
  * Plays a video in place: the downloaded copy when there is one, otherwise the file straight
- * from its source; embeds (YouTube and the like) in a sandboxed frame.
+ * from its source, then its mirror if that fails; embeds (YouTube and the like) in a sandboxed frame.
+ * `src` is undefined once every file has failed.
  */
-function VideoPlayer({ v }: { v: Vid }) {
+function VideoPlayer({ v, src, onError }: { v: Vid; src: string | undefined; onError: () => void }) {
   const { t } = useI18n();
-  const [failed, setFailed] = useState(false);
   const title = t(`Video ở trang ${v.page}`, `Video on page ${v.page}`);
-  const src = v.kind === 'embed' ? v.originUrl : (v.currentUrl ?? v.originUrl);
-  const canPlay = v.kind === 'embed' ? embeddable(src) : !!src;
-  if (failed || !canPlay)
+  const canPlay = !!src && (v.kind === 'file' || embeddable(src));
+  if (!canPlay)
     return (
       <div className="player player-off">
         <div className="stack" style={{ gap: 6, alignItems: 'center' }}>
@@ -407,9 +408,47 @@ function VideoPlayer({ v }: { v: Vid }) {
           sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
         />
       ) : (
-        <video controls playsInline preload="metadata" src={src} aria-label={title} onPlay={pauseOthers} onError={() => setFailed(true)} />
+        <video controls playsInline preload="metadata" src={src} aria-label={title} onPlay={pauseOthers} onError={onError} />
       )}
     </div>
+  );
+}
+
+/** One video with its position, where it plays from and its links. */
+function VideoReel({ v }: { v: Vid }) {
+  const { t } = useI18n();
+  const [failures, setFailures] = useState(0);
+  const files = v.kind === 'embed' ? [v.originUrl] : [v.currentUrl ?? v.originUrl, v.mirrorUrl].filter((u): u is string => !!u);
+  const src = files[failures];
+  const onMirror = !!v.mirrorUrl && src === v.mirrorUrl;
+  return (
+    <li className="reel">
+      <VideoPlayer v={v} src={src} onError={() => setFailures((n) => n + 1)} />
+      <div className="row-meta">
+        <span>{pageLabel(t, v.page, v.postNo)}</span>
+        <span>
+          {v.kind === 'embed'
+            ? t('Video nhúng', 'Embedded')
+            : onMirror
+              ? t('Link gốc hỏng, phát từ link dự phòng', 'Source link broken, plays from a mirror')
+              : v.currentUrl
+                ? t('Đã tải về máy', 'Downloaded')
+                : t('Phát từ link gốc', 'Plays from the source')}
+        </span>
+        {v.hlsUrl && <span>HLS</span>}
+      </div>
+      <div className="hstack" style={{ gap: '4px 12px' }}>
+        <ExternalLink href={v.originUrl} className="link-btn" title={v.originUrl} style={{ fontSize: 13, wordBreak: 'break-all' }}>
+          {t(`Mở trên ${hostOf(v.originUrl)}`, `Open on ${hostOf(v.originUrl)}`)}
+        </ExternalLink>
+        {onMirror && (
+          <ExternalLink href={src} className="link-btn" title={src} style={{ fontSize: 13, wordBreak: 'break-all' }}>
+            {t(`Mở trên ${hostOf(src)}`, `Open on ${hostOf(src)}`)}
+          </ExternalLink>
+        )}
+        {v.missingSince && <MissingTag since={v.missingSince} />}
+      </div>
+    </li>
   );
 }
 
@@ -428,26 +467,7 @@ function VideosTab({ id, failed }: { id: number; failed: boolean }) {
       </div>
       <ul className="reels">
         {data.items.map((v) => (
-          <li key={v.id} className="reel">
-            <VideoPlayer v={v} />
-            <div className="row-meta">
-              <span>{pageLabel(t, v.page, v.postNo)}</span>
-              <span>
-                {v.kind === 'embed'
-                  ? t('Video nhúng', 'Embedded')
-                  : v.currentUrl
-                    ? t('Đã tải về máy', 'Downloaded')
-                    : t('Phát từ link gốc', 'Plays from the source')}
-              </span>
-              {v.hlsUrl && <span>HLS</span>}
-            </div>
-            <div className="hstack" style={{ gap: '4px 12px' }}>
-              <ExternalLink href={v.originUrl} className="link-btn" title={v.originUrl} style={{ fontSize: 13, wordBreak: 'break-all' }}>
-                {t(`Mở trên ${hostOf(v.originUrl)}`, `Open on ${hostOf(v.originUrl)}`)}
-              </ExternalLink>
-              {v.missingSince && <MissingTag since={v.missingSince} />}
-            </div>
-          </li>
+          <VideoReel key={v.id} v={v} />
         ))}
       </ul>
       <Pager page={page} total={data.total} size={VIDEOS_PER_PAGE} onPage={setPage} unit={t('video', 'videos')} />

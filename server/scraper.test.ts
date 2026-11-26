@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig, updateConfig } from './config.ts';
 import { all, get, now, run } from './db.ts';
-import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus } from './scraper.ts';
+import { archiveFallback, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
 import { ThreadGoneError, type ParsedPost, type ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -165,6 +165,32 @@ test('detail reports missing counts and the pages done in the current run', asyn
   const done = (await app.inject({ method: 'GET', url: `/api/scrapes/${id}` })).json().data;
   assert.deepEqual(done.missingCounts, { images: 1, videos: 0, links: 0, comments: 1 });
   assert.deepEqual([...done.donePages].sort(), [1, 2]);
+});
+
+test('a cdn.anh.moe video has a mirror on amvideo.cyou; other links have none', () => {
+  assert.equal(videoMirror('https://cdn.anh.moe/s9/N5QpKLvV.mp4'), 'https://s9.amvideo.cyou/N5QpKLvV.mp4');
+  assert.equal(videoMirror('https://cdn.anh.moe/s4/7mL8oF.mp4'), 'https://s4.amvideo.cyou/7mL8oF.mp4');
+  assert.equal(videoMirror('https://cdn.anh.moe/N5QpKLvV.mp4'), null);
+  assert.equal(videoMirror('https://cdn.save.moe/s9/N5QpKLvV.mp4'), null);
+  assert.equal(videoMirror('https://evil.test/cdn.anh.moe/s9/a.mp4'), null);
+});
+
+test('the video list gives a file its mirror link', async () => {
+  const { id } = newScrape();
+  const anh = 'https://cdn.anh.moe/s9/N5QpKLvV.mp4';
+  const other = 'http://x.test/v.mp4';
+  savePageItems(id, 1, [{ ...post(91, 1), videos: [{ url: anh, kind: 'file' }, { url: other, kind: 'file' }] }], 1);
+
+  const app = Fastify();
+  registerScraper(app);
+  const rows: { originUrl: string; mirrorUrl: string | null }[] = (await app.inject({ method: 'GET', url: `/api/scrapes/${id}/videos` })).json().data;
+  assert.deepEqual(
+    rows.map((v) => [v.originUrl, v.mirrorUrl]),
+    [
+      [anh, 'https://s9.amvideo.cyou/N5QpKLvV.mp4'],
+      [other, null],
+    ],
+  );
 });
 
 /** A fake forum: page number → posts, every page reporting `totalPages`. */
