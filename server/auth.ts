@@ -168,7 +168,37 @@ export function requireSudo(req: FastifyRequest) {
     throw new ApiError(403, 'SUDO_REQUIRED', ['Cần nhập lại mã xác thực 2 lớp để thực hiện thao tác này.', 'Enter your two-factor code again to do this.'], 'inline');
 }
 
-const loginAttempts = new Map<string, { n: number; until: number }>();
+/** Failures in a row, by key: an address for wrong passwords, `2fa:<user id>` for wrong 2FA codes. */
+const attempts = new Map<string, { n: number; until: number }>();
+
+function assertNotLocked(key: string) {
+  const att = attempts.get(key);
+  if (att && att.until > Date.now()) {
+    const s = Math.ceil((att.until - Date.now()) / 1000);
+    throw new ApiError(429, 'TOO_MANY_ATTEMPTS', [`Thử lại sau ${s} giây.`, `Try again in ${s} seconds.`], 'inline');
+  }
+}
+
+/** From the 5th failure in a row, `key` waits 1 minute, then 2, and so on up to 10. */
+function countFailure(key: string) {
+  const n = (attempts.get(key)?.n ?? 0) + 1;
+  attempts.set(key, { n, until: n >= 5 ? Date.now() + 60_000 * Math.min(10, n - 4) : 0 });
+}
+
+/**
+ * Checks a 2FA code of the user. Wrong codes count per user, at sign-in and on every later check
+ * alike, so a new sign-in does not start the count again and the code cannot be guessed.
+ */
+function codeMatches(u: UserRow, code: string) {
+  const key = `2fa:${u.id}`;
+  assertNotLocked(key);
+  if (u.totp_secret && verifyTotp(u.totp_secret, code)) {
+    attempts.delete(key);
+    return true;
+  }
+  countFailure(key);
+  return false;
+}
 
 export function registerAuth(app: FastifyInstance) {
   app.get('/api/auth/status', async () => ok({ hasUser: !!getUser() }));
@@ -184,19 +214,14 @@ export function registerAuth(app: FastifyInstance) {
 
   app.post<{ Body: { username: string; password: string } }>('/api/auth/login', async (req) => {
     const key = req.ip;
-    const att = loginAttempts.get(key);
-    if (att && att.until > Date.now()) {
-      const s = Math.ceil((att.until - Date.now()) / 1000);
-      throw new ApiError(429, 'TOO_MANY_ATTEMPTS', [`Thử lại sau ${s} giây.`, `Try again in ${s} seconds.`], 'inline');
-    }
+    assertNotLocked(key);
     const { username, password }: Partial<typeof req.body> = req.body ?? {};
     const u = get<UserRow>('SELECT * FROM app_user WHERE username = ? COLLATE NOCASE', String(username ?? '').trim());
     if (!u || !verifyPassword(String(password ?? ''), u.password_hash)) {
-      const n = (att?.n ?? 0) + 1;
-      loginAttempts.set(key, { n, until: n >= 5 ? Date.now() + 60_000 * Math.min(10, n - 4) : 0 });
+      countFailure(key);
       throw new ApiError(401, 'INVALID_CREDENTIALS', ['Sai tên đăng nhập hoặc mật khẩu.', 'Wrong username or password.'], 'inline');
     }
-    loginAttempts.delete(key);
+    attempts.delete(key);
     if (u.totp_enabled) return ok({ requires2fa: true, challenge: signJwt({ sub: u.id, scope: '2fa' }, 300) });
     return ok(issueTokens(u));
   });
@@ -205,7 +230,7 @@ export function registerAuth(app: FastifyInstance) {
     const body = verifyJwt<{ sub: number; scope: string }>(req.body?.challenge);
     if (!body || body.scope !== '2fa') throw new ApiError(401, 'CHALLENGE_EXPIRED', ['Phiên đăng nhập đã hết hạn, hãy đăng nhập lại.', 'The sign-in has expired. Sign in again.'], 'inline');
     const u = getUser(body.sub);
-    if (!u?.totp_secret || !verifyTotp(u.totp_secret, req.body.code))
+    if (!u || !codeMatches(u, req.body.code))
       throw new ApiError(401, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     return ok(issueTokens(u));
   });
@@ -266,7 +291,7 @@ export function registerAuth(app: FastifyInstance) {
 
   app.post<{ Body: { code: string } }>('/api/auth/2fa/disable', async (req) => {
     const u = getUser(req.userId)!;
-    if (!u.totp_enabled || !u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
+    if (!u.totp_enabled || !codeMatches(u, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     run('UPDATE app_user SET totp_secret=NULL, totp_enabled=0 WHERE id=?', u.id);
     return ok(publicUser(getUser(u.id)!));
@@ -275,7 +300,7 @@ export function registerAuth(app: FastifyInstance) {
   app.post<{ Body: { code: string } }>('/api/auth/2fa/verify-code', async (req) => {
     const u = getUser(req.userId)!;
     if (!u.totp_enabled) return ok({ sudoToken: null, required: false });
-    if (!u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code))
+    if (!codeMatches(u, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
     return ok({ sudoToken: signJwt({ sub: u.id, scope: 'sudo' }, 15 * 60), required: true, expiresInSeconds: 900 });
   });

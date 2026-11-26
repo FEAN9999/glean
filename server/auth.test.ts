@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
 import { _totp, registerApiGuard, registerAuth, signJwt, verifyJwt, verifyTotp } from './auth.ts';
+import { get } from './db.ts';
 import { browserCookie } from './media.ts';
 import { registerSystem } from './system.ts';
 
@@ -123,4 +124,42 @@ test('with 2FA on: login needs the code, and admin writes need a fresh 2FA check
   assert.equal((await save(sudoToken)).statusCode, 200);
   // and the sudo token is not an access token either
   assert.equal((await app.inject({ url: '/api/auth/me', headers: bearer(sudoToken) })).statusCode, 401);
+});
+
+/* The tests below need 2FA on, as the test above leaves it. */
+
+// Regression: ISSUE-007 — wrong 2FA codes were never slowed, so a 6-digit code could be guessed
+// within one sign-in. Found by /qa-only on 2026-11-26.
+// Report: .gstack/qa-reports/run-20261126T151753Z/qa-report-mixed-xamvn-clone-2026-11-26.md
+const secret = () => get<{ totp_secret: string }>('SELECT totp_secret FROM app_user WHERE id=?', userId)!.totp_secret;
+const rightCode = () => _totp.hotp(secret(), Math.floor(Date.now() / 30_000));
+const wrongCode = () => String((Number(rightCode()) + 500_000) % 1_000_000).padStart(6, '0');
+/** Signs in again with the password (a new challenge each time), then sends `code`. */
+const signIn = async (code: string) =>
+  app.inject({ method: 'POST', url: '/api/auth/verify-2fa', payload: { challenge: (await login(PASSWORD)).json().data.challenge, code } });
+const sudo = (token: string, code: string) => app.inject({ method: 'POST', url: '/api/auth/2fa/verify-code', headers: bearer(token), payload: { code } });
+const turnOff = (token: string, code: string) => app.inject({ method: 'POST', url: '/api/auth/2fa/disable', headers: bearer(token), payload: { code } });
+const isLocked = (r: { statusCode: number; json: () => { code: string } }) => r.statusCode === 429 && r.json().code === 'TOO_MANY_ATTEMPTS';
+
+test('after 5 wrong 2FA codes the account must wait, even with the right code and a new sign-in', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const token = (await signIn(rightCode())).json().data.accessToken;
+  for (let i = 0; i < 5; i++) assert.equal((await signIn(wrongCode())).statusCode, 401, `wrong code ${i + 1}`);
+  assert.ok(isLocked(await signIn(rightCode())), 'sign-in');
+  assert.ok(isLocked(await sudo(token, rightCode())), 'admin re-check');
+  assert.ok(isLocked(await turnOff(token, rightCode())), 'turning 2FA off');
+
+  t.mock.timers.tick(61_000);
+  assert.equal((await signIn(rightCode())).statusCode, 200);
+});
+
+test('wrong codes on the admin re-check and on turning 2FA off count the same way', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const token = (await signIn(rightCode())).json().data.accessToken;
+  for (let i = 0; i < 3; i++) assert.equal((await sudo(token, wrongCode())).statusCode, 400);
+  for (let i = 0; i < 2; i++) assert.equal((await turnOff(token, wrongCode())).statusCode, 400);
+  assert.ok(isLocked(await signIn(rightCode())));
+
+  t.mock.timers.tick(61_000);
+  assert.equal((await sudo(token, rightCode())).statusCode, 200);
 });
