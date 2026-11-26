@@ -72,6 +72,13 @@ function useIsDark() {
 
 const SEARCH_ROUTE = /^\/(bai-viet|binh-luan)\//;
 
+/**
+ * The top box goes back to the searched words when the page or those words change. A filter such as
+ * the thread scope of the comment search changes the URL too, but leaves what is typed alone.
+ */
+export const omniDraftKey = (pathname: string, search: string) =>
+  SEARCH_ROUTE.test(pathname) ? `${pathname}?q=${new URLSearchParams(search).get('q') ?? ''}` : pathname;
+
 /** One input, two jobs: a link (or bare ID) goes to the sieve queue, anything else is a search. */
 function Omnibox({ narrow }: { narrow: boolean }) {
   const { t } = useI18n();
@@ -82,7 +89,7 @@ function Omnibox({ narrow }: { narrow: boolean }) {
   const onSearch = SEARCH_ROUTE.test(loc.pathname);
   // Mirror the query of the search page; start empty everywhere else.
   const routeQuery = onSearch ? (params.get('q') ?? '') : '';
-  const route = loc.pathname + loc.search;
+  const route = omniDraftKey(loc.pathname, loc.search);
   const [shownRoute, setShownRoute] = useState(route);
   const [value, setValue] = useState(routeQuery);
   const [error, setError] = useState('');
