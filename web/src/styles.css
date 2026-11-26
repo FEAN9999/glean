@@ -1343,12 +1343,13 @@ a.gtr:hover .gt-title {
   color: var(--dim);
   max-width: 52ch;
 }
-.empty strong {
+.empty strong,
+.empty h1 {
   color: var(--ink);
   display: block;
   font-size: 16px;
   font-weight: 400;
-  margin-bottom: 4px;
+  margin: 0 0 4px;
 }
 
 .form-grid {

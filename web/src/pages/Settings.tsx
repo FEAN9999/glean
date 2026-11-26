@@ -198,7 +198,7 @@ function Inner() {
   if (!cfg)
     return error ? (
       <div className="page">
-        <Empty title={t('Không tải được cài đặt', 'Could not load settings')}>{error}</Empty>
+        <Empty page title={t('Không tải được cài đặt', 'Could not load settings')}>{error}</Empty>
       </div>
     ) : null;
   const dirty = JSON.stringify(cfg) !== saved;

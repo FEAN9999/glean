@@ -361,7 +361,7 @@ function PageCrashed({ error }: { error: Error }) {
   const { t } = useI18n();
   return (
     <div className="page">
-      <Empty title={t('Trang này gặp lỗi', 'This page ran into an error')}>
+      <Empty page title={t('Trang này gặp lỗi', 'This page ran into an error')}>
         <span>{error.message}</span>
         <button className="btn" onClick={() => location.reload()}>
           {t('Tải lại trang', 'Reload the page')}
@@ -371,10 +371,11 @@ function PageCrashed({ error }: { error: Error }) {
   );
 }
 
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+/** `page`: the empty state is all the page shows, so its title is the page heading. */
+export function Empty({ title, children, page }: { title: string; children?: ReactNode; page?: boolean }) {
   return (
     <div className="empty">
-      <strong>{title}</strong>
+      {page ? <h1>{title}</h1> : <strong>{title}</strong>}
       {children}
     </div>
   );

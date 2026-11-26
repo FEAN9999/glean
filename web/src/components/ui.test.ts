@@ -1,7 +1,18 @@
 import '../test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pageItems } from './ui.tsx';
+import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
+import { Empty, pageItems } from './ui.tsx';
+
+// Smaller observation of the /qa run on 2026-11-26 (.gstack/qa-reports/qa-report-localhost-2026-11-26.md):
+// the not-found page had no heading.
+
+test('an empty state that is the whole page carries the page heading', () => {
+  assert.match(renderToString(createElement(Empty, { title: 'Không có trang này', page: true })), /<h1>Không có trang này<\/h1>/);
+  // inside a page that has its own heading it stays plain text
+  assert.match(renderToString(createElement(Empty, { title: 'Không có ảnh' })), /<strong>Không có ảnh<\/strong>/);
+});
 
 test('pageItems lists every page when there are few', () => {
   assert.deepEqual(pageItems(1, 1), [1]);

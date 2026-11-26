@@ -608,7 +608,7 @@ export function SieveDetailPage() {
   if (notFound)
     return (
       <div className="page">
-        <Empty title={t('Không tìm thấy lượt sàng này', 'Sieve job not found')}>
+        <Empty page title={t('Không tìm thấy lượt sàng này', 'Sieve job not found')}>
           <Link to="/sang" className="link-btn">
             {t('Về Kho', 'Back to the archive')}
           </Link>
@@ -618,7 +618,7 @@ export function SieveDetailPage() {
   if (!s)
     return (
       <div className="page">
-        {loadError ? <Empty title={t('Không tải được lượt sàng này', 'Could not load this sieve job')}>{loadError}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
+        {loadError ? <Empty page title={t('Không tải được lượt sàng này', 'Could not load this sieve job')}>{loadError}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
       </div>
     );
 

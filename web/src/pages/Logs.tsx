@@ -169,11 +169,11 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   );
   useEffect(() => load(1), [load]);
 
-  if (missing) return <div className="page"><Empty title={t('Không tìm thấy lần đồng bộ này', 'Sync run not found')} /></div>;
+  if (missing) return <div className="page"><Empty page title={t('Không tìm thấy lần đồng bộ này', 'Sync run not found')} /></div>;
   if (!data)
     return (
       <div className="page">
-        {error ? <Empty title={t('Không tải được lần đồng bộ này', 'Could not load this sync run')}>{error}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
+        {error ? <Empty page title={t('Không tải được lần đồng bộ này', 'Could not load this sync run')}>{error}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
       </div>
     );
   const h = data.history;

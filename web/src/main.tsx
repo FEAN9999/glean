@@ -29,7 +29,7 @@ function NotFound() {
   const { t } = useI18n();
   return (
     <div className="page">
-      <Empty title={t('Không có trang này', 'Page not found')}>
+      <Empty page title={t('Không có trang này', 'Page not found')}>
         <a href="/" className="link-btn">
           {t('Về bàn làm việc', 'Back to the desk')}
         </a>
