@@ -51,6 +51,28 @@ test('migrate backfills post ids of rows sieved before the upgrade', () => {
   assert.deepEqual(ids('scrape_link'), [[1, 778]]);
 });
 
+test('migrate keeps a video only on the earliest post of its job, which replies quoting it repeated', () => {
+  const d = legacyDb();
+  d.exec(`ALTER TABLE scrape ADD COLUMN total_pages INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE scrape ADD COLUMN total_videos INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE scrape ADD COLUMN videos_before_last_page INTEGER NOT NULL DEFAULT 0;
+          UPDATE scrape SET total_pages=1, total_videos=3 WHERE id=1;
+          INSERT INTO scrape(id, thread_id, total_pages, total_videos, videos_before_last_page) VALUES (2, 6, 2, 5, 4);
+          INSERT INTO scrape_video(id, scrape_id, page, post_no, origin_url) VALUES
+            (1, 1, 1, 2, 'v1.mp4'), (2, 1, 1, 3, 'v2.mp4'), (7, 1, 1, 7, 'a.mp4'),
+            (3, 2, 2, 30, 'a.mp4'), (4, 2, 1, 9, 'a.mp4'), (5, 2, 1, 4, 'a.mp4'), (6, 2, 1, 5, 'b.mp4');`);
+  migrate(d);
+  assert.deepEqual(
+    d.prepare('SELECT id FROM scrape_video ORDER BY id').all().map((r) => r.id),
+    [1, 2, 5, 6, 7],
+  );
+  const totals = d.prepare('SELECT id, total_videos t, videos_before_last_page b FROM scrape ORDER BY id').all().map((r) => [r.id, r.t, r.b]);
+  assert.deepEqual(totals, [
+    [1, 3, 0],
+    [2, 2, 2],
+  ]);
+});
+
 const version = (d: DatabaseSync) => (d.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
 
 test('migrate records the schema version and skips steps a database already had', () => {

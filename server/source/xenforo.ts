@@ -264,16 +264,20 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
       if (u && !isIgnored(u)) images.add(u);
     });
     art.find('.message-attachments a.file-preview, .attachment a.js-lbImage, a.js-lbImage').each((_, a) => {
+      if ($(a).closest('blockquote').length) return;
       const u = abs($(a).attr('href'), pageUrl);
       if (u && !isIgnored(u)) images.add(u);
     });
 
+    // Media inside a quote belongs to the quoted post, which is counted on its own.
     const videos = new Map<string, 'file' | 'embed'>();
     body.find('video source[src], video[src]').each((_, v) => {
+      if ($(v).closest('blockquote').length) return;
       const u = abs($(v).attr('src'), pageUrl);
       if (u && !isIgnored(u)) videos.set(u, 'file');
     });
     body.find('iframe[src], [data-s9e-mediaembed-src]').each((_, f) => {
+      if ($(f).closest('blockquote').length) return;
       const u = abs($(f).attr('src') ?? $(f).attr('data-s9e-mediaembed-src'), pageUrl);
       if (u && !isIgnored(u)) videos.set(u, 'embed');
     });

@@ -6,13 +6,13 @@ import { parseForumHtml, parseThreadHtml } from './xenforo.ts';
 
 loadConfig(0);
 
-const article = (id: number, extra = '') => `
+const article = (id: number, extra = '', body = `Nội dung ${id}`) => `
 <article class="message message--post" data-author="An" data-content="post-${id}">
   <header class="message-attribution">
     <ul class="message-attribution-main"><li><a href="/threads/t.1/post-${id}"><time data-time="1762900000"></time></a></li></ul>
   </header>
   <div class="message-content">
-    <div class="message-body"><div class="bbWrapper">Nội dung ${id}</div></div>
+    <div class="message-body"><div class="bbWrapper">${body}</div></div>
     ${extra}
   </div>
 </article>`;
@@ -28,6 +28,46 @@ test('the last-edit line is not part of the post text', () => {
   const html = article(5, '<div class="message-lastEdit">Sửa lần cuối: <time data-time="1762990000"></time></div>');
   const r = parseThreadHtml(html, 'http://x.test/threads/t.1/', 1);
   assert.equal(r.posts[0].text, 'Nội dung 5');
+});
+
+// A reply quotes post 5: the quote carries post 5's media again.
+const quoteOf5 = (inner: string) => `
+<blockquote data-quote="An" data-source="post: 5" class="bbCodeBlock bbCodeBlock--expandable bbCodeBlock--quote js-expandWatch">
+  <div class="bbCodeBlock-title"><a href="/goto/post?id=5" class="bbCodeBlock-sourceJump">An đã viết:</a></div>
+  <div class="bbCodeBlock-content"><div class="bbCodeBlock-expandContent js-expandContent">${inner}</div></div>
+</blockquote>`;
+const videoFile = (src: string) => `<div class="bbMediaWrapper"><video controls><source src="${src}" /></video></div>`;
+const embed = (src: string) => `<span data-s9e-mediaembed="youtube"><iframe allowfullscreen src="${src}"></iframe></span>`;
+const lazyEmbed = (src: string) => `<span data-s9e-mediaembed="youtube"><iframe data-s9e-mediaembed-src="${src}"></iframe></span>`;
+
+test('a reply does not count the videos of the post it quotes', () => {
+  const own = `${videoFile('https://x.test/v/1.mp4')}${embed('https://www.youtube.com/embed/aaa')}${lazyEmbed('https://www.youtube.com/embed/bbb')}`;
+  const html = article(5, '', own) + article(6, '', `${quoteOf5(own)}Hay quá`) + article(7, '', `${quoteOf5(own)}${videoFile('https://x.test/v/2.mp4')}`);
+  const r = parseThreadHtml(html, 'http://x.test/threads/t.1/', 1);
+  assert.deepEqual(
+    r.posts.map((p) => p.videos),
+    [
+      [
+        { url: 'https://x.test/v/1.mp4', kind: 'file' },
+        { url: 'https://www.youtube.com/embed/aaa', kind: 'embed' },
+        { url: 'https://www.youtube.com/embed/bbb', kind: 'embed' },
+      ],
+      [],
+      [{ url: 'https://x.test/v/2.mp4', kind: 'file' }],
+    ],
+  );
+});
+
+test('a reply does not count the images of the post it quotes', () => {
+  const own =
+    '<img src="https://x.test/i/1.jpg" class="bbImage" />' +
+    '<a href="https://x.test/attachments/2-jpg.2/" class="js-lbImage"><img src="https://x.test/attachments/2-jpg.2/thumb" class="bbImage" /></a>';
+  const html = article(5, '', own) + article(6, '', `${quoteOf5(own)}Đẹp`);
+  const r = parseThreadHtml(html, 'http://x.test/threads/t.1/', 1);
+  assert.deepEqual(
+    r.posts.map((p) => p.images),
+    [['https://x.test/i/1.jpg', 'https://x.test/attachments/2-jpg.2/thumb', 'https://x.test/attachments/2-jpg.2/'], []],
+  );
 });
 
 const reactions = (inner: string) => `<div class="reactionsBar js-reactionsList is-active"><a class="reactionsBar-link" href="/posts/1/reactions">${inner}</a></div>`;

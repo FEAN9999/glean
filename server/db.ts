@@ -306,6 +306,20 @@ const STEPS: ((d: DatabaseSync) => void)[] = [
   },
   // 2: chunked uploads were removed; no screen ever used them.
   (d) => d.exec('DROP TABLE IF EXISTS upload_session'),
+  // 3: the sieve used to take the videos inside a reply's quote as the reply's own, so a quoted video
+  // was listed again for every reply quoting it. Keep each video only on the earliest post of its job
+  // (a downloaded copy of a dropped row stays in the job's folder).
+  (d) => {
+    const repeated = `FROM scrape_video r WHERE EXISTS (SELECT 1 FROM scrape_video o
+                        WHERE o.scrape_id=r.scrape_id AND o.origin_url=r.origin_url AND o.post_no < r.post_no)`;
+    const jobs = d.prepare(`SELECT DISTINCT r.scrape_id id ${repeated}`).all() as { id: number }[];
+    if (!jobs.length) return;
+    d.exec(`DELETE FROM scrape_video WHERE id IN (SELECT r.id ${repeated})`);
+    const totals = d.prepare(`UPDATE scrape SET total_videos=(SELECT COUNT(*) FROM scrape_video v WHERE v.scrape_id=scrape.id),
+                                videos_before_last_page=(SELECT COALESCE(SUM(v.page < scrape.total_pages),0) FROM scrape_video v WHERE v.scrape_id=scrape.id)
+                              WHERE id=?`);
+    for (const j of jobs) totals.run(j.id);
+  },
 ];
 
 /** Runs the steps a database has not had yet, each in its own transaction with its version number. */
