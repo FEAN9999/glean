@@ -2154,6 +2154,27 @@ a.result-title:hover {
 .lib-table {
   min-width: 500px;
 }
+.lib-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line2);
+}
+.lib-line.head {
+  border-bottom-color: var(--line);
+}
+.lib-line > .gtr {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.lib-pick {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 4px;
+  cursor: pointer;
+}
 .forum-stat {
   display: flex;
   flex-direction: column;

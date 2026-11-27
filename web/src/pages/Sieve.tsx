@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDuration, fmtNum } from '../lib/format';
-import { Empty, PausedNotice, Sentinel, useUi } from '../components/ui';
+import { Empty, PausedNotice, Sentinel, useConfirm, useUi } from '../components/ui';
 import { NowSieving, ScrapeStatus, SieveForm, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
 import type { AppConfig } from '../../../server/config';
 
@@ -88,9 +88,15 @@ function LibraryRow({ s }: { s: Scrape }) {
 
 export function SievePage() {
   const { t } = useI18n();
+  const { toast } = useUi();
+  const { ask, node } = useConfirm();
+  const navigate = useNavigate();
   const ov = useOverview();
   const [retention, setRetention] = useState<number | null>(null);
   const [items, setItems] = useState<Scrape[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [sending, setSending] = useState(false);
   const [cursor, setCursor] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -113,6 +119,7 @@ export function SievePage() {
         const r = await api.get<Scrape[]>(`/scrapes/processed${!top && from ? `?cursor=${from}` : ''}`, { quiet: true });
         setItems((xs) => (top ? r.data : [...xs, ...r.data]));
         setCursor((r.nextCursor as number) ?? null);
+        if (typeof r.total === 'number') setTotal(r.total);
         setDone(!r.nextCursor);
         setError(null);
       } catch (e) {
@@ -141,6 +148,49 @@ export function SievePage() {
   });
 
   const maxForum = Math.max(1, ...(ov?.forums.map((f) => f.threads) ?? [0]));
+  // Only rows still listed count: a job that left the archive is no longer chosen.
+  const chosen = items.filter((s) => picked.has(s.id)).map((s) => s.id);
+  const allChosen = items.length > 0 && chosen.length === items.length;
+  const pick = (id: number, on: boolean) =>
+    setPicked((xs) => {
+      const next = new Set(xs);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const requeue = async (sel: { ids: number[] } | { all: true }) => {
+    setSending(true);
+    try {
+      const { queued, skipped } = (await api.post<{ queued: number; skipped: number }>('/scrapes/retry-many', sel)).data;
+      const skippedNote = skipped ? t(` Bỏ qua ${fmtNum(skipped)} bài đang chờ hoặc đã xóa.`, ` Skipped ${fmtNum(skipped)} queued or deleted.`) : '';
+      toast(
+        queued
+          ? t(`Đã đưa ${fmtNum(queued)} bài vào hàng đợi sàng.`, `Queued ${fmtNum(queued)} threads to sieve again.`) + skippedNote
+          : t('Không có bài nào được đưa vào hàng đợi.', 'Nothing was queued.') + skippedNote,
+        'info',
+        queued ? { label: t('Xem hàng đợi', 'View queue'), run: () => navigate('/hang-doi') } : undefined,
+      );
+      setPicked(new Set());
+      void load(true, null);
+    } catch {
+      /* toast shown by client */
+    } finally {
+      setSending(false);
+    }
+  };
+  const requeueAll = async () => {
+    const n = fmtNum(total ?? 0);
+    const yes = await ask(
+      t(`Sàng lại toàn bộ ${n} bài?`, `Sieve all ${n} threads again?`),
+      t(
+        'Mỗi bài đọc lại mọi trang của chủ đề nên có thể mất lâu. Những gì đã lưu được giữ nguyên.',
+        'Each thread is read again page by page, which can take a while. What was saved is kept.',
+      ),
+      t('Sàng lại tất cả', 'Sieve all again'),
+    );
+    if (yes) await requeue({ all: true });
+  };
 
   return (
     <div className="page">
@@ -161,6 +211,13 @@ export function SievePage() {
           {t('Đã sàng', 'Sieved')}
           {ov && <span className="count">{fmtNum(ov.scrapes)}</span>}
         </button>
+        {!!total && (
+          <span style={{ marginLeft: 'auto' }}>
+            <button className="btn btn-sm" disabled={sending} onClick={() => void requeueAll()}>
+              {t('Sàng lại tất cả', 'Sieve all again')}
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="cols">
@@ -176,17 +233,36 @@ export function SievePage() {
             </Empty>
           ) : (
             <div className="gtable lib-table">
-              <div className="gtr lib-row head" aria-hidden="true">
-                <span />
-                <span>{t('Bài viết', 'Thread')}</span>
-                <span className="r wide-only">{t('Trang', 'Pages')}</span>
-                <span className="r">{t('Ảnh', 'Images')}</span>
-                <span className="r wide-only">Video</span>
-                <span className="r">{t('Bình luận', 'Comments')}</span>
-                <span className="wide-only">{t('Sàng lúc', 'Sieved')}</span>
+              <div className="lib-line head">
+                <label className="lib-pick">
+                  <input
+                    type="checkbox"
+                    className="cb"
+                    aria-label={t('Chọn hết các bài đang hiện', 'Choose every thread shown')}
+                    checked={allChosen}
+                    ref={(el) => {
+                      if (el) el.indeterminate = chosen.length > 0 && !allChosen;
+                    }}
+                    onChange={(e) => setPicked(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())}
+                  />
+                </label>
+                <div className="gtr lib-row head" aria-hidden="true">
+                  <span />
+                  <span>{t('Bài viết', 'Thread')}</span>
+                  <span className="r wide-only">{t('Trang', 'Pages')}</span>
+                  <span className="r">{t('Ảnh', 'Images')}</span>
+                  <span className="r wide-only">Video</span>
+                  <span className="r">{t('Bình luận', 'Comments')}</span>
+                  <span className="wide-only">{t('Sàng lúc', 'Sieved')}</span>
+                </div>
               </div>
               {items.map((s) => (
-                <LibraryRow key={s.id} s={s} />
+                <div key={s.id} className="lib-line">
+                  <label className="lib-pick">
+                    <input type="checkbox" className="cb" aria-label={scrapeTitle(s, t)} checked={picked.has(s.id)} onChange={(e) => pick(s.id, e.target.checked)} />
+                  </label>
+                  <LibraryRow s={s} />
+                </div>
               ))}
             </div>
           )}
@@ -222,6 +298,18 @@ export function SievePage() {
           )}
         </aside>
       </div>
+      {chosen.length > 0 && (
+        <div className="savebar" role="region" aria-label={t('Các bài đã chọn', 'Chosen threads')}>
+          <span>{t(`Đã chọn ${fmtNum(chosen.length)} bài`, `${fmtNum(chosen.length)} chosen`)}</span>
+          <button className="btn btn-primary" disabled={sending} onClick={() => void requeue({ ids: chosen })}>
+            {t('Sàng lại', 'Sieve again')}
+          </button>
+          <button className="btn btn-ghost" disabled={sending} onClick={() => setPicked(new Set())}>
+            {t('Bỏ chọn', 'Clear')}
+          </button>
+        </div>
+      )}
+      {node}
     </div>
   );
 }

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig, updateConfig } from './config.ts';
 import { all, get, now, run } from './db.ts';
-import { archiveFallback, createScrape, markMissing, prepareRerun, processScrape, registerScraper, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
+import { archiveFallback, createScrape, markMissing, prepareRerun, processScrape, registerScraper, retryMany, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
+import { ApiError, sendError } from './http.ts';
 import { ThreadGoneError, type ParsedPost, type ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
@@ -294,6 +295,96 @@ test('sieving a thread whose job is still queued, or was deleted, works as befor
     const fresh = createScrape(String(deleted.threadId), 'direct');
     assert.notEqual(fresh.scrape.id, deleted.id);
     assert.deepEqual([fresh.reused, fresh.rerun], [false, false]);
+  } finally {
+    updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
+  }
+});
+
+/* ---------------- sàng lại hàng loạt ---------------- */
+
+/** Runs `fn` with sieving paused, so jobs queued by it are not read in the background. */
+function whilePaused<T>(fn: () => T): T {
+  updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0);
+  try {
+    return fn();
+  } finally {
+    updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
+  }
+}
+const statusOf = (id: number) => get<{ status: number; run_no: number; is_marked_deleted: number }>('SELECT status, run_no, is_marked_deleted FROM scrape WHERE id=?', id)!;
+const finishedCount = () =>
+  get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0', ScrapeStatus.Completed, ScrapeStatus.Failed)!.n;
+
+test('retry-many queues the chosen finished jobs once and skips the rest', () => {
+  whilePaused(() => {
+    const done = newScrape(), failed = newScrape(), queued = newScrape(), gone = newScrape();
+    savePageItems(done.id, 1, [post(301, 1, [A])], 1);
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, done.id);
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Failed, failed.id);
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Waiting, queued.id);
+    run('UPDATE scrape SET status=?, is_marked_deleted=1 WHERE id=?', ScrapeStatus.Completed, gone.id);
+    const runBefore = statusOf(done.id).run_no;
+
+    const r = retryMany({ ids: [done.id, done.id, failed.id, queued.id, gone.id, 999999] });
+
+    assert.deepEqual(r, { queued: 2, skipped: 3 });
+    assert.equal(statusOf(done.id).status, ScrapeStatus.Waiting);
+    assert.equal(statusOf(failed.id).status, ScrapeStatus.Waiting);
+    assert.equal(statusOf(done.id).run_no, runBefore + 1);
+    assert.equal(count('scrape_image', done.id), 1);
+    assert.equal(statusOf(gone.id).is_marked_deleted, 1);
+    assert.equal(statusOf(gone.id).status, ScrapeStatus.Completed);
+  });
+});
+
+test('retry-many with all queues every finished job that is not deleted', () => {
+  whilePaused(() => {
+    const a = newScrape(), b = newScrape(), gone = newScrape();
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, a.id);
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Failed, b.id);
+    run('UPDATE scrape SET status=?, is_marked_deleted=1 WHERE id=?', ScrapeStatus.Completed, gone.id);
+    const before = finishedCount();
+
+    const r = retryMany({ all: true });
+
+    assert.deepEqual(r, { queued: before, skipped: 0 });
+    assert.equal(finishedCount(), 0);
+    assert.equal(statusOf(a.id).status, ScrapeStatus.Waiting);
+    assert.equal(statusOf(b.id).status, ScrapeStatus.Waiting);
+    assert.equal(statusOf(gone.id).status, ScrapeStatus.Completed);
+  });
+});
+
+test('retry-many refuses a malformed selection without changing anything', () => {
+  whilePaused(() => {
+    const done = newScrape();
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, done.id);
+    for (const bad of [{}, { ids: [] }, { ids: 'x' }, { ids: [1.5] }, { ids: [-1] }, { ids: [String(done.id)] }, { all: 'yes' }, { all: false }])
+      assert.throws(
+        () => retryMany(bad),
+        (e: unknown) => e instanceof ApiError && e.status === 400 && e.code === 'INVALID_SELECTION',
+        JSON.stringify(bad),
+      );
+    assert.equal(statusOf(done.id).status, ScrapeStatus.Completed);
+  });
+});
+
+test('the retry-many route is refused while sieving is paused, and the archive list reports its total', async () => {
+  const app = Fastify();
+  app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+  registerScraper(app);
+  const done = newScrape();
+  run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, done.id);
+
+  updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0);
+  try {
+    const paused = await app.inject({ method: 'POST', url: '/api/scrapes/retry-many', payload: { all: true } });
+    assert.equal(paused.statusCode, 503);
+    assert.equal(paused.json().code, 'FEATURE_PAUSED');
+    assert.equal(statusOf(done.id).status, ScrapeStatus.Completed);
+
+    const list = (await app.inject({ method: 'GET', url: '/api/scrapes/processed?size=1' })).json();
+    assert.equal(list.total, finishedCount());
   } finally {
     updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
   }

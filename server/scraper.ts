@@ -183,6 +183,29 @@ export function prepareRerun(id: number) {
   });
 }
 
+/**
+ * Queues many finished jobs to run again: the chosen `ids`, or `all` finished jobs. Jobs that are
+ * queued, running, deleted or unknown are skipped.
+ */
+export function retryMany(sel: { ids?: unknown; all?: unknown }) {
+  const ids = Array.isArray(sel.ids) ? sel.ids : null;
+  const valid = sel.all === true || (ids && ids.length > 0 && ids.every((x) => Number.isSafeInteger(x) && (x as number) > 0));
+  if (!valid) throw new ApiError(400, 'INVALID_SELECTION', ['Chưa chọn bài nào để sàng lại.', 'No threads chosen to sieve again.'], 'toast');
+  const unique = sel.all === true ? null : [...new Set(ids as number[])];
+  const rows = all<{ id: number }>(
+    `SELECT id FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0${unique ? ` AND id IN (${unique.map(() => '?').join(',')})` : ''} ORDER BY id`,
+    ScrapeStatus.Completed,
+    ScrapeStatus.Failed,
+    ...(unique ?? []),
+  );
+  for (const r of rows) {
+    prepareRerun(r.id);
+    emit(Ev.NewScrape, summary(r.id), undefined, 'scrape');
+  }
+  if (rows.length) kick();
+  return { queued: rows.length, skipped: unique ? unique.length - rows.length : 0 };
+}
+
 function ensureThreadRecord(threadId: number, title: string, forumId: number | null, first: ParsedPost | undefined, totalPages: number) {
   const ex = get('SELECT id FROM thread WHERE id=?', threadId);
   const fid = forumId ?? 0;
@@ -680,7 +703,8 @@ export function registerScraper(app: FastifyInstance) {
       ...s,
       syncedCommentCount: get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.threadId)!.n,
     }));
-    return ok(items, { nextCursor: rows.length === size ? rows.at(-1)!.id : null });
+    const total = get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0', ScrapeStatus.Completed, ScrapeStatus.Failed)!.n;
+    return ok(items, { nextCursor: rows.length === size ? rows.at(-1)!.id : null, total });
   });
 
   app.get<{ Querystring: { refresh?: string } }>('/api/scrapes/check-proxy', async (req) => {
@@ -764,6 +788,11 @@ export function registerScraper(app: FastifyInstance) {
     emit(Ev.NewScrape, summary(id), undefined, 'scrape');
     kick();
     return ok(summary(id));
+  });
+
+  app.post<{ Body: { ids?: unknown; all?: unknown } }>('/api/scrapes/retry-many', async (req) => {
+    assertNotPaused(req, 'scrape');
+    return ok(retryMany(req.body ?? {}));
   });
 
   app.post('/api/scrapes/resume-queue', async () => {

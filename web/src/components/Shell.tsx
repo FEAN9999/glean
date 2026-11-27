@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
+import { singleFlight } from '../lib/load';
 import { useAuth } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent, useRealtimeConnected } from '../lib/realtime';
@@ -197,12 +198,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const path = loc.pathname;
 
-  const loadQueue = useCallback(() => {
-    api
-      .get<unknown[]>('/scrapes/unprocessed', { quiet: true })
-      .then((r) => setQueue(r.data.length))
-      .catch(() => {});
-  }, []);
+  // Single-flight: a bulk re-sieve sends one NewScrape per job.
+  const loadQueue = useMemo(() => singleFlight(() => api.get<unknown[]>('/scrapes/unprocessed', { quiet: true }).then((r) => setQueue(r.data.length))), []);
   useEffect(loadQueue, [loadQueue]);
   useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.UpdateScrape, Ev.Reconnected], loadQueue);
 

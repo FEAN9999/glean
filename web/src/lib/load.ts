@@ -14,6 +14,32 @@ export function useLatest() {
   }, []);
 }
 
+/**
+ * For reloads set off by bursts of events: a call while `run` is in flight does not start another
+ * one; all such calls share a single run once the current one ends.
+ */
+export function singleFlight(run: () => Promise<unknown>) {
+  let busy = false;
+  let again = false;
+  const start = (): void => {
+    if (busy) {
+      again = true;
+      return;
+    }
+    busy = true;
+    run()
+      .catch(() => {})
+      .finally(() => {
+        busy = false;
+        if (again) {
+          again = false;
+          start();
+        }
+      });
+  };
+  return start;
+}
+
 export interface PagedData<T> {
   items: T[];
   total: number;

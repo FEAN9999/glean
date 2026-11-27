@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
+import { singleFlight } from '../lib/load';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtNum, fmtTime } from '../lib/format';
@@ -120,13 +121,9 @@ export function useScrapeQueue() {
   const [items, setItems] = useState<Scrape[] | null>(null);
   const [live, setLive] = useState<Record<number, LiveProgress>>({});
 
-  const load = useCallback(() => {
-    api
-      .get<Scrape[]>('/scrapes/unprocessed', { quiet: true })
-      .then((r) => setItems(r.data))
-      // Keep what is shown: an empty list here would claim nothing is queued.
-      .catch(() => {});
-  }, []);
+  // Single-flight: a bulk re-sieve sends one NewScrape per job. A failed load keeps what is shown:
+  // an empty list here would claim nothing is queued.
+  const load = useMemo(() => singleFlight(() => api.get<Scrape[]>('/scrapes/unprocessed', { quiet: true }).then((r) => setItems(r.data))), []);
   useEffect(load, [load]);
   useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.Reconnected], load);
   useEvent<Scrape>(Ev.UpdateScrape, (m) => {
