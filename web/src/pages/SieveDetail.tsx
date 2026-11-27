@@ -5,7 +5,7 @@ import { unpack, useI18n } from '../lib/i18n';
 import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useUi } from '../components/ui';
+import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useReturnFocus, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, threadOnForum, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
@@ -128,6 +128,7 @@ function TabError({ error }: { error: string | null }) {
 function Lightbox({ items, index, onClose, onIndex }: { items: Img[]; index: number; onClose: () => void; onIndex: (i: number) => void }) {
   const { t } = useI18n();
   const img = items[index];
+  useReturnFocus();
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -195,7 +196,8 @@ const hostOf = (url: string) => {
 
 const isViewable = (i: Img) => !!(i.currentUrl || (i.displayByOriginUrl && !i.isBin));
 
-function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onOpen: () => void }) {
+/** `n`: where the image comes in the whole list, so each tile has its own name. */
+function ImageTile({ img, n, selected, onOpen }: { img: Img; n: number; selected: boolean; onOpen: () => void }) {
   const { t } = useI18n();
   const [broken, setBroken] = useState(false);
   const pending = !img.currentUrl && !img.isBin && !img.isDownloadFailed && !img.displayByOriginUrl;
@@ -226,7 +228,10 @@ function ImageTile({ img, selected, onOpen }: { img: Img; selected: boolean; onO
       className={`tile ${selected ? 'on' : ''}`}
       onClick={onOpen}
       title={pageLabel(t, img.page, img.postNo)}
-      aria-label={t(`Phóng to ảnh ở trang ${img.page}`, `Enlarge image on page ${img.page}`)}
+      aria-label={t(
+        `Phóng to ảnh ${n} (trang ${img.page}${img.postNo ? `, bình luận #${img.postNo}` : ''})`,
+        `Enlarge image ${n} (page ${img.page}${img.postNo ? `, post #${img.postNo}` : ''})`,
+      )}
       aria-pressed={selected}
     >
       <img src={src} loading="lazy" decoding="async" alt="" onError={() => setBroken(true)} />
@@ -298,9 +303,9 @@ function ImagesTab({ id, failed, selectedId, onPick }: { id: number; failed: boo
         </div>
       </div>
       <div className={`gallery size-${tileSize}`}>
-        {data.items.map((img) => (
+        {data.items.map((img, i) => (
           <figure key={img.id} className="shot">
-            <ImageTile img={img} selected={img.id === selectedId} onOpen={() => onPick({ img, list: viewable }, true)} />
+            <ImageTile img={img} n={(page - 1) * IMAGES_PER_PAGE + i + 1} selected={img.id === selectedId} onOpen={() => onPick({ img, list: viewable }, true)} />
             <figcaption className="shot-cap">{pageLabel(t, img.page, img.postNo)}</figcaption>
           </figure>
         ))}
@@ -777,9 +782,30 @@ export function SieveDetailPage() {
           </section>
         )}
 
-        <div className="tabs" id="tabs" role="tablist" style={{ marginBottom: 20 }}>
+        <div
+          className="tabs"
+          id="tabs"
+          role="tablist"
+          style={{ marginBottom: 20 }}
+          // Tabs take one Tab stop; the arrow keys move between them and open the one they land on.
+          onKeyDown={(e) => {
+            const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+            if (!step) return;
+            e.preventDefault();
+            const i = (tabs.findIndex((x) => x.key === tab) + step + tabs.length) % tabs.length;
+            setTab(tabs[i].key);
+            (e.currentTarget.children[i] as HTMLElement).focus();
+          }}
+        >
           {tabs.map((x) => (
-            <button key={x.key} role="tab" aria-selected={tab === x.key} className={tab === x.key ? 'on' : ''} onClick={() => setTab(x.key)}>
+            <button
+              key={x.key}
+              role="tab"
+              aria-selected={tab === x.key}
+              tabIndex={tab === x.key ? 0 : -1}
+              className={tab === x.key ? 'on' : ''}
+              onClick={() => setTab(x.key)}
+            >
               {x.label}
               {x.count != null && <span className="count">{fmtNum(x.count)}</span>}
             </button>

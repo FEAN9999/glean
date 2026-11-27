@@ -5,10 +5,12 @@ import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
 import { registerApiGuard, registerAuth } from './auth.ts';
 import { registerSystem } from './system.ts';
+import { ApiError, sendError } from './http.ts';
 
 loadConfig(0);
 
 const app = Fastify();
+app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
 registerApiGuard(app);
 registerAuth(app);
 registerSystem(app, 0);
@@ -58,4 +60,21 @@ test('the forum address must start with http:// or https://', async () => {
   }
   assert.equal((await settings()).json().data.source.baseUrl, before);
   assert.equal((await save({ source: { baseUrl: 'https://forum.example.org' } })).statusCode, 200);
+});
+
+// Regression: ISSUE-012 — an old domain typed without https:// was saved but never matched, so
+// links on it were still refused. Found by /qa-only on 2026-11-27.
+// Report: .gstack/qa-reports/run-20261126T170250Z/qa-report-mixed-xamvn-clone-2026-11-26.md
+test('an old domain must be a full http(s) address; blank lines are dropped', async () => {
+  const before = (await settings()).json().data.source.previousBaseUrls;
+  for (const entry of ['old.example', 'ftp://old.example', 'not a url']) {
+    const r = await save({ source: { previousBaseUrls: ['https://ok.example', entry] } });
+    assert.deepEqual([r.statusCode, r.json().code], [400, 'INVALID_URL'], entry);
+  }
+  assert.match((await save({ source: { previousBaseUrls: ['old.example'] } })).json().messages.vi, /https:\/\/old\.example/);
+  assert.deepEqual((await settings()).json().data.source.previousBaseUrls, before);
+
+  const r = await save({ source: { previousBaseUrls: [' https://old.example ', '', 'http://older.example'] } });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual((await settings()).json().data.source.previousBaseUrls, ['https://old.example', 'http://older.example']);
 });

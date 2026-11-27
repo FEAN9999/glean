@@ -236,6 +236,16 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="shell">
+      <a
+        href="#main"
+        className="skip-link"
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById('main')?.focus();
+        }}
+      >
+        {t('Bỏ qua đến nội dung chính', 'Skip to main content')}
+      </a>
       <aside className="rail">
         <NavLink to="/" className="rail-brand" aria-label="Glean">
           <Mark size={26} />
@@ -284,7 +294,9 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
         )}
 
-        <main className="main">{children}</main>
+        <main className="main" id="main" tabIndex={-1}>
+          {children}
+        </main>
 
         <nav className="bottomnav" aria-label={t('Điều hướng chính', 'Main navigation')}>
           {mobile.map((l, i) => {

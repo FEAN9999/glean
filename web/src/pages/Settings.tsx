@@ -305,7 +305,7 @@ function Inner() {
         <div className="settings-body">
           <Section id="src" title={t('Nguồn dữ liệu', 'Source')} desc={t('Diễn đàn kiểu XenForo mà Glean đọc. Mặc định là diễn đàn mẫu chạy sẵn trong máy để thử.', 'The XenForo-style forum Glean reads. By default this is the built-in sample forum.')}>
             {Text({ p: 'source.baseUrl', label: t('Địa chỉ diễn đàn', 'Forum address'), hint: t('Khi đổi tên miền, địa chỉ cũ được ghi nhớ để cảnh báo link cũ.', 'When the domain changes, the old one is remembered to flag old links.') })}
-            {Lines({ p: 'source.previousBaseUrls', label: t('Tên miền cũ', 'Previous domains'), hint: t('Mỗi dòng một địa chỉ.', 'One address per line.') })}
+            {Lines({ p: 'source.previousBaseUrls', label: t('Tên miền cũ', 'Previous domains'), hint: t('Mỗi dòng một địa chỉ đầy đủ, ví dụ https://ten-mien-cu.com.', 'One full address per line, for example https://old-domain.com.') })}
             <div className="field">
               <span>{t('Chuyên mục cần đồng bộ', 'Sections to sync')}</span>
               <div className="stack" style={{ gap: 8 }}>

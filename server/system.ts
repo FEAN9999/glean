@@ -34,6 +34,22 @@ export function registerSystem(app: FastifyInstance, port: number) {
       patch.backup.targetDir = String(patch.backup.targetDir ?? '').trim();
       validateBackupDir(patch.backup.targetDir);
     }
+    if (patch.source?.previousBaseUrls) {
+      // Settings sends one line per entry, blank lines included. A bare host would never match a link.
+      patch.source.previousBaseUrls = patch.source.previousBaseUrls.map((u) => u.trim()).filter(Boolean);
+      for (const u of patch.source.previousBaseUrls) {
+        try {
+          if (!/^https?:$/.test(new URL(u).protocol)) throw new Error();
+        } catch {
+          throw new ApiError(
+            400,
+            'INVALID_URL',
+            [`Tên miền cũ "${u}" không hợp lệ. Nhập đầy đủ, ví dụ https://${u}.`, `The old domain "${u}" is not valid. Type it in full, for example https://${u}.`],
+            'inline',
+          );
+        }
+      }
+    }
     if (patch.source?.baseUrl) {
       try {
         // http(s) only, as discover-forums and the reader need

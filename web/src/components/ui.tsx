@@ -203,7 +203,26 @@ export function ExternalLink({ href, children, ...rest }: AnchorHTMLAttributes<H
   );
 }
 
+/**
+ * When a dialog closes, the keyboard focus goes back to what had it when the dialog opened. Only if
+ * the focus was lost with the dialog: one that moved the focus somewhere on purpose is left alone.
+ */
+export function useReturnFocus() {
+  const [opener] = useState(() => (typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null)));
+  useEffect(
+    () => () => {
+      // After the dialog has left the page, so the focus has had the chance to fall to <body>.
+      setTimeout(() => {
+        const now = document.activeElement;
+        if (opener?.isConnected && (!now || now === document.body)) opener.focus();
+      });
+    },
+    [opener],
+  );
+}
+
 export function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  useReturnFocus();
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', k);
