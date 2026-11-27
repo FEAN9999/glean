@@ -58,6 +58,16 @@ function useOverview() {
 
 /* ---------------- Kho: everything sieved so far ---------------- */
 
+/** A copy of `set` with `ids` added (`on`) or removed. */
+export function withIds(set: ReadonlySet<number>, ids: number[], on: boolean) {
+  const next = new Set(set);
+  for (const id of ids) {
+    if (on) next.add(id);
+    else next.delete(id);
+  }
+  return next;
+}
+
 function LibraryRow({ s }: { s: Scrape }) {
   const { t, lang } = useI18n();
   const failed = s.status === ScrapeStatus.Failed;
@@ -144,20 +154,17 @@ export function SievePage() {
   }, [load]);
   useEvent([Ev.FinishScrape, Ev.Reconnected], () => void load(true, null));
   useEvent<Scrape>(Ev.UpdateScrape, (m) => {
-    if (m.data?.isMarkedDeleted) setItems((xs) => xs.filter((x) => x.id !== m.data.id));
+    if (!m.data?.isMarkedDeleted) return;
+    setItems((xs) => xs.filter((x) => x.id !== m.data.id));
+    setPicked((xs) => (xs.has(m.data.id) ? withIds(xs, [m.data.id], false) : xs));
   });
 
   const maxForum = Math.max(1, ...(ov?.forums.map((f) => f.threads) ?? [0]));
-  // Only rows still listed count: a job that left the archive is no longer chosen.
-  const chosen = items.filter((s) => picked.has(s.id)).map((s) => s.id);
-  const allChosen = items.length > 0 && chosen.length === items.length;
-  const pick = (id: number, on: boolean) =>
-    setPicked((xs) => {
-      const next = new Set(xs);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  // Picks outlive a reload of the list (each finished job reloads it from the top), so a pick further
+  // down is still sent. A pick that no longer qualifies is skipped by the server and counted.
+  const shownChosen = items.filter((s) => picked.has(s.id)).length;
+  const allShownChosen = items.length > 0 && shownChosen === items.length;
+  const pick = (id: number, on: boolean) => setPicked((xs) => withIds(xs, [id], on));
 
   const requeue = async (sel: { ids: number[] } | { all: true }) => {
     setSending(true);
@@ -180,7 +187,16 @@ export function SievePage() {
     }
   };
   const requeueAll = async () => {
-    const n = fmtNum(total ?? 0);
+    // Count afresh: jobs may have been deleted or queued since the list loaded.
+    let fresh = total ?? 0;
+    try {
+      const r = await api.get<Scrape[]>('/scrapes/processed?size=1', { quiet: true });
+      if (typeof r.total === 'number') setTotal((fresh = r.total));
+    } catch {
+      /* keep the count shown */
+    }
+    if (!fresh) return;
+    const n = fmtNum(fresh);
     const yes = await ask(
       t(`Sàng lại toàn bộ ${n} bài?`, `Sieve all ${n} threads again?`),
       t(
@@ -206,17 +222,17 @@ export function SievePage() {
         )}
       </header>
 
-      <div className="tabs" role="tablist" aria-label={t('Nhóm trong kho', 'Archive views')}>
-        <button role="tab" aria-selected="true" className="on">
-          {t('Đã sàng', 'Sieved')}
-          {ov && <span className="count">{fmtNum(ov.scrapes)}</span>}
-        </button>
+      <div className="tabs-bar">
+        <div className="tabs" role="tablist" aria-label={t('Nhóm trong kho', 'Archive views')}>
+          <button role="tab" aria-selected="true" className="on">
+            {t('Đã sàng', 'Sieved')}
+            {ov && <span className="count">{fmtNum(ov.scrapes)}</span>}
+          </button>
+        </div>
         {!!total && (
-          <span style={{ marginLeft: 'auto' }}>
-            <button className="btn btn-sm" disabled={sending} onClick={() => void requeueAll()}>
-              {t('Sàng lại tất cả', 'Sieve all again')}
-            </button>
-          </span>
+          <button className="btn btn-sm" disabled={sending} onClick={() => void requeueAll()}>
+            {t('Sàng lại tất cả', 'Sieve all again')}
+          </button>
         )}
       </div>
 
@@ -239,11 +255,12 @@ export function SievePage() {
                     type="checkbox"
                     className="cb"
                     aria-label={t('Chọn hết các bài đang hiện', 'Choose every thread shown')}
-                    checked={allChosen}
+                    checked={allShownChosen}
+                    disabled={sending}
                     ref={(el) => {
-                      if (el) el.indeterminate = chosen.length > 0 && !allChosen;
+                      if (el) el.indeterminate = shownChosen > 0 && !allShownChosen;
                     }}
-                    onChange={(e) => setPicked(e.target.checked ? new Set(items.map((s) => s.id)) : new Set())}
+                    onChange={(e) => setPicked((xs) => withIds(xs, items.map((s) => s.id), e.target.checked))}
                   />
                 </label>
                 <div className="gtr lib-row head" aria-hidden="true">
@@ -259,7 +276,14 @@ export function SievePage() {
               {items.map((s) => (
                 <div key={s.id} className="lib-line">
                   <label className="lib-pick">
-                    <input type="checkbox" className="cb" aria-label={scrapeTitle(s, t)} checked={picked.has(s.id)} onChange={(e) => pick(s.id, e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      className="cb"
+                      aria-label={scrapeTitle(s, t)}
+                      checked={picked.has(s.id)}
+                      disabled={sending}
+                      onChange={(e) => pick(s.id, e.target.checked)}
+                    />
                   </label>
                   <LibraryRow s={s} />
                 </div>
@@ -298,10 +322,10 @@ export function SievePage() {
           )}
         </aside>
       </div>
-      {chosen.length > 0 && (
+      {picked.size > 0 && (
         <div className="savebar" role="region" aria-label={t('Các bài đã chọn', 'Chosen threads')}>
-          <span>{t(`Đã chọn ${fmtNum(chosen.length)} bài`, `${fmtNum(chosen.length)} chosen`)}</span>
-          <button className="btn btn-primary" disabled={sending} onClick={() => void requeue({ ids: chosen })}>
+          <span>{t(`Đã chọn ${fmtNum(picked.size)} bài`, `${fmtNum(picked.size)} chosen`)}</span>
+          <button className="btn btn-primary" disabled={sending} onClick={() => void requeue({ ids: [...picked] })}>
             {t('Sàng lại', 'Sieve again')}
           </button>
           <button className="btn btn-ghost" disabled={sending} onClick={() => setPicked(new Set())}>

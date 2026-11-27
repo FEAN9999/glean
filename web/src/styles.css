@@ -2154,6 +2154,17 @@ a.result-title:hover {
 .lib-table {
   min-width: 500px;
 }
+.tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tabs-bar > .tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
 .lib-line {
   display: flex;
   align-items: center;

@@ -389,3 +389,48 @@ test('the retry-many route is refused while sieving is paused, and the archive l
     updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0);
   }
 });
+
+// Review minor: each id was its own SQL parameter, so 32,767 or more ids failed with "too many SQL variables".
+test('retry-many takes a selection larger than SQLite allows as parameters', () => {
+  whilePaused(() => {
+    const done = newScrape();
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, done.id);
+    const ids = [done.id, ...Array.from({ length: 40_000 }, (_, i) => 10_000_000 + i)];
+    assert.deepEqual(retryMany({ ids }), { queued: 1, skipped: 40_000 });
+    assert.equal(statusOf(done.id).status, ScrapeStatus.Waiting);
+  });
+});
+
+test('retry-many skips a job that is running', () => {
+  whilePaused(() => {
+    const done = newScrape(), running = newScrape();
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Completed, done.id);
+    run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Processing, running.id);
+    assert.deepEqual(retryMany({ ids: [done.id, running.id] }), { queued: 1, skipped: 1 });
+    assert.equal(statusOf(running.id).status, ScrapeStatus.Processing);
+  });
+});
+
+// Sieving is not paused here, so nothing these requests send may be queued: a queued job would be
+// read from the forum at once.
+test('the retry-many route answers through Fastify and refuses a missing or non-object body', async () => {
+  const app = Fastify();
+  app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+  registerScraper(app);
+  const running = newScrape();
+  run('UPDATE scrape SET status=? WHERE id=?', ScrapeStatus.Processing, running.id);
+
+  const r = await app.inject({ method: 'POST', url: '/api/scrapes/retry-many', payload: { ids: [running.id, 99_999_999] } });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.json(), { success: true, data: { queued: 0, skipped: 2 } });
+
+  for (const payload of [undefined, 'null', '[1,2]', '"x"']) {
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/scrapes/retry-many',
+      ...(payload === undefined ? {} : { payload, headers: { 'content-type': 'application/json' } }),
+    });
+    assert.equal(bad.statusCode, 400, String(payload));
+    assert.equal(bad.json().code, 'INVALID_SELECTION', String(payload));
+  }
+});

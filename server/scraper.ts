@@ -193,10 +193,11 @@ export function retryMany(sel: { ids?: unknown; all?: unknown }) {
   if (!valid) throw new ApiError(400, 'INVALID_SELECTION', ['Chưa chọn bài nào để sàng lại.', 'No threads chosen to sieve again.'], 'toast');
   const unique = sel.all === true ? null : [...new Set(ids as number[])];
   const rows = all<{ id: number }>(
-    `SELECT id FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0${unique ? ` AND id IN (${unique.map(() => '?').join(',')})` : ''} ORDER BY id`,
+    // One JSON parameter for the ids: SQLite caps the number of parameters at 32,766.
+    `SELECT id FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0${unique ? ' AND id IN (SELECT value FROM json_each(?))' : ''} ORDER BY id`,
     ScrapeStatus.Completed,
     ScrapeStatus.Failed,
-    ...(unique ?? []),
+    ...(unique ? [JSON.stringify(unique)] : []),
   );
   for (const r of rows) {
     prepareRerun(r.id);
