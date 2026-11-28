@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { all, run, now, DATA_DIR } from './db.ts';
+import { all, run, now, DATA_DIR, mainAll, mainRun, mainDb, runInSite, siteCtxOrNull, NoSiteError, type StoreCtx } from './db.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError } from './http.ts';
 
@@ -120,10 +120,35 @@ export function defaultConfig(port: number): AppConfig {
   };
 }
 
+/** Sections each site keeps in the `config` table of its own store; the rest is shared, in the main store. */
+export const SITE_SECTIONS = ['source', 'sync', 'scraper', 'maintenance'] as const;
+/** Fields of `search` that belong to each site: a suggestion service knows the posts of one forum only. */
+export const SITE_SEARCH_FIELDS = ['semanticSearchUrl', 'semanticTopK'] as const;
+type SiteSection = (typeof SITE_SECTIONS)[number];
+export type SharedConfig = Omit<AppConfig, SiteSection>;
+/** What a site keeps in its own store. */
+type SiteOwn = Pick<AppConfig, SiteSection> & { search: Pick<AppConfig['search'], (typeof SITE_SEARCH_FIELDS)[number]> };
+
+const isSiteSection = (k: string): k is SiteSection => (SITE_SECTIONS as readonly string[]).includes(k);
+const isSiteSearchField = (k: string) => (SITE_SEARCH_FIELDS as readonly string[]).includes(k);
+
 type Listener = (cfg: AppConfig, prev: AppConfig) => void;
+type SharedListener = (cfg: SharedConfig, prev: SharedConfig) => void;
 const listeners: Listener[] = [];
-let current: AppConfig;
+const sharedListeners: SharedListener[] = [];
 let defaults: AppConfig;
+/** Shared sections, from the main store. Its `search` row also holds the main site's semantic fields. */
+let shared: SharedConfig;
+/** cfg() outside any site. */
+let noSite: AppConfig;
+/** The main site's own sections. They stay in the main store, which is the main site's store. */
+let mainOwn: SiteOwn;
+/** The main site once a context for it is known. The main site is the one whose store is mainDb. */
+let mainCtx: StoreCtx | null = null;
+/** Every other loaded site, by code. */
+const others = new Map<string, { ctx: StoreCtx; own: SiteOwn }>();
+/** Shared plus own settings, by site code. */
+const joinedByCode = new Map<string, AppConfig>();
 
 type DeepPartial<T> = T extends unknown[] ? T : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 /** A settings change: any fields at any depth. Lists are replaced whole, like deepMerge does. */
@@ -216,46 +241,202 @@ export function assertPatchTypes(patch: unknown) {
   throw new ApiError(400, 'INVALID_SETTING', [`Giá trị của ${name} không đúng kiểu.`, `${name} has a value of the wrong type.`], 'inline');
 }
 
-/** Loads config from DB, filling gaps from defaults. Persists any missing sections. */
+/**
+ * Loads the shared sections and the main site's own sections from the main store, filling gaps from
+ * defaults. Persists any missing sections. Returns the main site's settings.
+ */
 export function loadConfig(port: number): AppConfig {
-  defaults ??= defaultConfig(port);
-  const rows = all<{ key: string; value: string }>('SELECT key, value FROM config');
-  const stored: Obj = {};
-  for (const r of rows) stored[r.key] = JSON.parse(r.value);
-  const merged: AppConfig = cleanNumbers(deepMerge(defaults, stored), defaults, '');
-  for (const key of Object.keys(merged) as (keyof AppConfig)[]) {
-    if (!(key in stored)) saveSection(key, merged[key]);
+  const site = siteCtxOrNull();
+  if (site?.db === mainDb) mainCtx = site;
+  const sites = shared ? loadedSites() : [];
+  const prev = sites.map(configOf);
+  const prevShared = shared;
+  readMain(port);
+  if (prevShared) {
+    for (const l of sharedListeners) l(shared, prevShared);
+    notify(sites, prev);
   }
-  const prev = current;
-  current = merged;
-  if (prev) for (const l of listeners) l(current, prev);
-  return current;
+  return mainCtx ? configOf(mainCtx) : joined(mainOwn);
 }
 
-function saveSection(key: string, value: unknown) {
-  run(
-    'INSERT INTO config(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at',
-    key,
-    JSON.stringify(value),
-    now(),
+/**
+ * Loads a site's own sections from its store, filling gaps from defaults (with no forums) and
+ * persisting them. `init` gives the address of a site whose store has no settings yet.
+ */
+export function loadSiteConfig(ctx: StoreCtx, init?: { baseUrl: string }): AppConfig {
+  if (ctx.db === mainDb) {
+    mainCtx = ctx;
+    return configOf(ctx);
+  }
+  const prev = others.has(ctx.code) ? configOf(ctx) : undefined;
+  others.set(ctx.code, { ctx, own: readSite(ctx, init) });
+  joinedByCode.delete(ctx.code);
+  if (prev) notify([ctx], [prev]);
+  return configOf(ctx);
+}
+
+/** Stops keeping the settings of a removed site. */
+export function forgetSiteConfig(code: string) {
+  others.delete(code);
+  joinedByCode.delete(code);
+}
+
+function readMain(port: number) {
+  defaults ??= defaultConfig(port);
+  const stored = readRows(null);
+  const full: AppConfig = cleanNumbers(deepMerge(defaults, stored), defaults, '');
+  for (const key of Object.keys(full) as (keyof AppConfig)[]) {
+    if (!(key in stored)) saveSection(null, key, full[key]);
+  }
+  shared = Object.fromEntries(Object.entries(full).filter(([k]) => !isSiteSection(k))) as SharedConfig;
+  mainOwn = ownPart(full);
+  noSite = { ...shared } as AppConfig;
+  for (const k of SITE_SECTIONS) {
+    Object.defineProperty(noSite, k, {
+      enumerable: true,
+      get() {
+        throw new NoSiteError();
+      },
+    });
+  }
+  joinedByCode.clear();
+}
+
+function readSite(ctx: StoreCtx, init?: { baseUrl: string }): SiteOwn {
+  const stored = readRows(ctx);
+  const first = init && !('source' in stored) ? { source: { baseUrl: init.baseUrl } } : {};
+  const base: SiteOwn = { ...ownPart(defaults), source: { ...defaults.source, forums: [] } };
+  const own: SiteOwn = cleanNumbers(deepMerge(base, { ...stored, ...first }), defaults, '');
+  for (const key of Object.keys(own) as (keyof SiteOwn)[]) {
+    if (!(key in stored)) saveSection(ctx, key, own[key]);
+  }
+  return own;
+}
+
+const ownPart = (c: AppConfig): SiteOwn => ({
+  source: c.source,
+  sync: c.sync,
+  scraper: c.scraper,
+  maintenance: c.maintenance,
+  search: { semanticSearchUrl: c.search.semanticSearchUrl, semanticTopK: c.search.semanticTopK },
+});
+
+/** The `config` rows of a site's store, or with null of the main store. */
+function readRows(store: StoreCtx | null): Obj {
+  const sql = 'SELECT key, value FROM config';
+  const rows = store ? runInSite(store, () => all<{ key: string; value: string }>(sql)) : mainAll<{ key: string; value: string }>(sql);
+  return Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value)]));
+}
+
+/** Saves a section in a site's store, or with null in the main store. */
+function saveSection(store: StoreCtx | null, key: string, value: unknown) {
+  const sql =
+    'INSERT INTO config(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at';
+  const json = JSON.stringify(value);
+  if (store) runInSite(store, () => run(sql, key, json, now()));
+  else mainRun(sql, key, json, now());
+}
+
+/** Shared settings with a site's own, in the order of the defaults. */
+function joined(own: SiteOwn): AppConfig {
+  const parts: Obj = { ...shared, ...own, search: { ...shared.search, ...own.search } };
+  return Object.fromEntries(Object.keys(defaults).map((k) => [k, parts[k]])) as unknown as AppConfig;
+}
+
+/** A site other than the main one, loaded on first use. */
+function ownOf(site: StoreCtx): SiteOwn {
+  if (!others.has(site.code)) loadSiteConfig(site);
+  return others.get(site.code)!.own;
+}
+
+function configOf(site: StoreCtx): AppConfig {
+  let c = joinedByCode.get(site.code);
+  if (!c) joinedByCode.set(site.code, (c = joined(site.db === mainDb ? mainOwn : ownOf(site))));
+  return c;
+}
+
+const loadedSites = () => [...(mainCtx ? [mainCtx] : []), ...[...others.values()].map((o) => o.ctx)];
+
+/** Runs the listeners of each site in its context; `prev` holds each site's settings before. */
+function notify(sites: StoreCtx[], prev: AppConfig[], announce = false) {
+  sites.forEach((s, i) =>
+    runInSite(s, () => {
+      const c = configOf(s);
+      for (const l of listeners) l(c, prev[i]);
+      if (announce) emit(Ev.ConfigReloaded, { maintenance: c.maintenance });
+    }),
   );
 }
 
-export const cfg = () => current;
+/**
+ * The settings of the current site: the shared ones with the site's own. Outside any site, the
+ * shared ones only; reading a site section there throws NoSiteError.
+ */
+export function cfg(): AppConfig {
+  const site = siteCtxOrNull();
+  return site ? configOf(site) : noSite;
+}
 
+/** Called in the context of each site whose settings were changed or reloaded. */
 export function onConfigChange(l: Listener) {
   listeners.push(l);
 }
 
-/** Partial update of any sections; hot-reloads listeners. */
+/** Called once when the shared settings were changed or reloaded. */
+export function onSharedConfigChange(l: SharedListener) {
+  sharedListeners.push(l);
+}
+
+/**
+ * Partial update of any sections; hot-reloads listeners. Site sections and the site's semantic
+ * search fields go to the store of the current site (NoSiteError outside a site), the rest to the
+ * main store.
+ */
 export function updateConfig(patch: ConfigPatch, port: number) {
-  for (const key of Object.keys(patch) as (keyof AppConfig)[]) {
-    if (!(key in current)) continue;
-    saveSection(key, cleanNumbers(deepMerge(current[key], patch[key]), defaults[key], key));
+  const site = siteCtxOrNull();
+  // null when the site's sections are in the main store: the main site, or no site.
+  const own = site && site.db !== mainDb ? ownOf(site) : null;
+  const toMain: Obj = {};
+  const toSite: Obj = {};
+  let forSite = false;
+  let forAll = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in defaults)) continue;
+    if (isSiteSection(key)) {
+      forSite = true;
+      (own ? toSite : toMain)[key] = value;
+    } else if (key === 'search' && isObj(value)) {
+      const mine = Object.fromEntries(Object.entries(value).filter(([k]) => isSiteSearchField(k)));
+      const rest = Object.fromEntries(Object.entries(value).filter(([k]) => !isSiteSearchField(k)));
+      if (Object.keys(mine).length) {
+        forSite = true;
+        (own ? toSite : toMain).search = mine;
+      }
+      if (Object.keys(rest).length) {
+        forAll = true;
+        toMain.search = { ...(toMain.search as Obj | undefined), ...rest };
+      }
+    } else {
+      forAll = true;
+      toMain[key] = value;
+    }
   }
-  const c = loadConfig(port);
-  emit(Ev.ConfigReloaded, { maintenance: c.maintenance });
-  return c;
+  if (forSite && !site) throw new NoSiteError();
+
+  const sites = forAll ? loadedSites() : site ? [site] : [];
+  const prev = sites.map(configOf);
+  const prevShared = shared;
+  const def = defaults as unknown as Obj;
+  const mainNow = joined(mainOwn) as unknown as Obj;
+  for (const [key, value] of Object.entries(toMain)) saveSection(null, key, cleanNumbers(deepMerge(mainNow[key], value), def[key], key));
+  for (const [key, value] of Object.entries(toSite)) saveSection(site, key, cleanNumbers(deepMerge((own as unknown as Obj)[key], value), def[key], key));
+  if (Object.keys(toMain).length) readMain(port);
+  if (site && own && Object.keys(toSite).length) others.get(site.code)!.own = readSite(site);
+  joinedByCode.clear();
+
+  if (forAll) for (const l of sharedListeners) l(shared, prevShared);
+  notify(sites, prev, true);
+  return cfg();
 }
 
 /** Secrets are masked when sent to the browser; a masked value sent back means "unchanged". */
@@ -284,6 +465,7 @@ export function maskedConfig(c: AppConfig): AppConfig {
 }
 
 export function unmaskPatch<T>(patch: T): T {
+  const current = cfg();
   for (const p of SECRET_PATHS) {
     const [o, last] = holderOf(patch, p);
     if (o && o[last] === MASK) o[last] = holderOf(current, p)[0]?.[last];
