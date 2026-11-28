@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { establishBrowserSession } from './api';
+import { selectedSite } from './site';
 import type { Ev as ServerEv } from '../../../server/events';
 
 /** Realtime event codes. The type check fails if one is missing or differs from server/events.ts. */
@@ -30,6 +31,13 @@ export interface RtMessage<T = unknown> {
   type: number;
   data: T;
   message: string | null;
+  /** The site whose store sent it; null for an event that belongs to no site (every listener gets it). */
+  site: string | null;
+}
+
+/** Whether a listener that follows `want` ('*' = every site) should get an event of `msgSite`. */
+export function eventMatches(msgSite: string | null, want: string): boolean {
+  return msgSite == null || want === '*' || msgSite === want;
 }
 
 type Handler = (m: RtMessage) => void;
@@ -58,7 +66,7 @@ export function connectRealtime() {
   source.onopen = () => {
     retryMs = 3000;
     setConnected(true);
-    if (everOpened) handlers.forEach((h) => h({ type: Ev.Reconnected, data: null, message: null }));
+    if (everOpened) handlers.forEach((h) => h({ type: Ev.Reconnected, data: null, message: null, site: null }));
     everOpened = true;
   };
   source.onerror = () => {
@@ -113,17 +121,22 @@ export function useRealtimeConnected() {
 /**
  * Subscribe to one or more event types for the lifetime of the component.
  * T is the `data` the server sends with those events; like `api.get<T>`, it is not checked at run time.
+ * Only events of the chosen site (or `opts.site`, '*' for every site) and shared events get through.
  */
-export function useEvent<T = unknown>(types: number | number[], handler: (m: RtMessage<T>) => void) {
+export function useEvent<T = unknown>(types: number | number[], handler: (m: RtMessage<T>) => void, opts?: { site?: string }) {
   const ref = useRef(handler);
   useLayoutEffect(() => {
     ref.current = handler;
+  });
+  const siteRef = useRef(opts?.site);
+  useLayoutEffect(() => {
+    siteRef.current = opts?.site;
   });
   const key = Array.isArray(types) ? types.join(',') : String(types);
   useEffect(() => {
     const set = new Set(key.split(',').map(Number));
     const h: Handler = (m) => {
-      if (set.has(m.type)) ref.current(m as RtMessage<T>);
+      if (set.has(m.type) && eventMatches(m.site, siteRef.current ?? selectedSite())) ref.current(m as RtMessage<T>);
     };
     handlers.add(h);
     return () => {

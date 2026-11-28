@@ -1,7 +1,7 @@
 import '../test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { connectRealtime, disconnectRealtime } from './realtime.ts';
+import { connectRealtime, disconnectRealtime, eventMatches } from './realtime.ts';
 
 /** Stands in for the browser's EventSource: records each stream opened. */
 class FakeEventSource {
@@ -58,4 +58,11 @@ test('after logging out, a pending reconnect does nothing', async (t) => {
   t.mock.timers.tick(60_000);
   await settle();
   assert.equal(FakeEventSource.made.length, 1);
+});
+
+test('an event reaches a listener of its own site, of every site, or when it is shared', () => {
+  assert.equal(eventMatches('rphang', 'demo'), false);
+  assert.equal(eventMatches('rphang', '*'), true);
+  assert.equal(eventMatches(null, 'demo'), true);
+  assert.equal(eventMatches('demo', 'demo'), true);
 });

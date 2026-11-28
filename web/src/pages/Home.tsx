@@ -187,8 +187,8 @@ export function HomePage() {
   }, [load, loadSaved]);
   useEvent([Ev.AutoSyncFinished, Ev.FinishScrape, Ev.ManualSyncComplete, Ev.Reconnected], load);
   useEvent([Ev.FinishScrape, Ev.Reconnected], loadSaved);
-  useEvent<Recent>(Ev.NewSearch, (m) => setRecent((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)));
-  useEvent<Recent>(Ev.NewCommentSearch, (m) => setRecentC((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)));
+  useEvent<Recent>(Ev.NewSearch, (m) => setRecent((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)), { site: '*' });
+  useEvent<Recent>(Ev.NewCommentSearch, (m) => setRecentC((r) => [m.data, ...r.filter((x) => x.keyword !== m.data.keyword)].slice(0, 4)), { site: '*' });
 
   const searches = [
     ...recent.map((r) => ({ ...r, kind: 'posts' as const })),

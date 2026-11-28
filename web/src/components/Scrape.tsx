@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { singleFlight } from '../lib/load';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtNum, fmtTime } from '../lib/format';
-import { Donut, Mesh, useUi } from './ui';
+import { ALL, useSites } from '../lib/site';
+import { Dialog, Donut, Mesh, useUi } from './ui';
 
 export const ScrapeStatus = { None: 0, Waiting: 1, Processing: 2, Completed: 3, Failed: 4, NotProcessed: 5 } as const;
 
@@ -54,46 +55,106 @@ export function useStatusLabel() {
     })[s] ?? t('Không rõ', 'Unknown');
 }
 
-/** Creates a sieve job; handles the domain-change warning. Returns the job id. */
+/** Creates a sieve job; tells about an old domain. `opts.site` names the site a bare ID belongs to. Returns the job. */
 export function useCreateScrape() {
   const { t } = useI18n();
   const { toast } = useUi();
   const navigate = useNavigate();
   return useCallback(
-    async (input: string, source: string, opts: { navigate?: boolean; askNavigate?: boolean } = {}) => {
-      const r = await api.post<{ scrape: Scrape; reused: boolean; rerun: boolean; domainWarning: null | { host: string; knownOldDomain: boolean; currentHost: string } }>(
-        '/scrapes/create-scrape',
-        { url: input, source },
-        { quiet: true },
-      );
-      const { scrape, reused, rerun, domainWarning } = r.data;
+    async (input: string, source: string, opts: { navigate?: boolean; askNavigate?: boolean; site?: string } = {}) => {
+      const r = await api.post<{
+        scrape: Scrape;
+        reused: boolean;
+        rerun: boolean;
+        domainWarning: null | { host: string; knownOldDomain: true; currentHost: string };
+        site: { code: string; name: string };
+      }>('/scrapes/create-scrape', { url: input, source }, { quiet: true, site: opts.site });
+      const { scrape, reused, rerun, domainWarning, site } = r.data;
+      const to = `/sang/${scrape.id}?trang=${encodeURIComponent(site.code)}`;
       if (domainWarning) {
         toast(
-          domainWarning.knownOldDomain
-            ? t(
-                `Link dùng tên miền cũ ${domainWarning.host}. Diễn đàn đã chuyển sang ${domainWarning.currentHost}; Glean tự đổi sang tên miền mới.`,
-                `The link uses the old domain ${domainWarning.host}. The forum moved to ${domainWarning.currentHost}; Glean uses the new one.`,
-              )
-            : t(
-                `Link thuộc ${domainWarning.host}, khác nguồn đang cấu hình (${domainWarning.currentHost}). Glean dùng ID bài với nguồn hiện tại.`,
-                `The link belongs to ${domainWarning.host}, not the configured source (${domainWarning.currentHost}). Glean uses the thread ID with the current source.`,
-              ),
+          t(
+            `Link dùng tên miền cũ ${domainWarning.host}. Diễn đàn đã chuyển sang ${domainWarning.currentHost}; Glean tự đổi sang tên miền mới.`,
+            `The link uses the old domain ${domainWarning.host}. The forum moved to ${domainWarning.currentHost}; Glean uses the new one.`,
+          ),
         );
       }
-      if (opts.navigate) navigate(`/sang/${scrape.id}`);
+      if (opts.navigate) navigate(to);
       else if (opts.askNavigate)
         toast(
           rerun
             ? t('Bài này đã sàng trước đây. Glean sàng lại vào lượt cũ, giữ những gì đã lưu.', 'This thread was sieved before. Glean sieves it again into the same job, keeping what it saved.')
             : reused
               ? t('Bài này đã có trong hàng đợi.', 'This thread is already queued.')
-              : t('Đã đưa bài vào hàng đợi sàng.', 'Thread added to the sieve queue.'),
+              : t(`Đã đưa bài vào hàng đợi sàng của ${site.name}`, `Thread added to the sieve queue of ${site.name}`),
           'info',
-          { label: t('Xem tiến trình', 'View progress'), run: () => navigate(`/sang/${scrape.id}`) },
+          { label: t('Xem tiến trình', 'View progress'), run: () => navigate(to) },
         );
       return scrape;
     },
     [navigate, t, toast],
+  );
+}
+
+/* ---------------- asking which site a bare thread ID is on ---------------- */
+
+interface SiteAsk {
+  reason: string;
+  resolve: (code: string | null) => void;
+}
+let pendingAsk: SiteAsk | null = null;
+const askListeners = new Set<() => void>();
+const setAsk = (a: SiteAsk | null) => {
+  pendingAsk = a;
+  askListeners.forEach((l) => l());
+};
+
+/** Opens the "which site?" dialog; resolves with the chosen site's code, or null when cancelled. */
+export function useAskSite(): (reason: string) => Promise<string | null> {
+  return useCallback(
+    (reason: string) =>
+      new Promise<string | null>((resolve) => {
+        pendingAsk?.resolve(null);
+        setAsk({ reason, resolve });
+      }),
+    [],
+  );
+}
+
+/** The dialog `useAskSite` opens; mounted once, in the Shell. */
+export function SiteAskHost() {
+  const { t } = useI18n();
+  const { sites } = useSites();
+  const ask = useSyncExternalStore(
+    (l) => {
+      askListeners.add(l);
+      return () => {
+        askListeners.delete(l);
+      };
+    },
+    () => pendingAsk,
+  );
+  if (!ask) return null;
+  const close = (code: string | null) => {
+    ask.resolve(code);
+    setAsk(null);
+  };
+  return (
+    <Dialog title={t('Bài này thuộc trang nào?', 'Which site is this thread on?')} onClose={() => close(null)}>
+      <p className="muted" style={{ margin: 0 }}>
+        {ask.reason}
+      </p>
+      <div className="dialog-actions">
+        <button className="btn btn-ghost" onClick={() => close(null)}>
+          {t('Hủy', 'Cancel')}
+        </button>
+        {sites.map((s, i) => (
+          <button key={s.code} className="btn btn-primary" onClick={() => close(s.code)} autoFocus={i === 0}>
+            {s.name}
+          </button>
+        ))}
+      </div>
+    </Dialog>
   );
 }
 
@@ -210,6 +271,8 @@ export function NowSieving({ s, lp }: { s: Scrape; lp?: LiveProgress }) {
 export function SieveForm({ autoFocus }: { autoFocus?: boolean }) {
   const { t } = useI18n();
   const create = useCreateScrape();
+  const askSite = useAskSite();
+  const { selected } = useSites();
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -219,7 +282,13 @@ export function SieveForm({ autoFocus }: { autoFocus?: boolean }) {
     setBusy(true);
     setError('');
     try {
-      await create(value, 'direct', { askNavigate: true });
+      let site: string | undefined;
+      if (selected === ALL && /^\d+$/.test(value.trim())) {
+        const code = await askSite(t('Số ID cần biết bài thuộc trang nào.', 'A bare ID needs to know which site the thread is on.'));
+        if (!code) return;
+        site = code;
+      }
+      await create(value, 'direct', { askNavigate: true, site });
       setValue('');
     } catch (err) {
       setError((err as ApiErr).message);

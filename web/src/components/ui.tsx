@@ -3,6 +3,7 @@ import { ApiErr, api, setErrorSinks } from '../lib/api';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
 import { fmtNum, highlight } from '../lib/format';
+import { ALL, selectedSite } from '../lib/site';
 
 /* ---------------- toasts ---------------- */
 
@@ -24,6 +25,8 @@ interface UiCtx {
   confirmExternal: (url: string) => void;
   maintenance: Maintenance | null;
   refreshMaintenance: () => void;
+  /** Under the every-site view no single site's pause flags apply. */
+  clearMaintenance: () => void;
 }
 
 const Ctx = createContext<UiCtx | null>(null);
@@ -85,6 +88,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
+  const clearMaintenance = useCallback(() => setMaintenance(null), []);
+
   useEffect(() => {
     setErrorSinks(
       (e: ApiErr) => toast(e.message, 'error'),
@@ -99,7 +104,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
   useEvent<{ message: string }>(Ev.SystemNotification, (m) => toast(m.message ?? m.data?.message ?? ''));
   useEvent(Ev.NeedReload, () => setNeedReload(true));
-  useEvent<{ maintenance: Maintenance }>(Ev.ConfigReloaded, (m) => m.data?.maintenance && setMaintenance(m.data.maintenance));
+  useEvent<{ maintenance: Maintenance }>(Ev.ConfigReloaded, (m) => m.data?.maintenance && selectedSite() !== ALL && setMaintenance(m.data.maintenance));
   useEvent(Ev.Hello, () => {
     if (bootVersion.current && serverVersion && serverVersion !== bootVersion.current) setNeedReload(true);
   });
@@ -118,7 +123,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ toast, confirmExternal: setExternal, maintenance, refreshMaintenance }}>
+    <Ctx.Provider value={{ toast, confirmExternal: setExternal, maintenance, refreshMaintenance, clearMaintenance }}>
       {needReload && (
         <div className="banner banner-straw" role="status">
           {t('Đã có phiên bản mới của Glean.', 'A new version of Glean is available.')}

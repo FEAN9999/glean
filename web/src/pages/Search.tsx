@@ -118,6 +118,7 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
   }, [scope, byAuthor]);
   useEvent<HistoryItem>(historyEvent(scope, byAuthor), (m) =>
     setItems((xs) => [m.data, ...xs.filter((x) => x.id !== m.data.id && x.keyword.toLowerCase() !== m.data.keyword.toLowerCase())]),
+    { site: '*' },
   );
 
   const clear = async () => {

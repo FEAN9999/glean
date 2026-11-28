@@ -7,7 +7,7 @@ import { useI18n } from '../lib/i18n';
 import { ALL, SitePicker, selectedSite, useSites } from '../lib/site';
 import { Ev, useEvent, useRealtimeConnected } from '../lib/realtime';
 import { isLinkLike, parseThreadInput } from '../lib/format';
-import { useCreateScrape } from './Scrape';
+import { SiteAskHost, useAskSite, useCreateScrape } from './Scrape';
 import { Icon, Mark, type IconName } from './Icons';
 import { Empty, useUi } from './ui';
 
@@ -89,6 +89,8 @@ function Omnibox({ narrow }: { narrow: boolean }) {
   const loc = useLocation();
   const [params] = useSearchParams();
   const create = useCreateScrape();
+  const askSite = useAskSite();
+  const { selected } = useSites();
   const onSearch = SEARCH_ROUTE.test(loc.pathname);
   // Mirror the query of the search page; start empty everywhere else.
   const routeQuery = onSearch ? (params.get('q') ?? '') : '';
@@ -115,7 +117,13 @@ function Omnibox({ narrow }: { narrow: boolean }) {
     if (asLink) {
       setBusy(true);
       try {
-        await create(v, 'home', { navigate: true });
+        let site: string | undefined;
+        if (selected === ALL && /^\d+$/.test(v)) {
+          const code = await askSite(t('Số ID cần biết bài thuộc trang nào.', 'A bare ID needs to know which site the thread is on.'));
+          if (!code) return;
+          site = code;
+        }
+        await create(v, 'home', { navigate: true, site });
       } catch (err) {
         setError((err as ApiErr).message);
       } finally {
@@ -202,15 +210,17 @@ export function Shell({ children }: { children: ReactNode }) {
   const { sites, selected, reload } = useSites();
   const [sitesFailed, setSitesFailed] = useState(false);
   const ready = sites.length > 0;
-  const { refreshMaintenance } = useUi();
+  const { refreshMaintenance, clearMaintenance } = useUi();
 
   useEffect(() => {
     reload().catch(() => setSitesFailed(true));
   }, [reload]);
-  // The pause flags belong to a site.
+  // The pause flags belong to a site; the merged view has none (the server checks each target site).
   useEffect(() => {
-    if (ready && selected !== ALL) refreshMaintenance();
-  }, [ready, selected, refreshMaintenance]);
+    if (!ready) return;
+    if (selected === ALL) clearMaintenance();
+    else refreshMaintenance();
+  }, [ready, selected, refreshMaintenance, clearMaintenance]);
 
   // Single-flight: a bulk re-sieve sends one NewScrape per job. The queue is one site's.
   const loadQueue = useMemo(
@@ -320,6 +330,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <SitePicker />
           </div>
           <Omnibox narrow={narrow} />
+          <SiteAskHost />
           <span className="topbar-spacer" />
           <button className="theme-btn" onClick={() => setTheme(dark ? 'light' : 'dark')}>
             {dark ? t('Giao diện sáng', 'Light theme') : t('Giao diện tối', 'Dark theme')}
