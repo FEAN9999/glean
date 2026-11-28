@@ -332,6 +332,15 @@ export function commentSyncStartPage(o: { syncedCount: number; perPage: number; 
   return Math.max(1, Math.min(forward, o.storedMaxPage - o.recheckPages + 1));
 }
 
+/**
+ * The page of the thread's last stored comment, 0 with none. It reads one row through the
+ * (thread_id, post_no) index: MAX(page) had to read every comment of the thread, which on a
+ * thread with tens of thousands of comments held up the server for seconds on each sync.
+ */
+export function storedLastPage(threadId: number): number {
+  return get<{ page: number }>('SELECT page FROM comment WHERE thread_id=? ORDER BY post_no DESC LIMIT 1', threadId)?.page ?? 0;
+}
+
 const SKIP_REASON: Record<Exclude<ReconcileSkip, null>, Bi> = {
   'empty-page': ['có trang trả về không có bài nào', 'a page came back with no posts'],
   'missing-id': ['có bài không đọc được ID', 'a post had no readable ID'],
@@ -348,7 +357,7 @@ export async function syncThreadComments(threadId: number, maxPages: number, ctx
   if (!t) return out;
   const fetchPage = ctx.fetchPage ?? fetchThreadPage;
   const per = cfg().source.postsPerPage;
-  const storedMaxPage = get<{ p: number | null }>('SELECT MAX(page) p FROM comment WHERE thread_id=?', threadId)!.p ?? 0;
+  const storedMaxPage = storedLastPage(threadId);
   const start = ctx.fromFirstPage
     ? 1
     : commentSyncStartPage({

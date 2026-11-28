@@ -16,6 +16,7 @@ import {
   syncPostsForum,
   syncThreadComments,
   syncTimersForTests,
+  storedLastPage,
   threadsNeedingComments,
   upsertComments,
   upsertThread,
@@ -63,6 +64,15 @@ function addThread(id: number, forumId: number, o: { commentCount: number; synce
     '2026-11-01T00:00:00.000Z',
   );
 }
+
+test('storedLastPage is the page of the thread\'s last stored comment, 0 with none', () => {
+  assert.equal(storedLastPage(9401), 0);
+  upsertComments(9401, 1, [post(94001), post(94002)]);
+  upsertComments(9401, 3, [post(94005)]);
+  upsertComments(9401, 2, [post(94003), post(94004)]);
+  upsertComments(9402, 7, [post(94010)]);
+  assert.equal(storedLastPage(9401), 3);
+});
 
 test('commentSyncStartPage', () => {
   assert.equal(commentSyncStartPage({ syncedCount: 45, perPage: 20, storedMaxPage: 3, recheckPages: 2 }), 2);
