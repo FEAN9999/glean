@@ -589,7 +589,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       </span>
                       {!!c.threadIsDeleted && <span style={{ color: 'var(--bad-ink)' }}>{t('bài đã bị xóa', 'thread deleted')}</span>}
                     </span>
-                    <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} />
+                    <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} site={c.site.code} />
                     <span className="row-actions" style={{ paddingTop: 2 }}>
                       <ExternalLink href={c.url} className="link-btn">
                         {t('Xem bình luận', 'View comment')}
