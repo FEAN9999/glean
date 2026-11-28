@@ -83,8 +83,8 @@ export function highlight(text: string, q: string): { s: string; hit: boolean }[
 export function parseThreadInput(input: string): number | null {
   const s = input.trim();
   if (/^\d+$/.test(s)) return Number(s);
-  const m = s.match(/\/threads\/(?:[^/?#]*\.)?(\d+)(?:[/?#]|$)/);
+  const m = s.match(/\/(?:threads|t)\/(?:[^/?#]*\.)?(\d+)(?:[/?#]|$)/);
   return m ? Number(m[1]) : null;
 }
 
-export const isLinkLike = (s: string) => /^https?:\/\//i.test(s.trim()) || /\/threads\//.test(s);
+export const isLinkLike = (s: string) => /^https?:\/\//i.test(s.trim()) || /\/(?:threads|t)\//.test(s);

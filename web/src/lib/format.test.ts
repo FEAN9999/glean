@@ -1,7 +1,7 @@
 import '../test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmtDuration, highlight, parseThreadInput } from './format.ts';
+import { fmtDuration, highlight, isLinkLike, parseThreadInput } from './format.ts';
 
 const hits = (text: string, q: string) =>
   highlight(text, q)
@@ -48,4 +48,9 @@ test('fmtDuration speaks the app language', () => {
     if (before) Object.defineProperty(globalThis, 'localStorage', before);
     else delete (globalThis as { localStorage?: unknown }).localStorage;
   }
+});
+
+test('thread input and link detection accept /t/ links', () => {
+  assert.equal(parseThreadInput('https://rphang.land/t/a.123/'), 123);
+  assert.equal(isLinkLike('rphang.land/t/a.1/'), true);
 });

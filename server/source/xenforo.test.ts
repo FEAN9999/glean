@@ -2,7 +2,7 @@ import '../test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config.ts';
-import { parseForumHtml, parseThreadHtml } from './xenforo.ts';
+import { parseForumHtml, parseThreadHtml, parseThreadRef } from './xenforo.ts';
 
 loadConfig(0);
 
@@ -111,4 +111,27 @@ test('parseForumHtml reads views from the second meta pair', () => {
       [2, 7, 0],
     ],
   );
+});
+
+test('parseThreadRef reads /t/ links', () => {
+  assert.equal(parseThreadRef('https://rphang.land/t/chao-ae.200791/')?.threadId, 200791);
+  assert.equal(parseThreadRef('/t/abc.5/page-2')?.threadId, 5);
+});
+
+test('forum list and breadcrumbs accept /box/', () => {
+  const list = `<div class="structItem structItem--thread"><div class="structItem-title"><a href="/t/bai-a.77/">Bài A</a></div></div>`;
+  assert.equal(parseForumHtml(list, 'https://rphang.land/box/hang.127/').threads[0].id, 77);
+  const html = `<div class="p-breadcrumbs"><a href="/box/hang.127/">Hàng</a></div><h1 class="p-title-value">T</h1>${article(5)}`;
+  assert.equal(parseThreadHtml(html, 'https://rphang.land/t/a.1/', 1).forumId, 127);
+});
+
+test('an empty data-url falls back to src', () => {
+  const html = `<h1 class="p-title-value">T</h1>${article(5, '', '<img class="bbImage" data-url="" src="https://rphang.land/attachments/a-jpeg.1/">')}`;
+  const r = parseThreadHtml(html, 'https://rphang.land/t/a.1/', 1);
+  assert.deepEqual(r.posts[0].images, ['https://rphang.land/attachments/a-jpeg.1/']);
+});
+
+test('internal /t/ and /box/ links are not counted as links', () => {
+  const html = `<h1 class="p-title-value">T</h1>${article(5, '', '<a href="https://rphang.land/t/khac.9/">x</a>')}`;
+  assert.equal(parseThreadHtml(html, 'https://rphang.land/t/a.1/', 1).posts[0].links.length, 0);
 });

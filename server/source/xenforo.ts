@@ -43,6 +43,9 @@ export interface ParsedThreadPage {
 
 const base = () => cfg().source.baseUrl.replace(/\/+$/, '');
 
+/** First value that is neither missing nor blank (an empty data-url must not hide src). */
+const firstNonEmpty = (...vals: (string | undefined)[]) => vals.find((v) => v?.trim());
+
 export const forumUrl = (forumId: number, page = 1) => `${base()}/forums/${forumId}/${page > 1 ? `page-${page}` : ''}`;
 export const threadUrl = (threadId: number, page = 1) => `${base()}/threads/${threadId}/${page > 1 ? `page-${page}` : ''}`;
 
@@ -58,7 +61,7 @@ export interface ThreadRef {
 export function parseThreadRef(input: string): ThreadRef | null {
   const s = input.trim();
   if (/^\d+$/.test(s)) return { threadId: Number(s), foreignHost: null, knownOldDomain: false };
-  const m = s.match(/\/threads\/(?:[^/?#]*\.)?(\d+)(?:[/?#]|$)/);
+  const m = s.match(/\/(?:threads|t)\/(?:[^/?#]*\.)?(\d+)(?:[/?#]|$)/);
   if (!m) return null;
   let foreignHost: string | null = null;
   let knownOldDomain = false;
@@ -134,7 +137,7 @@ export async function fetchForumIndex(baseUrl = base()): Promise<ForumNode[]> {
   const $ = cheerio.load(res.text);
   const out = new Map<number, ForumNode>();
   const add = (href: string | undefined, name: string, group: string | null, depth: number) => {
-    const m = href?.match(/\/forums\/(?:[^/]*\.)?(\d+)\/?/);
+    const m = href?.match(/\/(?:forums|box)\/(?:[^/]*\.)?(\d+)\/?/);
     if (!m || !name.trim()) return;
     const id = Number(m[1]);
     if (!out.has(id)) out.set(id, { id, name: name.trim(), group, depth });
@@ -148,12 +151,12 @@ export async function fetchForumIndex(baseUrl = base()): Promise<ForumNode[]> {
         const a = $(node).find('.node-title a').first();
         add(a.attr('href'), a.text(), group, 0);
         $(node)
-          .find('a.subNodeLink--forum, .node-subNodeFlatList a[href*="/forums/"]')
+          .find('a.subNodeLink--forum, a.subNodeLink[href*="/box/"], .node-subNodeFlatList a[href*="/forums/"], .node-subNodeFlatList a[href*="/box/"]')
           .each((___, sub) => add($(sub).attr('href'), $(sub).text(), a.text().trim(), 1));
       });
   });
   // Fallback for skins without category blocks.
-  if (!out.size) $('.node-title a[href*="/forums/"]').each((_, a) => add($(a).attr('href'), $(a).text(), null, 0));
+  if (!out.size) $('.node-title a[href*="/forums/"], .node-title a[href*="/box/"]').each((_, a) => add($(a).attr('href'), $(a).text(), null, 0));
   return [...out.values()];
 }
 
@@ -183,7 +186,7 @@ export function parseForumHtml(html: string, url: string) {
   const threads: ListedThread[] = [];
   $('.structItem--thread').each((_, el) => {
     const item = $(el);
-    const a = item.find('.structItem-title a[href*="/threads/"]').last();
+    const a = item.find('.structItem-title a[href*="/threads/"], .structItem-title a[href*="/t/"]').last();
     const href = abs(a.attr('href'), url);
     const ref = href ? parseThreadRef(href) : null;
     if (!ref) return;
@@ -231,8 +234,8 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
   const h1 = $('h1.p-title-value').first().clone();
   h1.find('.label, .labelLink, .label-append').remove();
   const title = h1.text().replace(/\s+/g, ' ').trim() || $('title').text().split('|')[0].trim();
-  const forumHref = $('.p-breadcrumbs a[href*="/forums/"]').last().attr('href') ?? '';
-  const fm = forumHref.match(/\/forums\/(?:[^/]*\.)?(\d+)/);
+  const forumHref = $('.p-breadcrumbs a[href*="/forums/"], .p-breadcrumbs a[href*="/box/"]').last().attr('href') ?? '';
+  const fm = forumHref.match(/\/(?:forums|box)\/(?:[^/]*\.)?(\d+)/);
   const ignored = cfg().scraper.ignoredDomains.map((d) => d.toLowerCase());
   const isIgnored = (u: string) => {
     try {
@@ -259,7 +262,7 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
       // Link-preview cards: keep the preview picture (often the shared photo itself),
       // drop the site favicon and generic site logos.
       if ($img.closest('.bbCodeBlock--unfurl').length && !$img.hasClass('bbCodeBlockUnfurl-image')) return;
-      const u = abs($img.attr('data-url') ?? $img.attr('data-src') ?? $img.attr('src'), pageUrl);
+      const u = abs(firstNonEmpty($img.attr('data-url'), $img.attr('data-src'), $img.attr('src')), pageUrl);
       if (u && $img.hasClass('bbCodeBlockUnfurl-image') && /favicon|apple-touch-icon|\/logo/i.test(u)) return;
       if (u && !isIgnored(u)) images.add(u);
     });
@@ -300,7 +303,7 @@ export function parseThreadHtml(html: string, pageUrl: string, page: number): Pa
       if (!u || seenLinks.has(u) || images.has(u) || videos.has(u)) return;
       // Cloudflare e-mail obfuscation and similar infrastructure links are not content
       if (new URL(u).pathname.startsWith('/cdn-cgi/')) return;
-      if (/\/(threads|members|posts|goto)\//.test(new URL(u).pathname) && !$a.hasClass('link--external')) return;
+      if (/\/(threads|t|box|forums|members|posts|goto)\//.test(new URL(u).pathname) && !$a.hasClass('link--external')) return;
       if (!/^https?:/.test(u) || isIgnored(u)) return;
       seenLinks.add(u);
       links.push({ url: u, text: $a.text().trim().slice(0, 300) });
