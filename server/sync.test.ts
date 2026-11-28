@@ -199,7 +199,7 @@ test('the manual sync log is written in both languages', async () => {
   assert.equal(r.json().data.logs.at(-1).line, JSON.stringify({ vi: 'Hoàn tất: 0 bản ghi.', en: 'Done: 0 records.' }));
 });
 
-test('posts sync stops after 3 failed pages in a row', async () => {
+test('an auto posts sync stops after 3 failed pages in a row', async () => {
   updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
   try {
     let calls = 0;
@@ -208,9 +208,77 @@ test('posts sync stops after 3 failed pages in a row', async () => {
       if (page >= 2) throw new Error('forum down');
       return { threads: [listed(3100 + page)], totalPages: 10 };
     };
-    await assert.rejects(syncPostsForum({ id: 31, name: 'F31' }, 1, 'all', { trigger: 'manual', shouldStop: () => false, fetchListPage }), /forum down/);
+    await assert.rejects(syncPostsForum({ id: 31, name: 'F31' }, 1, 'all', { trigger: 'auto', shouldStop: () => false, fetchListPage }), /forum down/);
     assert.equal(calls, 4);
     assert.ok(get('SELECT id FROM thread WHERE id=3101'), 'the page read before the failures is kept');
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
+  }
+});
+
+test('a manual posts sync waits for the forum to come back after 3 failed pages in a row', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
+  try {
+    let calls = 0;
+    const lines: string[] = [];
+    const fetchListPage = async (_forum: number, page: number) => {
+      calls++;
+      // pages 2–4 fail, then two more tries of page 4 while the run waits, then the forum is back
+      if (page >= 2 && calls <= 6) throw new Error('forum down');
+      return { threads: [listed(3800 + page)], totalPages: 5 };
+    };
+    const n = await syncPostsForum({ id: 38, name: 'F38' }, 1, 'all', {
+      trigger: 'manual',
+      shouldStop: () => false,
+      fetchListPage,
+      outageWaitMs: 0,
+      log: (l) => lines.push(l[0]),
+    });
+    assert.deepEqual(all<{ id: number }>('SELECT id FROM thread WHERE forum_id=38 ORDER BY id').map((r) => r.id), [3801, 3804, 3805]);
+    assert.equal(n, 3);
+    assert.equal(lines.filter((l) => /chờ .* thử lại/.test(l)).length, 3, lines.join('\n'));
+    assert.ok(lines.some((l) => /phản hồi lại/.test(l)), lines.join('\n'));
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
+  }
+});
+
+test('a manual posts sync gives up when the forum stays down', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
+  try {
+    let calls = 0;
+    const fetchListPage = async (_forum: number, page: number) => {
+      calls++;
+      if (page >= 2) throw new Error('forum down');
+      return { threads: [listed(3900 + page)], totalPages: 10 };
+    };
+    await assert.rejects(syncPostsForum({ id: 39, name: 'F39' }, 1, 'all', { trigger: 'manual', shouldStop: () => false, fetchListPage, outageWaitMs: 0 }), /forum down/);
+    assert.equal(calls, 4 + 15);
+  } finally {
+    updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
+  }
+});
+
+test('stopping a manual sync while it waits for the forum ends the run without an error', async () => {
+  updateConfig({ scraper: { batchDelayMs: 0 } }, 0);
+  try {
+    let stop = false;
+    const fetchListPage = async (_forum: number, page: number) => {
+      if (page >= 2) throw new Error('forum down');
+      return { threads: [listed(4000 + page)], totalPages: 10 };
+    };
+    const started = Date.now();
+    const n = await syncPostsForum({ id: 40, name: 'F40' }, 1, 'all', {
+      trigger: 'manual',
+      shouldStop: () => stop,
+      fetchListPage,
+      outageWaitMs: 60_000,
+      log: (l) => {
+        if (/chờ .* thử lại/.test(l[0])) stop = true;
+      },
+    });
+    assert.equal(n, 1);
+    assert.ok(Date.now() - started < 5000, 'the wait ends soon after the stop');
   } finally {
     updateConfig({ scraper: { batchDelayMs: 150 } }, 0);
   }
@@ -288,8 +356,41 @@ test('parallel comments sync stops taking threads once failures pile up', async 
       await new Promise((r) => setTimeout(r, 5));
       throw new Error('forum down');
     };
-    await assert.rejects(syncCommentsForum({ id: 34, name: 'F34' }, ids, 5, { trigger: 'manual', shouldStop: () => false, fetchPage }), /forum down/);
+    await assert.rejects(syncCommentsForum({ id: 34, name: 'F34' }, ids, 5, { trigger: 'auto', shouldStop: () => false, fetchPage }), /forum down/);
     assert.ok(calls <= 4, `stopped early, made ${calls} calls`);
+  } finally {
+    updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
+  }
+});
+
+test('parallel manual comments sync waits out a short outage with one thread at a time, then reads every thread', async () => {
+  updateConfig({ source: { postsPerPage: 2 }, scraper: { batchDelayMs: 0 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
+  try {
+    const ids = Array.from({ length: 12 }, (_, i) => 9500 + i);
+    for (const id of ids) addThread(id, 41, { commentCount: 0, synced: 0, lastPostAt: '2026-11-13T00:00:00.000Z' });
+    let calls = 0;
+    const lines: string[] = [];
+    const fetchPage = async (id: number): Promise<ParsedThreadPage> => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 5));
+      // the forum is down for the first 8 requests (several workers fail together), then back
+      if (calls <= 8) throw new Error('forum down');
+      return { title: `Chủ đề ${id}`, forumId: 41, totalPages: 1, posts: [post(10000 + id)] };
+    };
+    const n = await syncCommentsForum({ id: 41, name: 'F41' }, ids, 5, {
+      trigger: 'manual',
+      shouldStop: () => false,
+      fetchPage,
+      outageWaitMs: 0,
+      log: (l) => lines.push(l[0]),
+    });
+    // threads skipped before the run noticed the outage stay for the next run
+    const skipped = lines.filter((l) => /Bỏ qua, chạy tiếp/.test(l)).length;
+    assert.equal(n, ids.length - skipped);
+    assert.ok(skipped < 3, lines.join('\n'));
+    // only the thread that noticed the outage keeps asking the forum; the others wait for it
+    assert.ok(calls <= ids.length + 8, `made ${calls} calls`);
+    assert.ok(lines.some((l) => /phản hồi lại/.test(l)), lines.join('\n'));
   } finally {
     updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 }, sync: { comments: { concurrentThreads: 3 } } }, 0);
   }

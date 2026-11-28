@@ -169,30 +169,97 @@ export interface RunCtx {
   fetchListPage?: typeof fetchForumPage;
   /** Comments: read every page from page 1, e.g. to fill in like counts of an older archive. */
   fromFirstPage?: boolean;
+  /** Manual runs: pause between tries while the forum looks down (tests pass a short one). */
+  outageWaitMs?: number;
 }
 
 /** Failed pages (or threads) in a row before a run gives up: the forum is then likely down, not just slow. */
 const MAX_FAILURES_IN_A_ROW = 3;
+/** A manual run then waits and tries again this many times (about 15 minutes) before it gives up. */
+const OUTAGE_TRIES = 15;
+const OUTAGE_WAIT_MS = 60_000;
+
+/** Sleeps, but wakes early when the run is asked to stop. */
+async function pauseUnlessStopped(ms: number, ctx: RunCtx) {
+  const until = Date.now() + ms;
+  while (Date.now() < until && !ctx.shouldStop()) await sleep(Math.min(1000, until - Date.now()));
+}
 
 /**
  * Lets a long run step over a page that still fails after fetch retries, instead of losing the
- * whole run to it. Several failures in a row rethrow the last one.
+ * whole run to it. Several failures in a row mean the forum is likely down: an auto run rethrows
+ * the last one (the next run comes soon anyway); a manual run waits for the forum to answer again,
+ * with one step asking while the others wait, and rethrows only when it stays down.
  */
 function skipper(ctx: RunCtx) {
   let inRow = 0;
   const skipped: Bi[] = [];
-  return {
-    async run<T>(label: Bi, step: () => Promise<T>): Promise<T | undefined> {
+  /** While the forum looks down: resolves true once it answers again, false when the run gives up. */
+  let outage: Promise<boolean> | null = null;
+
+  async function waitForForum<T>(label: Bi, step: () => Promise<T>, e: unknown): Promise<T | undefined> {
+    const wait = ctx.outageWaitMs ?? OUTAGE_WAIT_MS;
+    const secs = Math.round(wait / 1000);
+    for (let i = 1; i <= OUTAGE_TRIES; i++) {
+      const [vi, en] = biOf(e);
+      ctx.log?.([
+        `Diễn đàn không phản hồi (${vi}) — chờ ${secs} giây rồi thử lại ${label[0]} (lần ${i}/${OUTAGE_TRIES}).`,
+        `The forum is not answering (${en}). Waiting ${secs} s, then trying ${label[1]} again (try ${i}/${OUTAGE_TRIES}).`,
+      ]);
+      await pauseUnlessStopped(wait, ctx);
+      if (ctx.shouldStop()) {
+        skipped.push(label);
+        return undefined;
+      }
       try {
         const v = await step();
-        inRow = 0;
+        ctx.log?.(['Diễn đàn đã phản hồi lại — chạy tiếp.', 'The forum is answering again. The run goes on.']);
         return v;
-      } catch (e) {
-        if (++inRow >= MAX_FAILURES_IN_A_ROW) throw e;
-        skipped.push(label);
-        const [vi, en] = biOf(e);
-        ctx.log?.([`${label[0]}: lỗi — ${vi}. Bỏ qua, chạy tiếp.`, `${label[1]}: error: ${en}. Skipped, the run goes on.`]);
-        return undefined;
+      } catch (next) {
+        e = next;
+      }
+    }
+    throw e;
+  }
+
+  return {
+    async run<T>(label: Bi, step: () => Promise<T>): Promise<T | undefined> {
+      for (;;) {
+        try {
+          const v = await step();
+          inRow = 0;
+          return v;
+        } catch (e) {
+          // Another step is already waiting for the forum: wait for it, then try this one again.
+          if (outage) {
+            if (!(await outage)) throw e;
+            if (ctx.shouldStop()) {
+              skipped.push(label);
+              return undefined;
+            }
+            continue;
+          }
+          if (++inRow >= MAX_FAILURES_IN_A_ROW) {
+            if (ctx.trigger !== 'manual') throw e;
+            let answered!: (back: boolean) => void;
+            outage = new Promise((r) => (answered = r));
+            try {
+              const v = await waitForForum(label, step, e);
+              inRow = 0;
+              answered(true);
+              return v;
+            } catch (last) {
+              answered(false);
+              throw last;
+            } finally {
+              outage = null;
+            }
+          }
+          skipped.push(label);
+          const [vi, en] = biOf(e);
+          ctx.log?.([`${label[0]}: lỗi — ${vi}. Bỏ qua, chạy tiếp.`, `${label[1]}: error: ${en}. Skipped, the run goes on.`]);
+          return undefined;
+        }
       }
     },
     /** For the sync log: which steps were skipped, so they can be run again. */
