@@ -2456,9 +2456,13 @@ a.result-title:hover {
     padding: 0 18px;
     gap: 8px;
   }
-  /* the search box grows to the avatar by itself here; the spacer would only take a gap from it */
+  /* the spacer would take a gap from the search box; the avatar's auto margin keeps it at the right
+     edge once the search box reaches its max width (a short site name on a wider screen) */
   .topbar-spacer {
     display: none;
+  }
+  .me {
+    margin-left: auto;
   }
   .omni input {
     padding: 0 12px;
