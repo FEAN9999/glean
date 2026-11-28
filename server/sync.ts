@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { all, get, run, now, tx, camelAll, camel } from './db.ts';
-import { cfg, onConfigChange } from './config.ts';
+import { cfg, forgetSiteConfig, onConfigChange } from './config.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError, intParam, ok } from './http.ts';
 import { fetchForumPage, fetchThreadPage, ThreadGoneError, type ListedThread, type ParsedPost } from './source/xenforo.ts';
@@ -9,6 +9,7 @@ import { telegram } from './notify.ts';
 import { pool, sleep } from './net.ts';
 import { normalizeText, reconcileDeletions, type ReconcileSkip } from './archive.ts';
 import { biOf, pack, type Bi } from './bilingual.ts';
+import { currentSite, onSiteAdded, onSiteRemoved, siteByCode, sites, withSite } from './site.ts';
 
 type SyncType = 'posts' | 'comments';
 
@@ -478,17 +479,62 @@ export function threadsNeedingComments(forumId: number, limit: number, at = new 
 
 /* ---------------- auto sync scheduler ---------------- */
 
-const autoRunning: Record<SyncType, boolean> = { posts: false, comments: false };
-const timers: Partial<Record<SyncType, NodeJS.Timeout>> = {};
-const lastAuto: Record<SyncType, { at: string | null; error: string | null }> = {
-  posts: { at: null, error: null },
-  comments: { at: null, error: null },
-};
+const idleState = () => ({
+  autoRunning: { posts: false, comments: false } as Record<SyncType, boolean>,
+  timers: {} as Partial<Record<SyncType, NodeJS.Timeout>>,
+  lastAuto: {
+    posts: { at: null, error: null },
+    comments: { at: null, error: null },
+  } as Record<SyncType, { at: string | null; error: string | null }>,
+  manual: {
+    running: false,
+    stopRequested: false,
+    type: 'posts' as SyncType,
+    options: null as ManualOptions | null,
+    forum: null as number | null,
+    forumName: '',
+    currentPage: 0,
+    totalPages: 0,
+    totalSynced: 0,
+    saving: 0,
+    startedAt: null as string | null,
+    finishedAt: null as string | null,
+    result: null as null | 'completed' | 'stopped' | 'failed',
+    error: null as string | null,
+    logs: [] as { at: string; line: string }[],
+  },
+  /** When the manual run's progress was last sent. */
+  lastEmit: 0,
+});
+
+/** Each site's sync state, by site code: its auto runs and timers, and its one manual run. */
+const states = new Map<string, ReturnType<typeof idleState>>();
+let readForum = fetchForumPage;
+
+function syncState(code = currentSite().code) {
+  let st = states.get(code);
+  if (!st) states.set(code, (st = idleState()));
+  return st;
+}
+
+/** False once the current site was removed: a run still going ends, but nothing new starts for it. */
+const siteLive = () => siteByCode(currentSite().code) !== undefined;
+
+/** Tests only: the forum list reader of auto and manual syncs. */
+export function setForumReader(fn: typeof fetchForumPage): void {
+  readForum = fn;
+}
+
+/** Tests only: the sync types a site has a timer set for. */
+export function syncTimersForTests(code: string): SyncType[] {
+  return Object.keys(states.get(code)?.timers ?? {}) as SyncType[];
+}
 
 export async function runAutoSync(type: SyncType) {
+  const { autoRunning, lastAuto, manual } = syncState();
   if (autoRunning[type] || (manual.running && manual.type === type)) return;
   autoRunning[type] = true;
-  const ctx: RunCtx = { trigger: 'auto', shouldStop: () => false, batchSize: 50 };
+  const ctx: RunCtx = { trigger: 'auto', shouldStop: () => false, batchSize: 50, fetchListPage: readForum };
   let total = 0;
   try {
     for (const f of cfg().source.forums) {
@@ -509,11 +555,17 @@ export async function runAutoSync(type: SyncType) {
     if (cfg().telegram.notifySyncFailed) void telegram(`Glean: đồng bộ tự động (${type}) lỗi — ${error[0]}`);
   } finally {
     autoRunning[type] = false;
+    // The run read its settings again; those of a removed site are not kept.
+    if (!siteLive()) forgetSiteConfig(currentSite().code);
   }
 }
 
-function schedule(type: SyncType) {
+/** Sets the timer of the current site; the timer keeps the site, so its runs are that site's. */
+export function schedule(type: SyncType) {
+  const { timers } = syncState();
   clearTimeout(timers[type]);
+  delete timers[type];
+  if (!siteLive()) return;
   const c = cfg().sync[type];
   if (!c.enabled) return;
   timers[type] = setTimeout(async () => {
@@ -523,19 +575,37 @@ function schedule(type: SyncType) {
   timers[type]!.unref?.();
 }
 
-export function initAutoSync() {
-  // first pass shortly after boot so a fresh install has data to search
+function startAutoSync() {
+  // first pass shortly after boot (or after the site is added) so a fresh site has data to search
   setTimeout(async () => {
-    if (cfg().sync.posts.enabled) await runAutoSync('posts');
-    if (cfg().sync.comments.enabled) await runAutoSync('comments');
+    if (siteLive() && cfg().sync.posts.enabled) await runAutoSync('posts');
+    if (siteLive() && cfg().sync.comments.enabled) await runAutoSync('comments');
   }, 1500).unref();
   schedule('posts');
   schedule('comments');
+}
+
+/** Each site syncs on its own timers, in its own context; a site added later starts at once. */
+export function initAutoSync() {
+  for (const s of sites()) withSite(s, startAutoSync);
+  onSiteAdded((s) => withSite(s, startAutoSync));
   onConfigChange((c, prev) => {
     if (JSON.stringify(c.sync.posts) !== JSON.stringify(prev.sync.posts)) schedule('posts');
     if (JSON.stringify(c.sync.comments) !== JSON.stringify(prev.sync.comments)) schedule('comments');
   });
 }
+
+// A removed site: its timers are cleared and its manual run is asked to stop. Registered on load,
+// not in initAutoSync: a manual run and its state exist without auto sync.
+onSiteRemoved((s) => {
+  const st = states.get(s.code);
+  if (!st) return;
+  for (const type of Object.keys(st.timers) as SyncType[]) {
+    clearTimeout(st.timers[type]);
+    delete st.timers[type];
+  }
+  withSite(s, stopManual);
+});
 
 /* ---------------- manual sync ---------------- */
 
@@ -552,25 +622,9 @@ interface ManualOptions {
   fromFirstPage: boolean;
 }
 
-const manual = {
-  running: false,
-  stopRequested: false,
-  type: 'posts' as SyncType,
-  options: null as ManualOptions | null,
-  forum: null as number | null,
-  forumName: '',
-  currentPage: 0,
-  totalPages: 0,
-  totalSynced: 0,
-  saving: 0,
-  startedAt: null as string | null,
-  finishedAt: null as string | null,
-  result: null as null | 'completed' | 'stopped' | 'failed',
-  error: null as string | null,
-  logs: [] as { at: string; line: string }[],
-};
-
-function manualStatus() {
+/** The manual run of the current site. */
+export function manualStatus() {
+  const { manual } = syncState();
   const { stopRequested, ...rest } = manual;
   const elapsedSeconds = manual.startedAt
     ? Math.round(((manual.finishedAt ? Date.parse(manual.finishedAt) : Date.now()) - Date.parse(manual.startedAt)) / 1000)
@@ -579,18 +633,28 @@ function manualStatus() {
 }
 
 function mlog(line: Bi) {
+  const { manual } = syncState();
   manual.logs.push({ at: now(), line: pack(line) });
   if (manual.logs.length > 300) manual.logs.splice(0, manual.logs.length - 300);
 }
 
-let lastEmit = 0;
 function progress(force = false) {
-  if (!force && Date.now() - lastEmit < 250) return;
-  lastEmit = Date.now();
-  emit(Ev.ManualSyncProgress, { ...manualStatus(), logs: manual.logs.slice(-12) }, undefined, 'manual-sync');
+  const st = syncState();
+  if (!force && Date.now() - st.lastEmit < 250) return;
+  st.lastEmit = Date.now();
+  emit(Ev.ManualSyncProgress, { ...manualStatus(), logs: st.manual.logs.slice(-12) }, undefined, 'manual-sync');
+}
+
+function stopManual() {
+  const { manual } = syncState();
+  if (!manual.running) return;
+  manual.stopRequested = true;
+  mlog(['Đang dừng…', 'Stopping…']);
+  progress(true);
 }
 
 async function runManual(o: ManualOptions) {
+  const { manual } = syncState();
   const forums = o.forums.length ? cfg().source.forums.filter((f) => o.forums.includes(f.id)) : cfg().source.forums;
   let done = 0; // records saved by forums already finished
   const ctx: RunCtx = {
@@ -598,6 +662,7 @@ async function runManual(o: ManualOptions) {
     shouldStop: () => manual.stopRequested,
     batchSize: o.batchSize,
     fromFirstPage: o.fromFirstPage,
+    fetchListPage: readForum,
     onPage: (p) => {
       manual.forum = p.forum;
       manual.forumName = p.forumName;
@@ -631,7 +696,7 @@ async function runManual(o: ManualOptions) {
           const seen = new Set<number>();
           const skip = skipper(ctx);
           for (let p = o.pageFrom; p <= o.pageTo && !manual.stopRequested; p++) {
-            const r = await skip.run([`[${f.name}] trang ${p}`, `[${f.name}] page ${p}`], () => fetchForumPage(f.id, p));
+            const r = await skip.run([`[${f.name}] trang ${p}`, `[${f.name}] page ${p}`], () => readForum(f.id, p));
             if (!r) continue;
             tx(() => r.threads.forEach((t) => upsertThread(t, f.id)));
             r.threads.forEach((t) => seen.add(t.id));
@@ -663,6 +728,8 @@ async function runManual(o: ManualOptions) {
     manual.running = false;
     manual.stopRequested = false;
     manual.saving = 0;
+    // The run read its settings again; those of a removed site are not kept.
+    if (!siteLive()) forgetSiteConfig(currentSite().code);
   }
   // sent only now, so the page gets the finished state rather than a "running" one
   if (manual.result === 'failed') emit(Ev.ManualSyncFailed, manualStatus(), manual.error!, 'manual-sync');
@@ -712,12 +779,13 @@ export function registerSync(app: FastifyInstance) {
   app.get('/api/sync-histories/posts/:id/items', items);
   app.get('/api/sync-histories/comments/:id/items', items);
 
-  app.get('/api/sync/auto-status', async () =>
-    ok({
+  app.get('/api/sync/auto-status', async () => {
+    const { lastAuto, autoRunning } = syncState();
+    return ok({
       posts: { ...lastAuto.posts, running: autoRunning.posts, enabled: cfg().sync.posts.enabled, intervalMs: cfg().sync.posts.intervalMs },
       comments: { ...lastAuto.comments, running: autoRunning.comments, enabled: cfg().sync.comments.enabled, intervalMs: cfg().sync.comments.intervalMs },
-    }),
-  );
+    });
+  });
   app.post<{ Params: { type: SyncType } }>('/api/sync/auto/:type/run-now', async (req) => {
     const type = req.params.type === 'comments' ? 'comments' : 'posts';
     void runAutoSync(type);
@@ -728,6 +796,7 @@ export function registerSync(app: FastifyInstance) {
 
   app.post<{ Body: Partial<ManualOptions> }>('/api/manual-syncs/start', async (req) => {
     requireSudo(req);
+    const { manual } = syncState();
     if (manual.running) throw new ApiError(409, 'ALREADY_RUNNING', ['Đang có một lượt đồng bộ thủ công chạy.', 'A manual sync is already running.'], 'inline');
     const b = req.body ?? {};
     const o: ManualOptions = {
@@ -765,10 +834,7 @@ export function registerSync(app: FastifyInstance) {
 
   app.post('/api/manual-syncs/stop', async (req) => {
     requireSudo(req);
-    if (!manual.running) return ok(manualStatus());
-    manual.stopRequested = true;
-    mlog(['Đang dừng…', 'Stopping…']);
-    progress(true);
+    stopManual();
     return ok(manualStatus());
   });
 }

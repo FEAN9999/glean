@@ -1,14 +1,38 @@
 import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cfg, loadConfig, updateConfig } from './config.ts';
+import { cfg, loadConfig, onConfigChange, updateConfig } from './config.ts';
 import Fastify, { type FastifyReply } from 'fastify';
-import { all, get, run } from './db.ts';
+import { all, get, run, siteCtxOrNull } from './db.ts';
 import { addClient, Ev, removeClient } from './events.ts';
-import { commentSyncStartPage, registerSync, syncCommentsForum, syncPostsForum, syncThreadComments, threadsNeedingComments, upsertComments, upsertThread } from './sync.ts';
+import {
+  commentSyncStartPage,
+  manualStatus,
+  registerSync,
+  runAutoSync,
+  schedule,
+  setForumReader,
+  syncCommentsForum,
+  syncPostsForum,
+  syncThreadComments,
+  syncTimersForTests,
+  threadsNeedingComments,
+  upsertComments,
+  upsertThread,
+} from './sync.ts';
+import { addSite, mainSite, registerSites, removeSite, withSite } from './site.ts';
 import type { ListedThread, ParsedPost, ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
+// The main site is the demo forum on 127.0.0.1; the other sites use their own hosts.
+const rphang = addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
+const rm3 = addSite({ baseUrl: 'https://rm3.test', code: 'rm3', name: 'rm3' });
+for (const s of [rphang, rm3]) withSite(s, () => updateConfig({ source: { forums: [{ id: 1, name: 'F1' }] }, scraper: { batchDelayMs: 0 } }, 0));
+// No network in tests: a sync that reads a forum list page gets it from a fake reader.
+const noForum = async (): Promise<never> => {
+  throw new Error('no network in tests');
+};
+setForumReader(noForum);
 
 const post = (postId: number, text = `bình luận ${postId}`): ParsedPost => ({
   postId,
@@ -497,5 +521,88 @@ test('the comments sync log says how many comments had their likes updated', asy
     assert.match(line ?? '', /\+0 bình luận, 2 bình luận cập nhật like/);
   } finally {
     updateConfig({ source: { postsPerPage: 20 }, scraper: { batchDelayMs: 150 } }, 0);
+  }
+});
+
+async function until(cond: () => boolean, what: string, ms = 3000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/** A forum reader that holds every list page until `release()`, then gives an empty page. */
+function holdingForum() {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const reader = async () => {
+    await gate;
+    return { threads: [], totalPages: 1 };
+  };
+  return { reader, release };
+}
+
+test('manual syncs of two sites can run together', async () => {
+  const h = holdingForum();
+  setForumReader(h.reader);
+  try {
+    const app = Fastify();
+    registerSites(app);
+    registerSync(app);
+    const start = (site: string) =>
+      app.inject({ method: 'POST', url: '/api/manual-syncs/start', headers: { 'x-glean-site': site }, payload: { type: 'posts', pageFrom: 1, pageTo: 1, forums: [1] } });
+    assert.equal((await start(mainSite().code)).statusCode, 200);
+    assert.equal((await start('rphang')).statusCode, 200);
+    assert.equal(manualStatus().running, true);
+    assert.equal(withSite('rphang', manualStatus).running, true);
+    // Within one site there is still one manual run at a time.
+    assert.equal((await start('rphang')).statusCode, 409);
+    h.release();
+    await until(() => !manualStatus().running && !withSite('rphang', manualStatus).running, 'both runs to finish');
+    assert.equal(manualStatus().result, 'completed');
+    assert.equal(withSite('rphang', manualStatus).result, 'completed');
+  } finally {
+    setForumReader(noForum);
+  }
+});
+
+test('auto sync of a site writes only to its store', async () => {
+  setForumReader(async () => ({ threads: [listed(5)], totalPages: 1 }));
+  try {
+    await withSite('rphang', () => runAutoSync('posts'));
+    assert.ok(withSite('rphang', () => get('SELECT id FROM thread WHERE id=5')));
+    assert.equal(get('SELECT id FROM thread WHERE id=5'), undefined);
+  } finally {
+    setForumReader(noForum);
+  }
+});
+
+test('removing a site clears its timers', async () => {
+  const configured: (string | null)[] = [];
+  onConfigChange(() => configured.push(siteCtxOrNull()?.code ?? null));
+  const h = holdingForum();
+  setForumReader(h.reader);
+  try {
+    withSite(rm3, () => schedule('posts'));
+    assert.deepEqual(syncTimersForTests('rm3'), ['posts']);
+    const app = Fastify();
+    registerSites(app);
+    registerSync(app);
+    const r = await app.inject({ method: 'POST', url: '/api/manual-syncs/start', headers: { 'x-glean-site': 'rm3' }, payload: { type: 'posts', pageFrom: 1, pageTo: 1 } });
+    assert.equal(r.statusCode, 200);
+    removeSite('rm3');
+    assert.deepEqual(syncTimersForTests('rm3'), []);
+    // Its manual run is asked to stop, and ends once the page it is reading comes back.
+    assert.equal(withSite(rm3, manualStatus).stopRequested, true);
+    h.release();
+    await until(() => !withSite(rm3, manualStatus).running, 'the run to end');
+    assert.equal(withSite(rm3, manualStatus).result, 'stopped');
+    // Its settings, read again by that run, are not kept: a shared change does not reach it.
+    updateConfig({ search: { pageSize: cfg().search.pageSize } }, 0);
+    assert.ok(configured.length > 0);
+    assert.ok(!configured.includes('rm3'), configured.join());
+  } finally {
+    setForumReader(noForum);
   }
 });

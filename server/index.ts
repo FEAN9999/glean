@@ -86,5 +86,5 @@ await app.listen({ port: PORT, host: HOST });
 console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 
 initScraper();
-withSite(mainSite(), initAutoSync); // TEMP(Task 7): each site syncs on its own
+initAutoSync();
 withSite(mainSite(), initBackup); // TEMP(Task 10): one backup run copies every store
