@@ -3,16 +3,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
+import { NoSiteError, run, setTestFallback } from './db.ts';
 import { registerApiGuard, registerAuth } from './auth.ts';
 import { registerSystem } from './system.ts';
-import { addSite, mainSite, registerSites } from './site.ts';
+import { addSite, mainSite, registerSites, siteRequired, withSite } from './site.ts';
 import { ApiError, sendError } from './http.ts';
 
 loadConfig(0);
 addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 
 const app = Fastify();
-app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+// As in index.ts: a site store read outside a site answers SITE_REQUIRED.
+app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : e instanceof NoSiteError ? sendError(reply, siteRequired()) : reply.send(e)));
 registerSites(app);
 registerApiGuard(app);
 registerAuth(app);
@@ -23,6 +25,15 @@ const auth = { authorization: `Bearer ${setup.json().data.accessToken}` };
 const save = (payload: unknown, site = mainSite().code) =>
   app.inject({ method: 'PUT', url: '/api/systems/config', headers: { ...auth, 'x-glean-site': site }, payload: payload as object });
 const settings = (site = mainSite().code) => app.inject({ url: '/api/systems/config', headers: { ...auth, 'x-glean-site': site } });
+/** Runs a request with the test fallback off, so code that reads a site store outside a site fails as it would in production. */
+async function noFallback<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = setTestFallback(null);
+  try {
+    return await fn();
+  } finally {
+    setTestFallback(prev);
+  }
+}
 
 // Regression: ISSUE-008 — a list setting sent as text was stored, and then Settings could not load
 // and no request could put it right. Found by /qa-only on 2026-11-26.
@@ -93,10 +104,17 @@ test('settings of one site do not reach another', async () => {
 });
 
 test('shared settings can be saved with *', async () => {
-  assert.equal((await save({ backup: { keep: 9 } }, '*')).statusCode, 200);
+  const saved = await noFallback(() => save({ backup: { keep: 9 } }, '*'));
+  assert.deepEqual([saved.statusCode, saved.json().code], [200, undefined]);
+  // With no site, the answer holds only the shared settings: no site's own sections or search fields.
+  const data = saved.json().data;
+  assert.equal(data.backup.keep, 9);
+  for (const k of ['source', 'sync', 'scraper', 'maintenance']) assert.equal(k in data, false, k);
+  for (const k of ['semanticSearchUrl', 'semanticTopK']) assert.equal(k in data.search, false, k);
+  assert.equal(typeof data.search.pageSize, 'number');
   assert.equal((await settings()).json().data.backup.keep, 9);
   for (const patch of [{ source: { postsPerPage: 30 } }, { search: { semanticTopK: 3 } }, { sync: {} }]) {
-    const r = await save(patch, '*');
+    const r = await noFallback(() => save(patch, '*'));
     assert.deepEqual([r.statusCode, r.json().code], [400, 'SITE_REQUIRED'], JSON.stringify(patch));
   }
   assert.equal((await settings()).json().data.source.postsPerPage, 20);
@@ -108,4 +126,14 @@ test('a source address another site uses is refused', async () => {
     assert.deepEqual([r.statusCode, r.json().code], [409, 'SITE_HOST_TAKEN'], JSON.stringify(patch));
   }
   assert.equal((await save({ source: { baseUrl: 'https://rphang.land/' } }, 'rphang')).statusCode, 200);
+});
+
+test('reloading settings from the database gives the asking site its own settings', async () => {
+  // A change made straight in the added site's store, which is what the reload is for.
+  withSite('rphang', () => run("UPDATE config SET value=json_set(value, '$.postsPerPage', 33) WHERE key='source'"));
+  const r = await app.inject({ method: 'POST', url: '/api/systems/reload-config', headers: { ...auth, 'x-glean-site': 'rphang' } });
+  assert.equal(r.statusCode, 200);
+  const j = r.json();
+  assert.deepEqual([j.data.source.baseUrl, j.data.source.postsPerPage, j.site?.code], ['https://rphang.land/', 33, 'rphang']);
+  assert.equal((await settings()).json().data.source.postsPerPage, 20);
 });

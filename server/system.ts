@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { all, get, DATA_DIR, DB_PATH } from './db.ts';
-import { assertPatchTypes, cfg, loadConfig, maskedConfig, SITE_SEARCH_FIELDS, SITE_SECTIONS, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
+import { assertPatchTypes, cfg, loadConfig, loadSiteConfig, maskedConfig, maskedShared, SITE_SEARCH_FIELDS, SITE_SECTIONS, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
 import { emit, Ev, clientCount } from './events.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
@@ -76,7 +76,8 @@ export function registerSystem(app: FastifyInstance, port: number) {
         patch.source.previousBaseUrls = [...prev];
       }
     }
-    return ok(maskedConfig(updateConfig(patch, port)));
+    const c = updateConfig(patch, port);
+    return ok(requestSite(req) ? maskedConfig(c) : maskedShared());
   });
 
   /** Lists forum sections of a XenForo site (default: the configured source) so the user can pick them. */
@@ -102,7 +103,11 @@ export function registerSystem(app: FastifyInstance, port: number) {
 
   app.post('/api/systems/reload-config', async (req) => {
     requireSudo(req);
-    return ok(maskedConfig(loadConfig(port)));
+    loadConfig(port);
+    // loadConfig reads the main store only: an added site re-reads its own rows too.
+    const site = currentSite();
+    if (!site.isMain) loadSiteConfig(site);
+    return ok(maskedConfig(cfg()), { site: siteInfo(site) });
   });
 
   app.post<{ Body: { message: string } }>('/api/systems/notify', async (req) => {

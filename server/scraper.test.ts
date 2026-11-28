@@ -591,15 +591,21 @@ test('create-scrape is refused while the site the link goes to is paused', async
   registerScraper(app);
   withSite('rphang', () => updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0));
   try {
-    for (const header of [mainSite().code, '*']) {
-      const r = await app.inject({
-        method: 'POST',
-        url: '/api/scrapes/create-scrape',
-        headers: { 'x-glean-site': header },
-        payload: { url: 'https://rphang.land/threads/d.80/' },
-      });
-      assert.equal(r.statusCode, 503, header);
-      assert.equal(r.json().code, 'FEATURE_PAUSED', header);
+    // The fallback is off, so with `*` a read of a site store outside a site fails as in production.
+    const prev = setTestFallback(null);
+    try {
+      for (const header of [mainSite().code, '*']) {
+        const r = await app.inject({
+          method: 'POST',
+          url: '/api/scrapes/create-scrape',
+          headers: { 'x-glean-site': header },
+          payload: { url: 'https://rphang.land/threads/d.80/' },
+        });
+        assert.equal(r.statusCode, 503, header);
+        assert.equal(r.json().code, 'FEATURE_PAUSED', header);
+      }
+    } finally {
+      setTestFallback(prev);
     }
     assert.equal(
       withSite('rphang', () => jobsOfThread(80)),

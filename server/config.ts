@@ -464,6 +464,12 @@ export function maskedConfig(c: AppConfig): AppConfig {
   return copy;
 }
 
+/** What a `*` request may see: the shared settings, masked, without any site's own fields. */
+export function maskedShared(): Partial<AppConfig> {
+  const search = Object.fromEntries(Object.entries(shared.search).filter(([k]) => !isSiteSearchField(k)));
+  return maskedConfig({ ...shared, search } as unknown as AppConfig);
+}
+
 export function unmaskPatch<T>(patch: T): T {
   const current = cfg();
   for (const p of SECRET_PATHS) {
