@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
 import { cfg, loadConfig, updateConfig } from './config.ts';
-import { DATA_DIR, DB_PATH, get, run } from './db.ts';
+import { DATA_DIR, DB_PATH, get, run, setTestFallback, siteCtxOrNull } from './db.ts';
 import { ApiError } from './http.ts';
 import {
   addSite,
@@ -135,6 +135,22 @@ test('a request with a large body still runs in the site it names', async () => 
     assert.equal(await res.text(), 'rphang');
   } finally {
     await app.close();
+  }
+});
+
+test('account routes are shared: they need no x-glean-site and run outside any site', async () => {
+  const app = Fastify();
+  registerSites(app);
+  app.put('/api/accounts/change-password', async (req) => ({ ctx: siteCtxOrNull()?.code ?? null, site: requestSite(req) }));
+  await app.ready();
+  // Without the tests' fallback site, so a missing context shows as null.
+  const prev = setTestFallback(null);
+  try {
+    const res = await app.inject({ method: 'PUT', url: '/api/accounts/change-password', payload: {} });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { ctx: null, site: null });
+  } finally {
+    setTestFallback(prev);
   }
 });
 

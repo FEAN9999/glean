@@ -249,6 +249,7 @@ const siteUnknown = (code: string, status = 400) => new ApiError(status, 'SITE_U
 /** Routes that are the same for every site: they run outside any site. */
 const SHARED_ROUTES = [
   /^\/api\/auth\//,
+  /^\/api\/accounts\//,
   /^\/api\/events(\/|$)/,
   /^\/api\/backups\//,
   /^\/api\/sites(\/|$)/,
