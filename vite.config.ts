@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 const API = process.env.GLEAN_API ?? 'http://127.0.0.1:4318';
 
 export default defineConfig({
   root: 'web',
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: { outDir: '../dist/web', emptyOutDir: true },
   server: {
     port: 5318,

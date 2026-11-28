@@ -1,0 +1,39 @@
+/*
+  Entry stylesheet: the app's own sheet plus Tailwind for screens built with Motion and
+  Magic UI / Aceternity components.
+  - The app sheet sits in its own layer under the utilities, so a utility on an element wins
+    over a global rule such as `h2 { font-weight }`.
+  - No preflight: every other screen keeps the app's own reset.
+  - Utilities are generated only from the files named by @source.
+*/
+@layer theme, base, app, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import './styles.css' layer(app);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@source './pages/Home.tsx';
+@source './pages/AuthPages.tsx';
+@source './components/Shell.tsx';
+@source './components/ui.tsx';
+@source './components/magic';
+
+/* The app's tokens, so utilities follow light and dark mode. */
+@theme inline {
+  --color-ink: var(--ink);
+  --color-dim: var(--dim);
+  --color-acc: var(--acc);
+  --color-acc-ink: var(--acc-ink);
+  --color-line: var(--line);
+  --color-field: var(--field);
+  --color-tint: var(--tint);
+  --color-background: var(--bg);
+  --color-border: var(--bd);
+  --font-sans: var(--font-ui);
+}
+
+/* The Desk hero is night in both themes. */
+@theme {
+  --color-night: #1a1440;
+  --color-violet: #a99bff;
+  --color-wheat: #f2c46d;
+  --color-mist: #ece9ff;
+}

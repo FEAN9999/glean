@@ -1,5 +1,7 @@
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type AnchorHTMLAttributes, type CSSProperties } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { ApiErr, api, setErrorSinks } from '../lib/api';
+import { EASE_OUT } from '../lib/ease';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
 import { fmtNum, highlight } from '../lib/format';
@@ -137,10 +139,16 @@ export function UiProvider({ children }: { children: ReactNode }) {
       )}
       {children}
       <div className="toasts" aria-live="polite">
+        <AnimatePresence initial={false}>
         {toasts.map((x) => (
-          <div
+          <motion.div
             key={x.id}
-            className={`toast ${x.kind === 'error' ? 'error' : ''}`}
+            layout
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 48, transition: { duration: 0.2 } }}
+            transition={{ duration: 0.3, ease: EASE_OUT }}
+            className={`toast animate-none ${x.kind === 'error' ? 'error' : ''}`}
             // A toast does not close while it is pointed at or focused: its button may be about to be pressed.
             onMouseEnter={() => timers.hold(x.id)}
             onMouseLeave={() => timers.start(x.id, toastLife(x))}
@@ -162,8 +170,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
             <button aria-label={t('Đóng', 'Close')} onClick={() => setToasts((ts) => ts.filter((y) => y.id !== x.id))}>
               ✕
             </button>
-          </div>
+          </motion.div>
         ))}
+        </AnimatePresence>
       </div>
       {external && (
         <Dialog title={t('Mở liên kết bên ngoài?', 'Open external link?')} onClose={() => setExternal(null)}>
@@ -237,12 +246,20 @@ export function Dialog({ title, children, onClose }: { title: string; children: 
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   return (
-    <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
+    <motion.div className="scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <motion.div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        initial={{ opacity: 0, y: 14, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.3, ease: EASE_OUT }}
+      >
         <h2>{title}</h2>
         {children}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 

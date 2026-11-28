@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { animate, motion, useReducedMotion } from 'motion/react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { singleFlight } from '../lib/load';
@@ -10,6 +11,7 @@ import { isLinkLike, parseThreadInput } from '../lib/format';
 import { SiteAskHost, useAskSite, useCreateScrape } from './Scrape';
 import { Icon, Mark, type IconName } from './Icons';
 import { Empty, useUi } from './ui';
+import { EASE_OUT } from '../lib/ease';
 
 /* ---------------- theme (auto / light / dark), shared by every component ---------------- */
 
@@ -198,6 +200,32 @@ function isActive(path: string, item: NavItem) {
   return [item.to, ...(item.match ?? [])].some((p) => path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`));
 }
 
+/** How the marker under the current menu item slides to the next one. */
+const SLIDE = { type: 'spring', stiffness: 500, damping: 40 } as const;
+
+/**
+ * Lifts the screen in when the section changes. It animates in place rather than remounting, so a
+ * screen keeps its state, and it drops the transform at the end: a lasting one would pin the
+ * screen's fixed dialogs to it.
+ */
+function PageEnter({ children }: { children: ReactNode }) {
+  const section = useLocation().pathname.split('/')[1];
+  const ref = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || reduce) return;
+    const a = animate(el, { opacity: [0, 1], y: [10, 0] }, { duration: 0.35, ease: EASE_OUT });
+    void a.finished.then(() => (el.style.transform = ''));
+    return () => {
+      a.stop();
+      el.style.opacity = '';
+      el.style.transform = '';
+    };
+  }, [section, reduce]);
+  return <div ref={ref}>{children}</div>;
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { user, logout } = useAuth();
@@ -254,7 +282,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const railLink = (l: NavItem) => {
     const on = isActive(path, l);
     return (
-      <Link key={l.to} to={l.to} className={`rail-link ${on ? 'active' : ''}`} aria-current={on ? 'page' : undefined}>
+      <Link key={l.to} to={l.to} className={`rail-link relative isolate ${on ? 'active bg-transparent' : ''}`} aria-current={on ? 'page' : undefined}>
         <Icon name={l.icon} />
         <span>{l.label}</span>
         {!!l.badge && (
@@ -262,6 +290,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {l.badge}
           </span>
         )}
+        {on && <motion.span layoutId="rail-active" aria-hidden="true" className="absolute inset-0 -z-10 rounded-[inherit] bg-tint" transition={SLIDE} />}
       </Link>
     );
   };
@@ -346,8 +375,9 @@ export function Shell({ children }: { children: ReactNode }) {
         {inSystem && (
           <nav className="systabs" aria-label={t('Mục hệ thống', 'System sections')}>
             {system.map((l) => (
-              <Link key={l.to} to={l.to} className={isActive(path, l) ? 'active' : ''} aria-current={isActive(path, l) ? 'page' : undefined}>
+              <Link key={l.to} to={l.to} className={`relative ${isActive(path, l) ? 'active' : ''}`} aria-current={isActive(path, l) ? 'page' : undefined}>
                 {l.label}
+                {isActive(path, l) && <motion.span layoutId="systab-active" aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-acc" transition={SLIDE} />}
               </Link>
             ))}
           </nav>
@@ -355,7 +385,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <main className="main" id="main" tabIndex={-1}>
           {/* Another site is another set of data: every screen starts again. */}
-          <Fragment key={selected}>{children}</Fragment>
+          <PageEnter>
+            <Fragment key={selected}>{children}</Fragment>
+          </PageEnter>
         </main>
 
         <nav className="bottomnav" aria-label={t('Điều hướng chính', 'Main navigation')}>
@@ -366,6 +398,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 <Icon name={l.icon} size={18} />
                 {l.short}
                 {!!l.badge && <span className="rail-badge">{l.badge}</span>}
+                {on && <motion.span layoutId="bottomnav-active" aria-hidden="true" className="absolute inset-x-[30%] top-0 h-0.5 rounded-full bg-acc" transition={SLIDE} />}
               </Link>
             );
           })}

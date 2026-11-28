@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum } from '../lib/format';
-import { Bone, Donut, Empty, SkeletonLines, Status } from '../components/ui';
 import { pageSplit, scrapePath, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
 import { useSites } from '../lib/site';
+import { EASE_OUT as EASE } from '../lib/ease';
+import { NumberTicker } from '../components/magic/number-ticker';
+import { BorderBeam } from '../components/magic/border-beam';
+import { MagicCard } from '../components/magic/magic-card';
+import { Spotlight } from '../components/magic/spotlight';
 
 interface Overview {
   threads: number;
@@ -34,106 +39,100 @@ interface Recent {
   createdAt: string;
 }
 
-/** Left of the top row: how much is in the archive and how auto-sync is doing. */
-function Intake({ ov, auto }: { ov: Overview | null; auto: AutoStatus | null }) {
-  const { t } = useI18n();
-  const row = (k: 'posts' | 'comments') => {
-    const a = auto?.[k];
-    const name = k === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments');
-    if (!a)
-      return (
-        <div className="kv" key={k}>
-          <span>{name}</span>
-          <Bone w={150} h={12} style={{ margin: '4px 0' }} />
-        </div>
-      );
-    const every = Math.round(a.intervalMs / 60000);
-    const [tone, text] = a.running
-      ? (['acc', t('đang đồng bộ…', 'syncing…')] as const)
-      : !a.enabled
-        ? (['off', t('tự động đồng bộ đang tắt', 'auto-sync is off')] as const)
-        : a.error
-          ? (['bad', t('lần gần nhất lỗi', 'last run failed')] as const)
-          : a.at
-            ? (['ok', t(`đồng bộ ${fmtAgo(a.at)} · mỗi ${every} phút`, `synced ${fmtAgo(a.at)} · every ${every} min`)] as const)
-            : (['off', t('chưa đồng bộ lần nào', 'never synced')] as const);
-    return (
-      <div className="kv" key={k}>
-        <span>{name}</span>
-        <Status tone={tone}>{text}</Status>
-      </div>
-    );
-  };
+const fmt = (n: number) => fmtNum(n);
+
+/** A pulsing placeholder bar on the night hero. */
+function NightBone({ className }: { className: string }) {
+  return <span aria-hidden="true" className={`block animate-pulse rounded-full bg-white/10 motion-reduce:animate-none ${className}`} />;
+}
+
+/** A count that ticks up; screen readers get the final number once. */
+function Count({ value, className, delay }: { value: number; className?: string; delay?: number }) {
   return (
-    <section aria-labelledby="h-intake" aria-busy={!ov || !auto}>
-      <div className="section-head">
-        <h2 id="h-intake" className="section-title">
-          {t('Nạp vào kho', 'Intake')}
-        </h2>
-        <Link to="/nhat-ky/bai-viet" className="btn">
-          {t('Xem nhật ký', 'View log')}
-        </Link>
-      </div>
-      {ov ? (
-        <>
-          <span className="big-num">{t(`${fmtNum(ov.threads)} bài viết`, `${fmtNum(ov.threads)} threads`)}</span>
-          <span className="muted" style={{ fontSize: 13 }}>
-            {t(`và ${fmtNum(ov.comments)} bình luận đã đồng bộ về kho`, `and ${fmtNum(ov.comments)} comments synced into the archive`)}
-          </span>
-        </>
-      ) : (
-        <>
-          <Bone w={190} h={24} style={{ margin: '3px 0 5px' }} />
-          <Bone w={260} h={11} style={{ margin: '4px 0' }} />
-        </>
-      )}
-      <span className="muted" style={{ paddingTop: 14 }}>
-        {t('Đồng bộ tự động', 'Auto-sync')}
-      </span>
-      <div>
-        {row('posts')}
-        {row('comments')}
-      </div>
-    </section>
+    <>
+      <span className="sr-only">{fmtNum(value)}</span>
+      <NumberTicker aria-hidden="true" value={value} format={fmt} delay={delay} className={className} />
+    </>
   );
 }
 
-/** Right of the top row: the job being sieved, as a donut of its pages. */
+/** One auto-sync line: a coloured dot and what it is doing. */
+function SyncPill({ name, a }: { name: string; a: AutoState | undefined }) {
+  const { t } = useI18n();
+  if (!a) return <NightBone className="h-8 w-56" />;
+  const every = Math.round(a.intervalMs / 60000);
+  const [dot, text] = a.running
+    ? (['bg-wheat animate-pulse motion-reduce:animate-none', t('đang đồng bộ…', 'syncing…')] as const)
+    : !a.enabled
+      ? (['bg-white/35', t('tự động đồng bộ đang tắt', 'auto-sync is off')] as const)
+      : a.error
+        ? (['bg-[oklch(0.68_0.17_25)]', t('lần gần nhất lỗi', 'last run failed')] as const)
+        : a.at
+          ? (['bg-[oklch(0.75_0.15_150)]', t(`đồng bộ ${fmtAgo(a.at)} · mỗi ${every} phút`, `synced ${fmtAgo(a.at)} · every ${every} min`)] as const)
+          : (['bg-white/35', t('chưa đồng bộ lần nào', 'never synced')] as const);
+  return (
+    <span className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] py-1.5 pr-4 pl-3 text-[13px] text-mist/85">
+      <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${dot}`} />
+      <span className="shrink-0 whitespace-nowrap text-white">{name}</span>
+      <span>{text}</span>
+    </span>
+  );
+}
+
+/** The job being sieved, as a ring of its pages that draws itself. */
+function SieveRing({ total, done, current }: { total: number; done: number; current: number }) {
+  const of = (n: number) => (total > 0 ? Math.min(1, n / total) : 0);
+  const ring = { cx: 80, cy: 80, r: 64, fill: 'none', strokeWidth: 14, strokeLinecap: 'round' as const };
+  return (
+    <svg viewBox="0 0 160 160" className="size-40 shrink-0 -rotate-90" aria-hidden="true">
+      <circle {...ring} className="stroke-white/10" />
+      <motion.circle {...ring} className="stroke-wheat" initial={{ pathLength: 0 }} animate={{ pathLength: of(done + current) }} transition={{ duration: 1.2, ease: EASE, delay: 0.4 }} />
+      <motion.circle {...ring} className="stroke-violet" initial={{ pathLength: 0 }} animate={{ pathLength: of(done) }} transition={{ duration: 1.2, ease: EASE, delay: 0.3 }} />
+    </svg>
+  );
+}
+
+/** Right of the hero: what is being sieved now. */
 function Sieving() {
   const { t } = useI18n();
   const { items, processing: s, waiting, live } = useScrapeQueue();
   const lp = s ? live[s.id] : undefined;
   return (
-    <section aria-labelledby="h-sieving">
-      <div className="section-head">
-        <h2 id="h-sieving" className="section-title">
+    <section aria-labelledby="h-sieving" aria-busy={!items} className="relative rounded-[22px] border border-white/10 bg-white/[0.04] p-6 backdrop-blur-sm xl:w-[380px]">
+      {s && <BorderBeam size={90} duration={7} colorFrom="#f2c46d" colorTo="#a99bff" borderWidth={1.5} />}
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="h-sieving" className="m-0 text-[15px] font-normal text-white">
           {t('Đang sàng', 'Sieving')}
         </h2>
-        <Link to="/hang-doi" className="btn">
+        <Link to="/hang-doi" className="text-[13px] text-mist/70 no-underline hover:text-white">
           {t('Xem hàng đợi', 'View queue')}
         </Link>
       </div>
       {!items && (
-        <div aria-busy="true">
-          <Bone w="70%" h={13} style={{ margin: '3px 0' }} />
-          <div className="sieve-viz">
-            <Bone w={164} h={164} r="50%" style={{ position: 'absolute', left: 30, top: 14 }} />
+        <div className="mt-5 flex items-center gap-5">
+          <span aria-hidden="true" className="size-40 shrink-0 animate-pulse rounded-full border-[14px] border-white/10 motion-reduce:animate-none" />
+          <div className="grid flex-1 gap-2">
+            <NightBone className="h-3 w-full" />
+            <NightBone className="h-3 w-2/3" />
           </div>
         </div>
       )}
       {items && !s && (
-        <Empty title={t('Không có lượt nào đang chạy', 'Nothing is running')}>
-          {waiting.length
-            ? t(`${waiting.length} bài đang chờ đến lượt.`, `${waiting.length} threads waiting their turn.`)
-            : t('Dán link bài viết vào ô tìm ở trên để sàng ảnh, video và bình luận.', 'Paste a thread link into the box above to sieve its images, videos and comments.')}
-        </Empty>
+        <div className="mt-5">
+          <p className="m-0 text-lg font-light text-white">{t('Không có lượt nào đang chạy', 'Nothing is running')}</p>
+          <p className="m-0 mt-1.5 text-[13px] text-mist/70">
+            {waiting.length
+              ? t(`${waiting.length} bài đang chờ đến lượt.`, `${waiting.length} threads waiting their turn.`)
+              : t('Dán link bài viết vào ô tìm ở trên để sàng ảnh, video và bình luận.', 'Paste a thread link into the box above to sieve its images, videos and comments.')}
+          </p>
+        </div>
       )}
       {s && <SievingNow s={s} downloaded={lp?.downloaded} downloadTotal={lp?.total} />}
       {s && waiting[0] && (
-        <span className="muted" style={{ fontSize: 13, paddingTop: 8 }}>
+        <p className="m-0 mt-4 truncate border-t border-white/10 pt-3 text-[13px] text-mist/70">
           {t('Đang chờ:', 'Next:')} {scrapeTitle(waiting[0], t)}
           {waiting.length > 1 && t(` và ${waiting.length - 1} bài khác`, ` and ${waiting.length - 1} more`)}
-        </span>
+        </p>
       )}
     </section>
   );
@@ -146,43 +145,145 @@ function SievingNow({ s, downloaded, downloadTotal }: { s: Scrape; downloaded?: 
   const sp = pageSplit(s, downloadTotal ? { downloaded, total: downloadTotal } : undefined);
   return (
     <>
-      <Link to={scrapePath(s.id, s.site?.code ?? selected)} className="muted ellipsis" style={{ textDecoration: 'none' }}>
+      <Link to={scrapePath(s.id, s.site?.code ?? selected)} className="mt-3 block truncate text-[13px] text-mist/80 no-underline hover:text-white">
         {scrapeTitle(s, t)}
       </Link>
-      <div className="sieve-viz">
-        <Donut size="lg" total={sp.total || 1} done={sp.done} current={sp.current} label={t(`${sp.done} trên ${sp.total} trang đã quét`, `${sp.done} of ${sp.total} pages scanned`)} />
-        <div className="tooltip" aria-hidden="true">
-          {downloadTotal ? (
-            <>
-              <span className="tt-head">{t('Đang tải ảnh', 'Downloading')}</span>
-              <span className="tt-sub">{t(`${fmtNum(downloaded)} trên ${fmtNum(downloadTotal)}`, `${fmtNum(downloaded)} of ${fmtNum(downloadTotal)}`)}</span>
-            </>
-          ) : (
-            <>
-              <span className="tt-head">{t('Đang quét', 'Scanning')}</span>
-              <span className="tt-sub">
-                {sp.total ? t(`trang ${Math.min(sp.done + 1, sp.total)} trên ${sp.total}`, `page ${Math.min(sp.done + 1, sp.total)} of ${sp.total}`) : t('đang mở trang đầu', 'opening page 1')}
-              </span>
-            </>
-          )}
-          <span className="tt-big">{t(`${fmtNum(s.totalImages)} ảnh`, `${fmtNum(s.totalImages)} images`)}</span>
+      <div className="mt-4 flex items-center gap-5" role="img" aria-label={t(`${sp.done} trên ${sp.total} trang đã quét`, `${sp.done} of ${sp.total} pages scanned`)}>
+        <SieveRing total={sp.total} done={sp.done} current={sp.current} />
+        <div className="grid gap-1">
+          <span className="text-[13px] text-mist/70">
+            {downloadTotal
+              ? t(`Đang tải ảnh ${fmtNum(downloaded)} trên ${fmtNum(downloadTotal)}`, `Downloading ${fmtNum(downloaded)} of ${fmtNum(downloadTotal)}`)
+              : sp.total
+                ? t(`Đang quét trang ${Math.min(sp.done + 1, sp.total)} trên ${sp.total}`, `Scanning page ${Math.min(sp.done + 1, sp.total)} of ${sp.total}`)
+                : t('Đang mở trang đầu', 'Opening page 1')}
+          </span>
+          <span className="text-3xl font-light tracking-tight text-white">
+            <Count value={s.totalImages} />
+          </span>
+          <span className="text-[13px] text-mist/70">{t('ảnh đã tìm thấy', 'images found')}</span>
         </div>
       </div>
-      <div className="legend" style={{ paddingTop: 6 }}>
-        <span>
-          <span className="dot dot-acc" />
+      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-mist/70">
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className="size-2 rounded-full bg-violet" />
           {t(`Đã quét ${sp.done}`, `Scanned ${sp.done}`)}
         </span>
-        <span>
-          <span className="dot dot-acc2" />
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className="size-2 rounded-full bg-wheat" />
           {t(`Đang quét ${sp.current}`, `Scanning ${sp.current}`)}
         </span>
-        <span>
-          <span className="dot dot-acc3" />
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className="size-2 rounded-full bg-white/20" />
           {t(`Còn lại ${sp.left}`, `Left ${sp.left}`)}
         </span>
       </div>
     </>
+  );
+}
+
+/** The night hero: the archive's size, auto-sync, and the job being sieved. */
+function Hero({ ov, auto }: { ov: Overview | null; auto: AutoStatus | null }) {
+  const { t } = useI18n();
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.7, ease: EASE }}
+      className="relative isolate overflow-hidden rounded-[28px] bg-night px-6 py-8 text-mist sm:px-10 sm:py-12"
+    >
+      <Spotlight />
+      <div className="relative z-10 grid items-end gap-10 xl:grid-cols-[1fr_auto]">
+        <section aria-labelledby="h-intake" aria-busy={!ov || !auto} className="min-w-0">
+          <h1 className="m-0 text-[15px] font-normal text-mist/70">{t('Bàn làm việc', 'Desk')}</h1>
+          <h2 id="h-intake" className="sr-only">
+            {t('Nạp vào kho', 'Intake')}
+          </h2>
+          {ov ? (
+            <>
+              <p className="m-0 mt-6 text-[clamp(56px,9vw,112px)] leading-[0.95] font-light tracking-[-0.045em] text-white">
+                <Count value={ov.threads} delay={0.2} />
+              </p>
+              <p className="m-0 mt-3 text-lg font-light text-mist/80">{t('bài viết đã đồng bộ về kho', 'threads synced into the archive')}</p>
+            </>
+          ) : (
+            <>
+              <NightBone className="mt-8 h-20 w-72 max-w-full" />
+              <NightBone className="mt-4 h-4 w-60" />
+            </>
+          )}
+          {ov && (
+            <dl className="m-0 mt-8 flex flex-wrap gap-x-10 gap-y-4">
+              <Stat value={ov.comments} label={t('bình luận', 'comments')} delay={0.35} />
+              <Stat value={ov.images} label={t('ảnh đã lưu', 'saved images')} delay={0.45} />
+              {ov.deletedThreads > 0 && <Stat value={ov.deletedThreads} label={t('bài đã xóa trên diễn đàn, vẫn còn bản lưu', 'threads deleted on the forum, still kept here')} delay={0.55} />}
+            </dl>
+          )}
+          <div className="mt-8 flex flex-wrap items-center gap-2.5">
+            <SyncPill name={t('Bài viết', 'Threads')} a={auto?.posts} />
+            <SyncPill name={t('Bình luận', 'Comments')} a={auto?.comments} />
+            <Link to="/nhat-ky/bai-viet" className="ml-1 text-[13px] text-mist/70 no-underline hover:text-white">
+              {t('Xem nhật ký', 'View log')}
+            </Link>
+          </div>
+        </section>
+        <Sieving />
+      </div>
+    </motion.div>
+  );
+}
+
+function Stat({ value, label, delay }: { value: number; label: string; delay: number }) {
+  return (
+    <div className="flex flex-col-reverse">
+      <dt className="text-[13px] text-mist/70">{label}</dt>
+      <dd className="m-0 text-3xl font-light tracking-tight text-white">
+        <Count value={value} delay={delay} />
+      </dd>
+    </div>
+  );
+}
+
+/** A list card under the hero, sliding in after it. */
+function Card({ id, title, sub, delay, children }: { id: string; title: string; sub?: string; delay: number; children: ReactNode }) {
+  return (
+    <motion.section aria-labelledby={id} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: EASE, delay }} className="rounded-3xl">
+      <MagicCard className="h-full rounded-3xl" gradientFrom="#a99bff" gradientTo="#f2c46d" gradientColor="var(--tint)" gradientSize={260}>
+        <div className="p-6">
+          <h2 id={id} className="m-0 text-[17px] font-normal text-ink">
+            {title}
+          </h2>
+          {sub && <p className="m-0 mt-1 text-[13px] text-dim">{sub}</p>}
+          <ul className="m-0 mt-4 grid list-none gap-1 p-0">{children}</ul>
+        </div>
+      </MagicCard>
+    </motion.section>
+  );
+}
+
+/** One row of a card; new rows slide in, rows that drop off fade out. */
+function Row({ to, title, sub, value, thumb }: { to: string; title: string; sub: string; value: string; thumb?: boolean }) {
+  return (
+    <motion.li layout initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.35, ease: EASE }}>
+      <Link to={to} className="-mx-3 flex items-center gap-3 rounded-2xl px-3 py-2.5 text-ink no-underline transition-colors hover:bg-field">
+        {thumb && <span aria-hidden="true" className="size-10 shrink-0 rounded-xl bg-linear-to-br from-violet/70 to-wheat/70" />}
+        <span className="grid min-w-0 flex-1">
+          <span className="truncate">{title}</span>
+          <span className="truncate text-[12px] text-dim">{sub}</span>
+        </span>
+        <span className="shrink-0 text-[13px] text-dim tabular-nums">{value}</span>
+      </Link>
+    </motion.li>
+  );
+}
+
+function RowBones({ n, label }: { n: number; label: string }) {
+  return (
+    <li aria-busy="true" aria-label={label} className="grid gap-3 py-2">
+      {Array.from({ length: n }, (_, i) => (
+        <span key={i} aria-hidden="true" className="block h-10 animate-pulse rounded-2xl bg-field motion-reduce:animate-none" />
+      ))}
+    </li>
   );
 }
 
@@ -229,92 +330,42 @@ export function HomePage() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h1 className="page-title">{t('Bàn làm việc', 'Desk')}</h1>
-      </header>
+        <Hero ov={ov} auto={auto} />
 
-      <div className="desk-top">
-        <Intake ov={ov} auto={auto} />
-        <Sieving />
-      </div>
+        <div className="mt-6 grid gap-6 md:grid-cols-2">
+          <Card id="h-saved" title={t('Vừa lưu vào kho', 'Just saved')} sub={t('Bài đã sàng gần đây nhất', 'The most recently sieved threads')} delay={0.25}>
+            {!saved && <RowBones n={3} label={t('Đang tải bài vừa sàng', 'Loading recent jobs')} />}
+            {saved && !saved.length && <li className="py-2 text-dim">{t('Chưa có lượt sàng nào.', 'No sieve jobs yet.')}</li>}
+            <AnimatePresence initial={false}>
+              {saved?.map((s) => (
+                <Row
+                  key={s.id}
+                  thumb
+                  to={scrapePath(s.id, s.site?.code ?? selected)}
+                  title={scrapeTitle(s, t)}
+                  sub={`${t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)} · ${fmtAgo(s.finishedAt ?? s.createdAt)}`}
+                  value={t(`${fmtNum(s.totalImages)} ảnh`, `${fmtNum(s.totalImages)} images`)}
+                />
+              ))}
+            </AnimatePresence>
+          </Card>
 
-      <div className="cols-3">
-        <section aria-labelledby="h-store" className="stack" style={{ gap: 4 }}>
-          <h2 id="h-store" className="section-title">
-            {t('Trong kho', 'In the archive')}
-          </h2>
-          <p className="section-sub">
-            {ov && ov.deletedThreads > 0
-              ? t(`${fmtNum(ov.deletedThreads)} bài đã bị xóa trên diễn đàn vẫn còn bản lưu`, `${fmtNum(ov.deletedThreads)} threads deleted on the forum are still kept here`)
-              : t('Mọi thứ Glean đã đồng bộ và sàng về máy', 'Everything Glean has synced and sieved')}
-          </p>
-          {!ov && (
-            <div className="bubbles" aria-busy="true">
-              <div className="bubble bubble-c skeleton" />
-              <div className="bubble bubble-i skeleton" />
-              <div className="bubble bubble-t skeleton" />
-            </div>
-          )}
-          {ov && (
-            <div className="bubbles">
-              <div className="bubble bubble-c">
-                {fmtNum(ov.comments)}
-                <small>{t('bình luận', 'comments')}</small>
-              </div>
-              <div className="bubble bubble-i">
-                {fmtNum(ov.images)}
-                <small>{t('ảnh đã lưu', 'saved images')}</small>
-              </div>
-              <div className="bubble bubble-t">
-                {fmtNum(ov.threads)}
-                <small>{t('bài viết', 'threads')}</small>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section aria-labelledby="h-saved" className="stack" style={{ gap: 4 }}>
-          <h2 id="h-saved" className="section-title">
-            {t('Vừa lưu vào kho', 'Just saved')}
-          </h2>
-          <p className="section-sub" style={{ paddingBottom: 8 }}>
-            {t('Bài đã sàng gần đây nhất', 'The most recently sieved threads')}
-          </p>
-          {!saved && <SkeletonLines n={3} thumb value label={t('Đang tải bài vừa sàng', 'Loading recent jobs')} />}
-          {saved && !saved.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt sàng nào.', 'No sieve jobs yet.')}</p>}
-          {saved?.map((s) => (
-            <Link key={s.id} to={scrapePath(s.id, s.site?.code ?? selected)} className="line">
-              <span className="thumb" aria-hidden="true" />
-              <span className="line-text">
-                <span className="line-title ellipsis">{scrapeTitle(s, t)}</span>
-                <span className="line-sub ellipsis">
-                  {t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)} · {fmtAgo(s.finishedAt ?? s.createdAt)}
-                </span>
-              </span>
-              <span className="line-value">{t(`${fmtNum(s.totalImages)} ảnh`, `${fmtNum(s.totalImages)} images`)}</span>
-            </Link>
-          ))}
-        </section>
-
-        <section aria-labelledby="h-recent" className="stack" style={{ gap: 4 }}>
-          <h2 id="h-recent" className="section-title" style={{ paddingBottom: 4 }}>
-            {t('Vừa tìm', 'Recent searches')}
-          </h2>
-          {!searchesLoaded && !searches.length && <SkeletonLines n={4} value label={t('Đang tải lượt tìm gần đây', 'Loading recent searches')} />}
-          {searchesLoaded && !searches.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt tìm nào.', 'No searches yet.')}</p>}
-          {searches.map((r) => (
-            <Link key={`${r.kind}${r.id}`} to={`/${r.kind === 'posts' ? 'bai-viet' : 'binh-luan'}/tu-khoa?q=${encodeURIComponent(r.keyword)}`} className="line">
-              <span className="line-text">
-                <span className="line-title ellipsis">{r.keyword}</span>
-                <span className="line-sub">
-                  {r.kind === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments')} · {fmtAgo(r.createdAt)}
-                </span>
-              </span>
-              <span className="line-value">{t(`${fmtNum(r.resultCount)} kết quả`, `${fmtNum(r.resultCount)} results`)}</span>
-            </Link>
-          ))}
-        </section>
-      </div>
+          <Card id="h-recent" title={t('Vừa tìm', 'Recent searches')} sub={t('Từ khóa đã tìm gần đây', 'Keywords searched lately')} delay={0.35}>
+            {!searchesLoaded && !searches.length && <RowBones n={4} label={t('Đang tải lượt tìm gần đây', 'Loading recent searches')} />}
+            {searchesLoaded && !searches.length && <li className="py-2 text-dim">{t('Chưa có lượt tìm nào.', 'No searches yet.')}</li>}
+            <AnimatePresence initial={false}>
+              {searches.map((r) => (
+                <Row
+                  key={`${r.kind}${r.id}`}
+                  to={`/${r.kind === 'posts' ? 'bai-viet' : 'binh-luan'}/tu-khoa?q=${encodeURIComponent(r.keyword)}`}
+                  title={r.keyword}
+                  sub={`${r.kind === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments')} · ${fmtAgo(r.createdAt)}`}
+                  value={t(`${fmtNum(r.resultCount)} kết quả`, `${fmtNum(r.resultCount)} results`)}
+                />
+              ))}
+            </AnimatePresence>
+          </Card>
+        </div>
     </div>
   );
 }

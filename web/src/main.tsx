@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
+import { MotionConfig } from 'motion/react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
-import './styles.css';
+import './app.css';
 import { I18nProvider, useI18n } from './lib/i18n';
 import { AuthProvider, useAuth } from './lib/auth';
 import { UiProvider } from './components/ui';
@@ -77,12 +78,15 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <I18nProvider>
-      <BrowserRouter>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </BrowserRouter>
-    </I18nProvider>
+    {/* Anyone who asked the system for less motion gets the end state at once. */}
+    <MotionConfig reducedMotion="user">
+      <I18nProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </BrowserRouter>
+      </I18nProvider>
+    </MotionConfig>
   </StrictMode>,
 );
