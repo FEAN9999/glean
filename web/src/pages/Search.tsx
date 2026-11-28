@@ -5,7 +5,7 @@ import { useI18n } from '../lib/i18n';
 import { useLatest } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDate, fmtNum, parseThreadInput } from '../lib/format';
-import { Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Spinner, Status, useUi } from '../components/ui';
+import { Bone, Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Skeleton, SkeletonLines, SkeletonResults, Status, boneWidth, useUi } from '../components/ui';
 import { useAskSite, useCreateScrape } from '../components/Scrape';
 import { ALL, SiteTag, useSites } from '../lib/site';
 import { CommentChanges } from '../components/CommentHistory';
@@ -167,6 +167,7 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
           </button>
         )}
       </div>
+      {!items.length && !done && <SkeletonLines n={4} value pad="10px 0" label={t('Đang tải lịch sử tìm', 'Loading search history')} />}
       {!items.length && done && <p className="muted" style={{ margin: '6px 0 0' }}>{t('Chưa có lượt tìm nào.', 'No searches yet.')}</p>}
       {items.map((h) => (
         <button key={h.id} className="line" style={{ padding: '10px 0' }} onClick={() => onPick(h.keyword)}>
@@ -179,6 +180,25 @@ function History({ scope, byAuthor, onPick }: { scope: Scope; byAuthor: boolean;
       ))}
       <Sentinel onVisible={() => load(false)} disabled={done} />
     </section>
+  );
+}
+
+/** Comment results still loading: avatar, two lines of text, the meta line and the links under it. */
+function CommentSkeleton({ label }: { label: string }) {
+  return (
+    <Skeleton label={label}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className="comment">
+          <Bone w={34} h={34} r="50%" />
+          <div className="comment-text" style={{ gap: 8, paddingTop: 3 }}>
+            <Bone w="94%" h={13} />
+            <Bone w={boneWidth(i)} h={13} />
+            <Bone w="52%" h={10} />
+            <Bone w={190} h={11} />
+          </div>
+        </div>
+      ))}
+    </Skeleton>
   );
 }
 
@@ -496,7 +516,12 @@ export function SearchPage({ scope }: { scope: Scope }) {
             </p>
           )}
           <SearchingIn site={threadSite} />
-          {busy && !items.length && <Spinner label={scope === 'comments' ? t('Đang quét dữ liệu bình luận…', 'Scanning comments…') : t('Đang tìm…', 'Searching…')} />}
+          {busy && !items.length &&
+            (scope === 'comments' ? (
+              <CommentSkeleton label={t('Đang quét dữ liệu bình luận…', 'Scanning comments…')} />
+            ) : (
+              <SkeletonResults n={6} side={104} label={t('Đang tìm…', 'Searching…')} />
+            ))}
 
           {!q && (
             <Empty title={t('Gõ từ khóa vào ô tìm ở trên', 'Type into the search box above')}>

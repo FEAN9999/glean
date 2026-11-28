@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum } from '../lib/format';
-import { Donut, Empty, Status } from '../components/ui';
+import { Bone, Donut, Empty, SkeletonLines, Status } from '../components/ui';
 import { pageSplit, scrapePath, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
 import { useSites } from '../lib/site';
 
@@ -40,7 +40,13 @@ function Intake({ ov, auto }: { ov: Overview | null; auto: AutoStatus | null }) 
   const row = (k: 'posts' | 'comments') => {
     const a = auto?.[k];
     const name = k === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments');
-    if (!a) return null;
+    if (!a)
+      return (
+        <div className="kv" key={k}>
+          <span>{name}</span>
+          <Bone w={150} h={12} style={{ margin: '4px 0' }} />
+        </div>
+      );
     const every = Math.round(a.intervalMs / 60000);
     const [tone, text] = a.running
       ? (['acc', t('đang đồng bộ…', 'syncing…')] as const)
@@ -59,7 +65,7 @@ function Intake({ ov, auto }: { ov: Overview | null; auto: AutoStatus | null }) 
     );
   };
   return (
-    <section aria-labelledby="h-intake">
+    <section aria-labelledby="h-intake" aria-busy={!ov || !auto}>
       <div className="section-head">
         <h2 id="h-intake" className="section-title">
           {t('Nạp vào kho', 'Intake')}
@@ -68,10 +74,19 @@ function Intake({ ov, auto }: { ov: Overview | null; auto: AutoStatus | null }) 
           {t('Xem nhật ký', 'View log')}
         </Link>
       </div>
-      <span className="big-num">{ov ? t(`${fmtNum(ov.threads)} bài viết`, `${fmtNum(ov.threads)} threads`) : ' '}</span>
-      <span className="muted" style={{ fontSize: 13 }}>
-        {ov ? t(`và ${fmtNum(ov.comments)} bình luận đã đồng bộ về kho`, `and ${fmtNum(ov.comments)} comments synced into the archive`) : ''}
-      </span>
+      {ov ? (
+        <>
+          <span className="big-num">{t(`${fmtNum(ov.threads)} bài viết`, `${fmtNum(ov.threads)} threads`)}</span>
+          <span className="muted" style={{ fontSize: 13 }}>
+            {t(`và ${fmtNum(ov.comments)} bình luận đã đồng bộ về kho`, `and ${fmtNum(ov.comments)} comments synced into the archive`)}
+          </span>
+        </>
+      ) : (
+        <>
+          <Bone w={190} h={24} style={{ margin: '3px 0 5px' }} />
+          <Bone w={260} h={11} style={{ margin: '4px 0' }} />
+        </>
+      )}
       <span className="muted" style={{ paddingTop: 14 }}>
         {t('Đồng bộ tự động', 'Auto-sync')}
       </span>
@@ -98,6 +113,14 @@ function Sieving() {
           {t('Xem hàng đợi', 'View queue')}
         </Link>
       </div>
+      {!items && (
+        <div aria-busy="true">
+          <Bone w="70%" h={13} style={{ margin: '3px 0' }} />
+          <div className="sieve-viz">
+            <Bone w={164} h={164} r="50%" style={{ position: 'absolute', left: 30, top: 14 }} />
+          </div>
+        </div>
+      )}
       {items && !s && (
         <Empty title={t('Không có lượt nào đang chạy', 'Nothing is running')}>
           {waiting.length
@@ -171,6 +194,7 @@ export function HomePage() {
   const [saved, setSaved] = useState<Scrape[] | null>(null);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [recentC, setRecentC] = useState<Recent[]>([]);
+  const [searchesLoaded, setSearchesLoaded] = useState(false);
 
   const load = useCallback(() => {
     api.get<Overview>('/systems/overview', { quiet: true }).then((r) => setOv(r.data)).catch(() => {});
@@ -186,8 +210,10 @@ export function HomePage() {
   useEffect(() => {
     load();
     loadSaved();
-    api.get<Recent[]>('/posts/search/recent-keywords', { quiet: true }).then((r) => setRecent(r.data.slice(0, 4))).catch(() => {});
-    api.get<Recent[]>('/comments/recent-keywords', { quiet: true }).then((r) => setRecentC(r.data.slice(0, 4))).catch(() => {});
+    void Promise.allSettled([
+      api.get<Recent[]>('/posts/search/recent-keywords', { quiet: true }).then((r) => setRecent(r.data.slice(0, 4))),
+      api.get<Recent[]>('/comments/recent-keywords', { quiet: true }).then((r) => setRecentC(r.data.slice(0, 4))),
+    ]).then(() => setSearchesLoaded(true));
   }, [load, loadSaved]);
   useEvent([Ev.AutoSyncFinished, Ev.FinishScrape, Ev.ManualSyncComplete, Ev.Reconnected], load);
   useEvent([Ev.FinishScrape, Ev.Reconnected], loadSaved);
@@ -222,6 +248,13 @@ export function HomePage() {
               ? t(`${fmtNum(ov.deletedThreads)} bài đã bị xóa trên diễn đàn vẫn còn bản lưu`, `${fmtNum(ov.deletedThreads)} threads deleted on the forum are still kept here`)
               : t('Mọi thứ Glean đã đồng bộ và sàng về máy', 'Everything Glean has synced and sieved')}
           </p>
+          {!ov && (
+            <div className="bubbles" aria-busy="true">
+              <div className="bubble bubble-c skeleton" />
+              <div className="bubble bubble-i skeleton" />
+              <div className="bubble bubble-t skeleton" />
+            </div>
+          )}
           {ov && (
             <div className="bubbles">
               <div className="bubble bubble-c">
@@ -247,6 +280,7 @@ export function HomePage() {
           <p className="section-sub" style={{ paddingBottom: 8 }}>
             {t('Bài đã sàng gần đây nhất', 'The most recently sieved threads')}
           </p>
+          {!saved && <SkeletonLines n={3} thumb value label={t('Đang tải bài vừa sàng', 'Loading recent jobs')} />}
           {saved && !saved.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt sàng nào.', 'No sieve jobs yet.')}</p>}
           {saved?.map((s) => (
             <Link key={s.id} to={scrapePath(s.id, s.site?.code ?? selected)} className="line">
@@ -266,7 +300,8 @@ export function HomePage() {
           <h2 id="h-recent" className="section-title" style={{ paddingBottom: 4 }}>
             {t('Vừa tìm', 'Recent searches')}
           </h2>
-          {!searches.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt tìm nào.', 'No searches yet.')}</p>}
+          {!searchesLoaded && !searches.length && <SkeletonLines n={4} value label={t('Đang tải lượt tìm gần đây', 'Loading recent searches')} />}
+          {searchesLoaded && !searches.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt tìm nào.', 'No searches yet.')}</p>}
           {searches.map((r) => (
             <Link key={`${r.kind}${r.id}`} to={`/${r.kind === 'posts' ? 'bai-viet' : 'binh-luan'}/tu-khoa?q=${encodeURIComponent(r.keyword)}`} className="line">
               <span className="line-text">

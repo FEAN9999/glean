@@ -1,4 +1,4 @@
-import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type AnchorHTMLAttributes } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type AnchorHTMLAttributes, type CSSProperties } from 'react';
 import { ApiErr, api, setErrorSinks } from '../lib/api';
 import { Ev, useEvent, serverVersion } from '../lib/realtime';
 import { useI18n } from '../lib/i18n';
@@ -560,12 +560,83 @@ export function Sentinel({ onVisible, disabled }: { onVisible: () => void; disab
   return <div ref={ref} style={{ height: 1 }} />;
 }
 
-export function Spinner({ label }: { label: string }) {
+/* ---------------- skeletons: what is loading, drawn in the shape it will take ---------------- */
+
+const BONE_WIDTHS = ['72%', '56%', '84%', '64%', '78%', '48%'];
+/** Width of the `i`-th placeholder line, varied so a list of them reads as text. */
+export const boneWidth = (i: number) => BONE_WIDTHS[i % BONE_WIDTHS.length];
+
+/** One shimmering block standing in for text, a number or a picture that is still loading. */
+export function Bone({ w = '100%', h = 12, r, style }: { w?: number | string; h?: number | string; r?: number | string; style?: CSSProperties }) {
+  return <span className="skeleton" style={{ width: w, height: h, borderRadius: r, ...style }} />;
+}
+
+/** A block still loading. Screen readers hear `label` once instead of the empty bones. */
+export function Skeleton({ label, className, style, children }: { label: string; className?: string; style?: CSSProperties; children: ReactNode }) {
   return (
-    <div className="stack" style={{ gap: 10, padding: '16px 0' }} aria-busy="true" aria-label={label}>
-      <div className="skeleton" style={{ width: '60%' }} />
-      <div className="skeleton" style={{ width: '40%' }} />
-      <div className="skeleton" style={{ width: '52%' }} />
+    <div className={className} style={style} role="status" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** The bones alone inside a `Skeleton` that already names them; with a `label`, their own `Skeleton`. */
+const wrapBones = (label: string | undefined, bones: ReactNode) => (label ? <Skeleton label={label}>{bones}</Skeleton> : <>{bones}</>);
+
+/** `n` placeholder `.line` rows (title and sub line), with a round thumbnail and a value at the right when asked. */
+export function SkeletonLines({ n, label, thumb, value, pad }: { n: number; label?: string; thumb?: boolean; value?: boolean; pad?: string }) {
+  return wrapBones(
+    label,
+    <>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="line" style={pad ? { padding: pad } : undefined}>
+          {thumb && <Bone w={38} h={38} r="50%" />}
+          <span className="line-text" style={{ gap: 7, padding: '3px 0' }}>
+            <Bone w={boneWidth(i)} h={13} />
+            <Bone w="40%" h={10} />
+          </span>
+          {value && <Bone w={56} h={12} />}
+        </div>
+      ))}
+    </>,
+  );
+}
+
+/** `n` placeholder `.result` rows (title and meta line), with a block at the right `side` pixels wide and `sideH` high. */
+export function SkeletonResults({ n, label, side, sideH = 34 }: { n: number; label?: string; side?: number; sideH?: number }) {
+  return wrapBones(
+    label,
+    <>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="result">
+          <div className="result-text" style={{ gap: 9, padding: '3px 0' }}>
+            <Bone w={boneWidth(i)} h={15} />
+            <Bone w="46%" h={11} />
+          </div>
+          {side && <Bone w={side} h={sideH} />}
+        </div>
+      ))}
+    </>,
+  );
+}
+
+/** A switch row still loading: its label and the switch. */
+export function SkeletonSwitch({ label = '46%' }: { label?: string }) {
+  return (
+    <div className="switch-row" style={{ cursor: 'default' }}>
+      <Bone w={label} h={12} />
+      <Bone w={40} h={22} r={11} />
+    </div>
+  );
+}
+
+/** A form field still loading: its label and its input box. */
+export function SkeletonField({ label = '34%' }: { label?: string }) {
+  return (
+    <div className="field">
+      <Bone w={label} h={11} style={{ margin: '3px 0' }} />
+      <Bone h={40} />
     </div>
   );
 }

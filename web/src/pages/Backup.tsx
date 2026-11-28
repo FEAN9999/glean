@@ -4,7 +4,7 @@ import { unpack, useI18n } from '../lib/i18n';
 import { fmtAgo, fmtBytes, fmtDate, fmtNum } from '../lib/format';
 import { useSites } from '../lib/site';
 import { SudoGate } from '../components/SudoGate';
-import { Status, Switch, useUi } from '../components/ui';
+import { Bone, Skeleton, SkeletonField, SkeletonLines, SkeletonSwitch, Status, Switch, useUi } from '../components/ui';
 import type { BackupRun, backupStatus } from '../../../server/backup';
 import type { AppConfig } from '../../../server/config';
 
@@ -137,10 +137,19 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
       <div className="rule-below stack" style={{ gap: 12, paddingBottom: 26 }}>
         <div className="stack" style={{ gap: 4 }}>
           {!!st?.sites.length && mainCode && <span className="row-title">{nameOf(mainCode)}</span>}
-          <Status tone={tone}>{text}</Status>
-          <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
-            {next} {st && t(`Thư mục: ${st.dir}`, `Folder: ${st.dir}`)}
-          </small>
+          {st ? (
+            <>
+              <Status tone={tone}>{text}</Status>
+              <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
+                {next} {t(`Thư mục: ${st.dir}`, `Folder: ${st.dir}`)}
+              </small>
+            </>
+          ) : (
+            <Skeleton label={t('Đang tải trạng thái sao lưu', 'Loading backup status')} className="stack" style={{ gap: 9, padding: '3px 0' }}>
+              <Bone w="62%" h={12} />
+              <Bone w="84%" h={10} />
+            </Skeleton>
+          )}
           {!st?.running && !last?.error && last?.mediaError && (
             <p className="error-text" role="alert" style={{ margin: 0, fontSize: 12.5 }}>
               {t('Kho dữ liệu đã sao lưu, nhưng ', 'The database was backed up, but ') + unpack(last.mediaError, lang)}
@@ -158,6 +167,18 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
               {t('Bản sao của mỗi trang khác nằm trong thư mục con sites/<mã trang>/ của thư mục sao lưu.', "Each other site's copies go in the subfolder sites/<site code>/ of the backup folder.")}
             </small>
           </div>
+        )}
+        {!form && !error && (
+          <Skeleton label={t('Đang tải cài đặt sao lưu', 'Loading backup settings')} className="stack" style={{ gap: 12 }}>
+            <SkeletonSwitch label="30%" />
+            <div className="form-grid">
+              <SkeletonField />
+              <SkeletonField label="46%" />
+            </div>
+            <SkeletonField label="24%" />
+            <SkeletonSwitch label="58%" />
+            <SkeletonSwitch label="52%" />
+          </Skeleton>
         )}
         {form && (
           <>
@@ -235,6 +256,7 @@ function Inner() {
           <h2 className="section-title" style={{ paddingBottom: 2 }}>
             {t('Các tệp sao lưu', 'Backup files')}
           </h2>
+          {!st && <SkeletonLines n={4} value pad="10px 0" label={t('Đang tải các tệp sao lưu', 'Loading backup files')} />}
           {st && !st.files.length && <p className="section-sub">{t('Chưa có tệp sao lưu nào.', 'No backup files yet.')}</p>}
           {st?.files.map((b) => (
             <div key={b.name} className="line" style={{ padding: '10px 0' }}>

@@ -5,7 +5,7 @@ import { useI18n } from '../lib/i18n';
 import { fmtBytes } from '../lib/format';
 import { useSites, type SiteInfo } from '../lib/site';
 import { SudoGate } from '../components/SudoGate';
-import { Empty, Switch, useConfirm, useUi } from '../components/ui';
+import { Bone, Empty, Skeleton, SkeletonField, Switch, useConfirm, useUi } from '../components/ui';
 import type { AppConfig } from '../../../server/config';
 
 type Cfg = AppConfig;
@@ -403,12 +403,44 @@ function Inner() {
     document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
   }, [ready]);
 
+  const head = (
+    <header className="page-head">
+      <h1 className="page-title">{t('Cài đặt', 'Settings')}</h1>
+      <p className="page-lede">{t('Mọi thay đổi được lưu vào cơ sở dữ liệu và áp dụng ngay, không cần khởi động lại.', 'Every change is stored in the database and applied at once, no restart needed.')}</p>
+    </header>
+  );
   if (!cfg)
     return error ? (
       <div className="page">
         <Empty page title={t('Không tải được cài đặt', 'Could not load settings')}>{error}</Empty>
       </div>
-    ) : null;
+    ) : (
+      <div className="page">
+        {head}
+        <Skeleton label={t('Đang tải cài đặt', 'Loading settings')} className="settings">
+          <div className="settings-nav">
+            {[48, 92, 60, 64, 104, 112, 44, 84].map((w, i) => (
+              <Bone key={i} w={w} h={11} style={{ margin: '8px 0' }} />
+            ))}
+          </div>
+          <div className="settings-body">
+            {[0, 1, 2].map((i) => (
+              <fieldset key={i}>
+                <Bone w={130} h={16} style={{ margin: '3px 0 9px' }} />
+                <Bone w="72%" h={11} style={{ marginBottom: 16 }} />
+                <div className="stack">
+                  <SkeletonField label="26%" />
+                  <div className="form-grid">
+                    <SkeletonField />
+                    <SkeletonField label="44%" />
+                  </div>
+                </div>
+              </fieldset>
+            ))}
+          </div>
+        </Skeleton>
+      </div>
+    );
   const dirty = JSON.stringify(cfg) !== saved;
   const set = (p: string, v: unknown) => setCfg((c) => c && setPath(c, p, v));
 
@@ -501,10 +533,7 @@ function Inner() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h1 className="page-title">{t('Cài đặt', 'Settings')}</h1>
-        <p className="page-lede">{t('Mọi thay đổi được lưu vào cơ sở dữ liệu và áp dụng ngay, không cần khởi động lại.', 'Every change is stored in the database and applied at once, no restart needed.')}</p>
-      </header>
+      {head}
       <div className="settings">
         <nav className="settings-nav" aria-label={t('Mục cài đặt', 'Settings sections')}>
           {nav.map(([id, label]) => (

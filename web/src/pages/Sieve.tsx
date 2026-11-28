@@ -4,7 +4,7 @@ import { api, ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDuration, fmtNum } from '../lib/format';
-import { Empty, PausedNotice, Sentinel, useConfirm, useUi } from '../components/ui';
+import { Bone, Empty, PausedNotice, Sentinel, Skeleton, SkeletonLines, boneWidth, useConfirm, useUi } from '../components/ui';
 import { NowSieving, ScrapeStatus, SieveForm, scrapePath, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
 import { ALL, SiteTag, useSites } from '../lib/site';
 import type { AppConfig } from '../../../server/config';
@@ -119,6 +119,37 @@ function LibraryRow({ s, merged }: { s: ArchiveRow; merged: boolean }) {
         {fmtAgo(s.finishedAt ?? s.createdAt)}
       </span>
     </Link>
+  );
+}
+
+/** Archive rows still loading, column for column like `LibraryRow`. */
+function LibrarySkeleton() {
+  const { t } = useI18n();
+  const num = <Bone w={26} h={12} style={{ justifySelf: 'end' }} />;
+  return (
+    <Skeleton label={t('Đang tải các bài đã sàng', 'Loading sieved threads')}>
+      {Array.from({ length: 8 }, (_, i) => (
+        <div key={i} className="lib-line">
+          <span className="lib-pick">
+            <Bone w={16} h={16} r={4} />
+          </span>
+          <div className="gtr lib-row">
+            <Bone w={38} h={38} r="50%" />
+            <span className="line-text" style={{ gap: 7 }}>
+              <Bone w={boneWidth(i)} h={13} />
+              <Bone w="32%" h={10} />
+            </span>
+            <span className="r wide-only">{num}</span>
+            <span className="r">{num}</span>
+            <span className="r wide-only">{num}</span>
+            <span className="r">{num}</span>
+            <span className="wide-only">
+              <Bone w={70} h={11} />
+            </span>
+          </div>
+        </div>
+      ))}
+    </Skeleton>
   );
 }
 
@@ -271,6 +302,7 @@ export function SievePage() {
     <div className="page">
       <header className="page-head tight">
         <h1 className="page-title">{t('Kho', 'Archive')}</h1>
+        {!ov && !merged && <Bone w={330} h={12} style={{ alignSelf: 'center' }} />}
         {ov && (
           <p className="page-lede">
             {t(
@@ -348,6 +380,7 @@ export function SievePage() {
                   <LibraryRow s={s} merged={merged} />
                 </div>
               ))}
+              {!loaded && <LibrarySkeleton />}
             </div>
           )}
           <Sentinel onVisible={() => void load(false, cursor)} disabled={done || !loaded} />
@@ -361,6 +394,19 @@ export function SievePage() {
             <p className="section-sub" style={{ paddingBottom: 6 }}>
               {t('Số bài viết trong kho', 'Threads in the archive')}
             </p>
+            {!ov && (
+              <Skeleton label={t('Đang tải chuyên mục', 'Loading sections')} className="stack" style={{ gap: 0 }}>
+                {Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} className="forum-stat">
+                    <div>
+                      <Bone w={boneWidth(i + 1)} h={12} style={{ maxWidth: '60%' }} />
+                      <Bone w={48} h={11} />
+                    </div>
+                    <Bone h={6} r={3} />
+                  </div>
+                ))}
+              </Skeleton>
+            )}
             {ov?.forums.map((f) => (
               <div key={f.id} className="forum-stat">
                 <div>
@@ -466,7 +512,16 @@ export function QueuePage() {
           <h2 id="h-now" className="section-title">
             {t('Đang xử lý', 'Working on')}
           </h2>
-          {processing ? (
+          {!items ? (
+            <Skeleton label={t('Đang tải hàng đợi', 'Loading the queue')} className="job-now">
+              <Bone w={108} h={108} r="50%" />
+              <div className="job-now-text" style={{ gap: 10 }}>
+                <Bone w="70%" h={15} />
+                <Bone w="44%" h={11} />
+                <Bone w="90%" h={28} />
+              </div>
+            </Skeleton>
+          ) : processing ? (
             <NowSieving s={processing} lp={live[processing.id]} />
           ) : (
             items && (
@@ -480,6 +535,7 @@ export function QueuePage() {
             {t('Đang chờ', 'Waiting')}
             {waiting.length > 0 && <span className="muted num"> {waiting.length}</span>}
           </h2>
+          {!items && <SkeletonLines n={2} label={t('Đang tải bài đang chờ', 'Loading waiting threads')} />}
           {items && !waiting.length && <p className="muted" style={{ margin: '8px 0 0' }}>{t('Không có bài nào đang chờ.', 'Nothing is waiting.')}</p>}
           {waiting.map((s, i) => (
             <div key={s.id} className="line">
@@ -503,6 +559,7 @@ export function QueuePage() {
           <h2 className="section-title" style={{ paddingBottom: 2 }}>
             {t('Vừa xong', 'Just finished')}
           </h2>
+          {!recent && <SkeletonLines n={5} value pad="10px 0" label={t('Đang tải lượt vừa xong', 'Loading finished jobs')} />}
           {recent && !recent.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt nào xong.', 'Nothing finished yet.')}</p>}
           {recent?.map((s) => (
             <Link key={s.id} to={scrapePath(s.id, s.site?.code ?? selected)} className="line" style={{ padding: '10px 0' }}>

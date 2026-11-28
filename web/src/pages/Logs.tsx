@@ -5,7 +5,7 @@ import { useLatest, usePaged } from '../lib/load';
 import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Empty, ExternalLink, Pager, Spinner, Status, useUi } from '../components/ui';
+import { Bone, Empty, ExternalLink, Pager, Skeleton, SkeletonResults, Status, boneWidth, useUi } from '../components/ui';
 
 type Kind = 'posts' | 'comments';
 
@@ -68,7 +68,21 @@ export function SyncLogPage({ kind }: { kind: Kind }) {
         </p>
       )}
       {!data ? (
-        !error && <Spinner label={t('Đang tải', 'Loading')} />
+        !error && (
+          <Skeleton label={t('Đang tải nhật ký', 'Loading the log')} className="gtable-scroll">
+            <div className="gtable log-table">
+              {Array.from({ length: 8 }, (_, i) => (
+                <div key={i} className="gtr log-row">
+                  <Bone w={boneWidth(i)} h={13} />
+                  <Bone w={118} h={12} />
+                  <Bone w={60} h={12} />
+                  <Bone w={64} h={12} />
+                  <Bone w={36} h={12} style={{ justifySelf: 'end' }} />
+                </div>
+              ))}
+            </div>
+          </Skeleton>
+        )
       ) : !data.items.length ? (
         <Empty title={t('Chưa có lần đồng bộ nào', 'No sync runs yet')}>{t('Bật đồng bộ tự động trong Cài đặt hoặc chạy Đồng bộ thủ công.', 'Turn on auto-sync in Settings or run Manual sync.')}</Empty>
       ) : (
@@ -173,7 +187,20 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
   if (!data)
     return (
       <div className="page">
-        {error ? <Empty page title={t('Không tải được lần đồng bộ này', 'Could not load this sync run')}>{error}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
+        {error ? (
+          <Empty page title={t('Không tải được lần đồng bộ này', 'Could not load this sync run')}>{error}</Empty>
+        ) : (
+          <Skeleton label={t('Đang tải lần đồng bộ', 'Loading the sync run')}>
+            <Bone w={150} h={11} style={{ margin: '3px 0' }} />
+            <div className="page-head tight" style={{ paddingTop: 4, flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+              <Bone w={260} h={22} />
+              <Bone w={340} h={12} />
+            </div>
+            <div style={{ borderTop: '1px solid var(--line)' }}>
+              <SkeletonResults n={8} side={84} sideH={22} />
+            </div>
+          </Skeleton>
+        )}
       </div>
     );
   const h = data.history;

@@ -2106,7 +2106,10 @@ a.gtr:hover .gt-title {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, var(--field), var(--line2), var(--field));
+  display: block;
+  flex: none;
+  max-width: 100%;
+  background: linear-gradient(90deg, var(--line2), var(--line), var(--line2));
   background-size: 200% 100%;
   animation: shimmer 1.2s infinite linear;
   border-radius: var(--r-field);
@@ -2115,6 +2118,11 @@ a.gtr:hover .gt-title {
 @keyframes shimmer {
   to {
     background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
   }
 }
 
@@ -2209,6 +2217,12 @@ a.gtr:hover .gt-title {
   color: #1f2233;
   font-size: 18px;
   box-shadow: 0 0 0 4px var(--bg), 0 0 0 5px var(--cool);
+}
+/* the bubbles keep their place and size while the numbers load */
+.bubble.skeleton {
+  background: linear-gradient(90deg, var(--line2), var(--line), var(--line2));
+  background-size: 200% 100%;
+  box-shadow: none;
 }
 
 /* Tìm kiếm */

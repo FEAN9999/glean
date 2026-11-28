@@ -5,7 +5,7 @@ import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum, fmtTime } from '../lib/format';
 import { SudoGate } from '../components/SudoGate';
-import { Status } from '../components/ui';
+import { Bone, Skeleton, SkeletonLines, Status } from '../components/ui';
 import type { AppConfig } from '../../../server/config';
 
 interface SyncStatus {
@@ -48,7 +48,7 @@ function AutoRows() {
   const load = () => api.get<{ posts: AutoState; comments: AutoState }>('/sync/auto-status', { quiet: true }).then((r) => setAuto(r.data)).catch(() => {});
   useEffect(() => void load(), []);
   useEvent([Ev.AutoSyncFinished, Ev.ConfigReloaded, Ev.Reconnected], () => void load());
-  if (!auto) return null;
+  if (!auto) return <SkeletonLines n={2} value pad="14px 0" label={t('Đang tải đồng bộ tự động', 'Loading auto-sync')} />;
   return (
     <>
       {(['posts', 'comments'] as const).map((k) => {
@@ -88,7 +88,7 @@ function AutoRows() {
 
 function Inner() {
   const { t, lang } = useI18n();
-  const [forums, setForums] = useState<{ id: number; name: string }[]>([]);
+  const [forums, setForums] = useState<{ id: number; name: string }[] | null>(null);
   const [type, setType] = useState<'posts' | 'comments'>('posts');
   const [allPages, setAllPages] = useState(false);
   const [pageFrom, setPageFrom] = useState(1);
@@ -105,7 +105,7 @@ function Inner() {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.get<AppConfig>('/systems/config', { quiet: true }).then((r) => setForums(r.data.source.forums)).catch(() => {});
+    api.get<AppConfig>('/systems/config', { quiet: true }).then((r) => setForums(r.data.source.forums)).catch(() => setForums([]));
     api
       .get<SyncStatus>('/manual-syncs/status', { quiet: true })
       .then((r) => {
@@ -253,8 +253,9 @@ function Inner() {
               <span style={{ fontSize: 13 }}>
                 {t('Chuyên mục', 'Sections')} <span className="muted">{t('(không chọn là tất cả)', '(none selected means all)')}</span>
               </span>
-              <div className="chips">
-                {forums.map((f) => {
+              <div className="chips" aria-busy={!forums}>
+                {!forums && [96, 128, 84, 112].map((w) => <Bone key={w} w={w} h={32} />)}
+                {forums?.map((f) => {
                   const on = picked.includes(f.id);
                   return (
                     <button
@@ -284,7 +285,22 @@ function Inner() {
 
         <section className="col-side" style={{ gap: 4 }} aria-live="polite">
           <h2 className="section-title">{running ? t('Đang chạy', 'Running') : t('Lần thủ công gần nhất', 'Last manual run')}</h2>
-          {!st?.startedAt ? (
+          {!st && !error ? (
+            <Skeleton label={t('Đang tải lần chạy gần nhất', 'Loading the last run')}>
+              <Bone w="70%" h={11} style={{ margin: '4px 0' }} />
+              <div className="figures" style={{ padding: '14px 0 10px' }}>
+                {[0, 1].map((i) => (
+                  <div key={i} className="figure" style={{ gap: 8 }}>
+                    <Bone w={84} h={24} />
+                    <Bone w={64} h={11} />
+                  </div>
+                ))}
+              </div>
+              <Bone h={6} r={3} />
+              <Bone w="60%" h={12} style={{ margin: '14px 0 20px' }} />
+              <Bone h={120} />
+            </Skeleton>
+          ) : !st?.startedAt ? (
             <p className="section-sub">{t('Chưa chạy lần nào kể từ khi khởi động máy chủ.', 'Not run since the server started.')}</p>
           ) : (
             <>

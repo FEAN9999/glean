@@ -6,7 +6,7 @@ import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { SiteTag, useSites } from '../lib/site';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useReturnFocus, useUi } from '../components/ui';
+import { Bone, Donut, Empty, ExternalLink, Mesh, Pager, Skeleton, Status, boneWidth, pageRange, useConfirm, useReturnFocus, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, threadOnForum, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
@@ -94,10 +94,71 @@ function useTabPages<T>(path: string, size: number, extra: string, site: string)
   };
 }
 
-/** Before a tab's first page arrives: the error if loading failed, else a spinner. */
-function TabLoading({ error, label }: { error: string | null; label: string }) {
+/** Before a tab's first page arrives: the error if loading failed, else the tab's skeleton. */
+function TabLoading({ error, label, children }: { error: string | null; label: string; children: ReactNode }) {
   const { t } = useI18n();
-  return error ? <Empty title={t('Không tải được', 'Could not load')}>{error}</Empty> : <Spinner label={label} />;
+  return error ? <Empty title={t('Không tải được', 'Could not load')}>{error}</Empty> : <Skeleton label={label}>{children}</Skeleton>;
+}
+
+/** The line above a tab's list (how many, which page) while it loads. */
+const ToolsSkeleton = () => (
+  <div className="tab-tools">
+    <Bone w={150} h={12} />
+  </div>
+);
+
+/** Image tiles still loading, at the tile size the gallery will use. */
+function GallerySkeleton({ size }: { size: TileSize }) {
+  return (
+    <div className={`gallery size-${size}`}>
+      {Array.from({ length: size === 'l' ? 2 : 12 }, (_, i) => (
+        <figure key={i} className="shot">
+          <Bone h="auto" r={8} style={{ aspectRatio: size === 'l' ? '16 / 9' : '4 / 3' }} />
+          <figcaption className="shot-cap">
+            <Bone w="55%" h={10} style={{ margin: '2px 0' }} />
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+/** A whole sieve job still loading: heading, tabs and gallery on the left, the job's figures on the right. */
+function JobSkeleton() {
+  const { t } = useI18n();
+  const [tileSize] = useTileSize();
+  return (
+    <Skeleton label={t('Đang tải lượt sàng', 'Loading the sieve job')} className="page cols">
+      <div className="col-main">
+        <Bone w={130} h={11} style={{ margin: '3px 0' }} />
+        <div className="hstack" style={{ gap: '10px 12px', padding: '8px 0 6px' }}>
+          <Bone w="50%" h={24} style={{ flex: 1, minWidth: 240, maxWidth: 520 }} />
+          <span style={{ flex: 1 }} />
+          <Bone w={86} h={34} />
+          <Bone w={104} h={34} />
+        </div>
+        <Bone w={320} h={12} style={{ margin: '6px 0 20px' }} />
+        <div className="tabs" style={{ marginBottom: 20 }}>
+          {[56, 60, 72, 84, 128].map((w) => (
+            <Bone key={w} w={w} h={13} style={{ margin: '12px 0 14px' }} />
+          ))}
+        </div>
+        <ToolsSkeleton />
+        <GallerySkeleton size={tileSize} />
+      </div>
+      <aside className="col-side">
+        <Bone w={110} h={16} style={{ margin: '4px 0' }} />
+        <Bone w={150} h={11} style={{ margin: '6px 0' }} />
+        <div className="hstack" style={{ gap: 20, padding: '16px 0 20px', borderBottom: '1px solid var(--line)', flexWrap: 'nowrap' }}>
+          <Bone w={96} h={96} r="50%" />
+          <div className="stack" style={{ gap: 10, flex: 1 }}>
+            <Bone w="70%" h={12} />
+            <Bone w="55%" h={12} />
+          </div>
+        </div>
+      </aside>
+    </Skeleton>
+  );
 }
 
 /**
@@ -277,7 +338,13 @@ function ImagesTab({ id, site, failed, selectedId, onPick }: { id: number; site:
   const { t } = useI18n();
   const [tileSize, setTileSize] = useTileSize();
   const { data, error, page, setPage } = useTabPages<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE, '', site);
-  if (!data) return <TabLoading error={error} label={t('Đang tải ảnh', 'Loading images')} />;
+  if (!data)
+    return (
+      <TabLoading error={error} label={t('Đang tải ảnh', 'Loading images')}>
+        <ToolsSkeleton />
+        <GallerySkeleton size={tileSize} />
+      </TabLoading>
+    );
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</TabEmpty>;
   const viewable = data.items.filter(isViewable);
   const sizes: { key: TileSize; label: string; hint: string }[] = [
@@ -463,7 +530,21 @@ const VIDEOS_PER_PAGE = 12;
 function VideosTab({ id, site, failed }: { id: number; site: string; failed: boolean }) {
   const { t } = useI18n();
   const { data, error, page, setPage } = useTabPages<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE, '', site);
-  if (!data) return <TabLoading error={error} label={t('Đang tải video', 'Loading videos')} />;
+  if (!data)
+    return (
+      <TabLoading error={error} label={t('Đang tải video', 'Loading videos')}>
+        <ToolsSkeleton />
+        <ul className="reels">
+          {Array.from({ length: 4 }, (_, i) => (
+            <li key={i} className="reel">
+              <Bone h="auto" r={8} style={{ aspectRatio: '16 / 9' }} />
+              <Bone w="58%" h={11} />
+              <Bone w={150} h={11} />
+            </li>
+          ))}
+        </ul>
+      </TabLoading>
+    );
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có video', 'No videos')} />;
   return (
     <>
@@ -484,7 +565,19 @@ function VideosTab({ id, site, failed }: { id: number; site: string; failed: boo
 function LinksTab({ id, site, failed }: { id: number; site: string; failed: boolean }) {
   const { t } = useI18n();
   const { data, error, page, setPage } = useTabPages<Lnk>(`/scrapes/${id}/links`, 40, '', site);
-  if (!data) return <TabLoading error={error} label={t('Đang tải liên kết', 'Loading links')} />;
+  if (!data)
+    return (
+      <TabLoading error={error} label={t('Đang tải liên kết', 'Loading links')}>
+        <ul className="rows">
+          {Array.from({ length: 8 }, (_, i) => (
+            <li key={i} className="row" style={{ gap: 8 }}>
+              <Bone w={boneWidth(i)} h={14} />
+              <Bone w="36%" h={10} />
+            </li>
+          ))}
+        </ul>
+      </TabLoading>
+    );
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có liên kết', 'No links')} />;
   return (
     <>
@@ -543,7 +636,18 @@ function CommentsTab({ id, site, failed, synced }: { id: number; site: string; f
         </div>
       )}
       {!data ? (
-        <TabLoading error={error} label={t('Đang tải bình luận', 'Loading comments')} />
+        <TabLoading error={error} label={t('Đang tải bình luận', 'Loading comments')}>
+          <ul className="rows">
+            {Array.from({ length: 6 }, (_, i) => (
+              <li key={i} className="row" style={{ gap: 8 }}>
+                <Bone w="32%" h={11} />
+                <Bone w="92%" h={13} style={{ maxWidth: '75ch' }} />
+                <Bone w={boneWidth(i)} h={13} style={{ maxWidth: '60ch' }} />
+                <Bone w={120} h={11} />
+              </li>
+            ))}
+          </ul>
+        </TabLoading>
       ) : !data.total ? (
         <TabEmpty failed={failed} title={t('Không có bình luận', 'No comments')} />
       ) : (
@@ -590,18 +694,12 @@ export function detailSite(param: string | null, mainCode: string): string {
 
 /** A sieve job of the site in the link's `trang`, whatever site the picker shows; the picker is left as it is. */
 export function SieveDetailPage() {
-  const { t } = useI18n();
   const [params] = useSearchParams();
   const { sites } = useSites();
   // An empty `trang=` names no site.
   const site = detailSite(params.get('trang') || null, sites.find((s) => s.isMain)?.code ?? '');
   // A link without `trang` waits for the list of sites to know which one is the main site.
-  if (!site)
-    return (
-      <div className="page">
-        <Spinner label={t('Đang tải', 'Loading')} />
-      </div>
-    );
+  if (!site) return <JobSkeleton />;
   // Job ids repeat across sites: another site is another job.
   return <SieveJob key={site} site={site} />;
 }
@@ -700,10 +798,12 @@ function SieveJob({ site }: { site: string }) {
       </div>
     );
   if (!s)
-    return (
+    return loadError ? (
       <div className="page">
-        {loadError ? <Empty page title={t('Không tải được lượt sàng này', 'Could not load this sieve job')}>{loadError}</Empty> : <Spinner label={t('Đang tải', 'Loading')} />}
+        <Empty page title={t('Không tải được lượt sàng này', 'Could not load this sieve job')}>{loadError}</Empty>
       </div>
+    ) : (
+      <JobSkeleton />
     );
 
   const processing = s.status === ScrapeStatus.Processing;
