@@ -652,7 +652,14 @@ function Inner() {
           </Section>
 
           <Section id="storage" title={t('Lưu trữ tệp', 'File storage')} shared>
-            {Text({ p: 'storage.basePath', label: t('Thư mục lưu', 'Base folder') })}
+            {Text({
+              p: 'storage.basePath',
+              label: t('Thư mục lưu', 'Base folder'),
+              hint: t(
+                'Thư mục ảnh của trang chính. Mỗi trang thêm sau luôn giữ ảnh trong data/sites/<mã>/media.',
+                "The main site's image folder. Each added site always keeps its images in data/sites/<code>/media.",
+              ),
+            })}
             <div className="form-grid">
               {Num({ p: 'storage.maxFileSizeMb', label: t('Kích thước tối đa (MB)', 'Max size (MB)'), min: 1 })}
             </div>

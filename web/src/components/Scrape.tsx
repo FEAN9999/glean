@@ -88,9 +88,12 @@ export function useCreateScrape() {
       else if (opts.askNavigate)
         toast(
           rerun
-            ? t('Bài này đã sàng trước đây. Glean sàng lại vào lượt cũ, giữ những gì đã lưu.', 'This thread was sieved before. Glean sieves it again into the same job, keeping what it saved.')
+            ? t(
+                `Bài này đã sàng trước đây trong ${site.name}. Glean sàng lại vào lượt cũ, giữ những gì đã lưu.`,
+                `This thread was sieved before in ${site.name}. Glean sieves it again into the same job, keeping what it saved.`,
+              )
             : reused
-              ? t('Bài này đã có trong hàng đợi.', 'This thread is already queued.')
+              ? t(`Bài này đã có trong hàng đợi sàng của ${site.name}.`, `This thread is already in the sieve queue of ${site.name}.`)
               : t(`Đã đưa bài vào hàng đợi sàng của ${site.name}`, `Thread added to the sieve queue of ${site.name}`),
           'info',
           { label: t('Xem tiến trình', 'View progress'), run: () => navigate(to) },

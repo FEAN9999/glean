@@ -62,6 +62,7 @@ interface HistoryItem {
 /** A thread whose title is close to the keyword. */
 interface Suggestion {
   id: number;
+  site: RowSite;
   title: string;
   author: string;
   commentCount: number;
@@ -626,10 +627,15 @@ export function SearchPage({ scope }: { scope: Scope }) {
                 {t('Có thể liên quan', 'Possibly related')}
               </h2>
               {suggest.map((s) => (
-                <button key={s.id} className="line" style={{ padding: '10px 0' }} onClick={() => pick(s.title)}>
+                <button key={`${s.site.code}:${s.id}`} className="line" style={{ padding: '10px 0' }} onClick={() => pick(s.title)}>
                   <span className="line-text">
                     <span className="line-title">{s.title}</span>
                     <span className="line-sub">
+                      {merged && (
+                        <>
+                          <SiteTag code={s.site.code} />{' '}
+                        </>
+                      )}
                       {s.author} · {t(`${fmtNum(s.commentCount)} bình luận`, `${fmtNum(s.commentCount)} comments`)}
                     </span>
                   </span>

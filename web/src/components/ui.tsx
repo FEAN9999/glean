@@ -82,9 +82,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshMaintenance = useCallback(() => {
+    // The flags are one site's: none apply under `*`, and an answer that lands after a switch is dropped.
+    const site = selectedSite();
+    if (site === ALL) return;
     api
-      .get<Maintenance>('/systems/maintenance', { quiet: true })
-      .then((r) => setMaintenance(r.data))
+      .get<Maintenance>('/systems/maintenance', { quiet: true, site })
+      .then((r) => selectedSite() === site && setMaintenance(r.data))
       .catch(() => {});
   }, []);
 
