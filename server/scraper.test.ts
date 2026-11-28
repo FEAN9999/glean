@@ -32,7 +32,10 @@ updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDel
 // The main site is the demo forum on 127.0.0.1; the other sites use their own hosts.
 const rphang = addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 const rm2 = addSite({ baseUrl: 'https://rm2.test', code: 'rm2', name: 'rm2' });
-for (const s of [rphang, rm2]) withSite(s, () => updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } }, 0));
+// Sites only the merged archive test writes to, so it can count their rows.
+const m1 = addSite({ baseUrl: 'https://m1.test', code: 'm1', name: 'm1' });
+const m2 = addSite({ baseUrl: 'https://m2.test', code: 'm2', name: 'm2' });
+for (const s of [rphang, rm2, m1, m2]) withSite(s, () => updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } }, 0));
 
 const A = 'http://x.test/a.jpg';
 const B = 'http://x.test/b.jpg';
@@ -663,4 +666,64 @@ test('removing a site stops its queue', async () => {
   } finally {
     setThreadReader(onePage);
   }
+});
+
+test('merged archive pages by cursor', async () => {
+  const app = Fastify();
+  app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+  registerSites(app);
+  registerScraper(app);
+  // All at one time, newer than any other job: the order falls back to the site code, then the id.
+  const seeded = [m1, m2].flatMap((s) =>
+    withSite(s, () =>
+      [1, 2, 3].map((i) => {
+        const id = jobFor(9300 + i, ScrapeStatus.Completed);
+        run('UPDATE scrape SET created_at=? WHERE id=?', '2099-01-01T00:00:00.000Z', id);
+        return `${s.code}:${id}`;
+      }),
+    ),
+  );
+  type Row = { id: number; createdAt: string; site: { code: string } };
+  const rows: Row[] = [];
+  let first: { totalBySite: Record<string, number>; total: number } | undefined;
+  const prev = setTestFallback(null);
+  try {
+    let cursor: string | null = null;
+    do {
+      const url: string = `/api/scrapes/processed?size=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const r = await app.inject({ method: 'GET', url, headers: { 'x-glean-site': '*' } });
+      assert.equal(r.statusCode, 200);
+      const j = r.json<{ data: Row[]; nextCursor: string | null; total: number; totalBySite: Record<string, number> }>();
+      assert.ok(j.data.length <= 2);
+      first ??= j;
+      rows.push(...j.data);
+      cursor = j.nextCursor;
+    } while (cursor);
+  } finally {
+    setTestFallback(prev);
+  }
+  const keys = rows.map((s) => `${s.site.code}:${s.id}`);
+  assert.equal(new Set(keys).size, keys.length);
+  // The first three pages are these six jobs: m1's newest ids first, then m2's.
+  assert.deepEqual(keys.slice(0, 6), seeded.slice(0, 3).reverse().concat(seeded.slice(3).reverse()));
+  assert.deepEqual(keys.filter((k) => /^m[12]:/.test(k)).sort(), seeded.sort());
+  for (let i = 1; i < rows.length; i++) {
+    const [a, b] = [rows[i - 1], rows[i]];
+    const newer = a.createdAt > b.createdAt || (a.createdAt === b.createdAt && (a.site.code < b.site.code || (a.site.code === b.site.code && a.id > b.id)));
+    assert.ok(newer, `${keys[i - 1]} before ${keys[i]}`);
+  }
+  assert.equal(first!.totalBySite.m1, 3);
+  assert.equal(first!.totalBySite.m2, 3);
+  assert.equal(first!.total, Object.values(first!.totalBySite).reduce((n, x) => n + x, 0));
+});
+
+test('one site keeps its numeric archive cursor and reports its total by site', async () => {
+  const app = Fastify();
+  registerSites(app);
+  registerScraper(app);
+  const j = (await app.inject({ method: 'GET', url: '/api/scrapes/processed?size=2', headers: { 'x-glean-site': 'm1' } })).json();
+  assert.equal(j.data.length, 2);
+  assert.equal(typeof j.nextCursor, 'number');
+  assert.deepEqual(j.totalBySite, { m1: 3 });
+  assert.equal(j.total, 3);
 });

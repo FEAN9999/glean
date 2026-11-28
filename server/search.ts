@@ -4,7 +4,8 @@ import { cfg } from './config.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError, assertNotPaused, intParam, ok } from './http.ts';
 import { parseThreadRef } from './source/xenforo.ts';
-import { requestSite, siteForLink, siteInfo, siteRequired, withSite } from './site.ts';
+import { currentSite, forEachSite, requestSite, siteForLink, siteInfo, siteRequired, withSite } from './site.ts';
+import { desc, interleave, mergeTop, newestFirst } from './merge.ts';
 
 /**
  * Full-text search over synced threads/comments (SQLite FTS5, diacritic-insensitive tokenizer)
@@ -54,6 +55,47 @@ function record(kind: Kind, keyword: string, resultCount: number) {
   emit(HISTORY_EVENT[kind], item, undefined, kind.startsWith('post') ? 'search-post' : 'search-comment');
 }
 
+/** Which rows a search returns; by default the page asked for. */
+type Win = { limit: number; offset: number };
+
+type SiteTag = { code: string; name: string };
+type Hit = Record<string, unknown> & { id: number; createdAt: string; site: SiteTag };
+
+/** The rows of the current site, each naming it. */
+function tagged<T extends Record<string, unknown>>(rows: Record<string, unknown>[]) {
+  const s = currentSite();
+  const site: SiteTag = { code: s.code, name: s.name };
+  return camelAll<T>(rows).map((r) => ({ ...r, site }));
+}
+
+/** With `*`, a site whose search is paused stops the search, and the message names it. */
+async function assertNoSitePaused(feature: 'searchPost' | 'searchComment') {
+  await forEachSite((s) => {
+    const flag = cfg().maintenance[feature];
+    if (flag.isPaused)
+      throw new ApiError(503, 'FEATURE_PAUSED', flag.message || [`Tính năng đang tạm dừng ở trang ${s.name}.`, `This feature is paused on the site ${s.name}.`], 'banner');
+  });
+}
+
+/**
+ * With `*`: the same search in every site. The first `page × pageSize` rows of each are merged in
+ * `cmp` order and the page is cut from them; the total is the sum of the sites.
+ */
+async function searchEverySite<T extends Hit>(page: number, search: (win: Win) => { items: T[]; total: number }, cmp: (a: T, b: T) => number) {
+  const size = cfg().search.pageSize;
+  const per = await forEachSite(() => search({ limit: page * size, offset: 0 }));
+  const total = per.reduce((n, p) => n + p.value.total, 0);
+  const items = mergeTop(
+    per.map((p) => p.value.items),
+    cmp,
+    (page - 1) * size,
+    size,
+  );
+  return { items, total, page, pageSize: size, nextPage: page * size < total ? page + 1 : null };
+}
+
+const sumOverSites = async (count: () => number) => (await forEachSite(count)).reduce((n, p) => n + p.value, 0);
+
 /* ---------------- posts ---------------- */
 
 interface PostSearchBody {
@@ -89,25 +131,37 @@ function countPosts(b: PostSearchBody) {
   return get<{ n: number }>(`SELECT COUNT(*) n FROM thread t ${w.join} WHERE ${w.where}`, ...w.params)!.n;
 }
 
-export function searchPosts(b: PostSearchBody) {
+type PostHit = Hit & { commentCount: number; viewCount: number; likeCount: number };
+
+/** The column a post search sorts by first, as a row field; null for the newest first. */
+const sortField = (b: PostSearchBody) => (Object.hasOwn(SORT_COLUMN, b.sortDescendingField ?? '') ? (b.sortDescendingField as 'commentCount' | 'viewCount' | 'likeCount') : null);
+
+/** The order of a merged post search: the chosen column, then newest first (the same order as the SQL below). */
+const postOrder = (b: PostSearchBody) => {
+  const f = sortField(b);
+  return (x: PostHit, y: PostHit) => (f ? desc(x[f], y[f]) : 0) || newestFirst(x, y);
+};
+
+export function searchPosts(b: PostSearchBody, win?: Win) {
   const w = postWhere(b);
   const size = cfg().search.pageSize;
   const page = intParam(b.page, 1);
-  if (!w) return { items: [], total: 0, page, pageSize: size, nextPage: null };
-  const col = Object.hasOwn(SORT_COLUMN, b.sortDescendingField ?? '') ? SORT_COLUMN[b.sortDescendingField!] : null;
-  const order = col ? `${col} DESC, t.created_at DESC` : 't.created_at DESC';
+  if (!w) return { items: [] as PostHit[], total: 0, page, pageSize: size, nextPage: null };
+  const f = sortField(b);
+  const order = f ? `${SORT_COLUMN[f]} DESC, t.created_at DESC, t.id DESC` : 't.created_at DESC, t.id DESC';
+  const { limit, offset } = win ?? { limit: size, offset: (page - 1) * size };
   const rows = all(
     `SELECT t.id, t.title, t.author, t.forum_id, COALESCE(fo.name, '') forum_name, t.url, t.created_at, t.last_post_at,
             t.comment_count, t.synced_comment_count, t.view_count, t.like_count, t.is_deleted
      FROM thread t ${w.join} LEFT JOIN forum fo ON fo.id = t.forum_id
      WHERE ${w.where} ORDER BY ${order} LIMIT ? OFFSET ?`,
     ...w.params,
-    size,
-    (page - 1) * size,
+    limit,
+    offset,
   );
   const total = countPosts(b);
   return {
-    items: camelAll(rows),
+    items: tagged<PostHit>(rows),
     total,
     page,
     pageSize: size,
@@ -160,22 +214,23 @@ function countComments(b: CommentSearchBody, byAuthor: boolean) {
   return get<{ n: number }>(`SELECT COUNT(*) n FROM comment c ${w.join} WHERE ${w.where}`, ...w.params)!.n;
 }
 
-export function searchComments(b: CommentSearchBody, byAuthor: boolean) {
+export function searchComments(b: CommentSearchBody, byAuthor: boolean, win?: Win) {
   const size = cfg().search.pageSize;
   const page = intParam(b.page, 1);
   const w = commentWhere(b, byAuthor);
-  if (!w) return { items: [], total: 0, page, pageSize: size, nextPage: null };
+  if (!w) return { items: [] as Hit[], total: 0, page, pageSize: size, nextPage: null };
+  const { limit, offset } = win ?? { limit: size, offset: (page - 1) * size };
   const rows = all(
     `SELECT c.id, c.thread_id, c.post_no, c.page, c.author, c.content, c.created_at, c.url,
             c.edit_count, c.edited_at, c.deleted_at, t.title thread_title, t.is_deleted thread_is_deleted
      FROM comment c ${w.join} LEFT JOIN thread t ON t.id = c.thread_id
-     WHERE ${w.where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+     WHERE ${w.where} ORDER BY c.created_at DESC, c.id DESC LIMIT ? OFFSET ?`,
     ...w.params,
-    size,
-    (page - 1) * size,
+    limit,
+    offset,
   );
   const total = countComments(b, byAuthor);
-  return { items: camelAll(rows), total, page, pageSize: size, nextPage: page * size < total ? page + 1 : null };
+  return { items: tagged<Hit>(rows), total, page, pageSize: size, nextPage: page * size < total ? page + 1 : null };
 }
 
 /* ---------------- suggestions (related titles) ---------------- */
@@ -198,7 +253,7 @@ async function suggestions(q: string, topK: number) {
             ...ids,
           );
           const byId = new Map(rows.map((r) => [r.id, r]));
-          return { source: 'semantic', items: camelAll(ids.map((id) => byId.get(id)).filter((r) => r !== undefined)) };
+          return { source: 'semantic', items: tagged(ids.map((id) => byId.get(id)).filter((r) => r !== undefined)) };
         }
       }
     } catch {
@@ -218,7 +273,7 @@ async function suggestions(q: string, topK: number) {
     allQ,
     topK,
   );
-  return { source: 'lexical', items: camelAll(rows) };
+  return { source: 'lexical', items: tagged(rows) };
 }
 
 /* ---------------- history ---------------- */
@@ -235,16 +290,19 @@ function history(kind: Kind, cursor: unknown) {
 
 export function registerSearch(app: FastifyInstance) {
   app.post<{ Body: PostSearchBody }>('/api/posts/search', async (req) => {
-    assertNotPaused(req, 'searchPost');
+    const every = requestSite(req) === null;
+    if (every) await assertNoSitePaused('searchPost');
+    else assertNotPaused(req, 'searchPost');
     const body = { ...req.body, keyword: validate(req.body?.keyword) };
-    const r = searchPosts(body);
+    const r = every ? await searchEverySite(intParam(body.page, 1), (win) => searchPosts(body, win), postOrder(body)) : searchPosts(body);
     if ((body.page ?? 1) <= 1) record(body.isSearchByAuthor ? 'post_author' : 'post_keyword', body.keyword, r.total);
     return ok(r.items, { total: r.total, page: r.page, pageSize: r.pageSize, nextPage: r.nextPage });
   });
 
   app.post<{ Body: PostSearchBody }>('/api/posts/search/count', async (req) => {
     const body = { ...req.body, keyword: String(req.body?.keyword ?? '').trim() };
-    return ok({ total: body.keyword ? countPosts(body) : 0 });
+    const count = () => countPosts(body);
+    return ok({ total: !body.keyword ? 0 : requestSite(req) === null ? await sumOverSites(count) : count() });
   });
 
   app.get('/api/posts/search/meta', async () => {
@@ -265,38 +323,54 @@ export function registerSearch(app: FastifyInstance) {
   app.get<{ Querystring: { q?: string; topK?: string } }>('/api/posts/search/suggestions', async (req) => {
     const q = String(req.query.q ?? '').trim();
     if (q.length < 2) return ok([], { source: 'none' });
-    const r = await suggestions(q, intParam(req.query.topK, cfg().search.semanticTopK, 1, 30));
-    return ok(r.items, { source: r.source });
+    const topKOf = () => intParam(req.query.topK, cfg().search.semanticTopK, 1, 30);
+    if (requestSite(req) !== null) {
+      const r = await suggestions(q, topKOf());
+      return ok(r.items, { source: r.source });
+    }
+    // `*`: each site's own suggestions, taken from the sites in turn.
+    const per = await forEachSite(async () => {
+      const topK = topKOf();
+      return { topK, ...(await suggestions(q, topK)) };
+    });
+    const sources = new Set(per.map((p) => p.value.source));
+    return ok(interleave(per.map((p) => p.value.items)).slice(0, Math.max(...per.map((p) => p.value.topK))), {
+      source: sources.size === 1 ? [...sources][0] : 'mixed',
+    });
   });
 
   /**
    * The site a comment search runs in. A thread link goes to the site of its domain, whichever site
-   * the request is for; an ID, or no thread, to the request's site (none with `*`).
+   * the request is for; an ID, or no thread, to the request's site. Null with `*` and no thread:
+   * every site; `*` with an ID is refused, since the thread could be on any site.
    */
   const searchTarget = (req: FastifyRequest, threadId: CommentSearchBody['threadId']) => {
     const id = resolveThreadId(threadId) && String(threadId).trim();
     const target = (id ? siteForLink(id) : null) ?? requestSite(req);
-    if (!target) throw siteRequired();
-    return { target, extra: target === requestSite(req) ? {} : { site: siteInfo(target) } };
+    if (target) return { target, extra: target === requestSite(req) ? {} : { site: siteInfo(target) } };
+    if (id) throw siteRequired();
+    return null;
   };
 
   const commentSearch = (byAuthor: boolean) => async (req: FastifyRequest<{ Body: CommentSearchBody }>) => {
-    const { target, extra } = searchTarget(req, req.body?.threadId);
-    const r = withSite(target, () => {
-      assertNotPaused(req, 'searchComment');
-      const body = { ...req.body, keyword: validate(req.body?.keyword) };
-      return { body, ...searchComments(body, byAuthor) };
-    });
-    if ((r.body.page ?? 1) <= 1) record(byAuthor ? 'comment_author' : 'comment_keyword', r.body.keyword, r.total);
-    return ok(r.items, { total: r.total, page: r.page, pageSize: r.pageSize, nextPage: r.nextPage, ...extra });
+    const t = searchTarget(req, req.body?.threadId);
+    if (t) withSite(t.target, () => assertNotPaused(req, 'searchComment'));
+    else await assertNoSitePaused('searchComment');
+    const body = { ...req.body, keyword: validate(req.body?.keyword) };
+    const r = t
+      ? withSite(t.target, () => searchComments(body, byAuthor))
+      : await searchEverySite(intParam(body.page, 1), (win) => searchComments(body, byAuthor, win), newestFirst);
+    if ((body.page ?? 1) <= 1) record(byAuthor ? 'comment_author' : 'comment_keyword', body.keyword, r.total);
+    return ok(r.items, { total: r.total, page: r.page, pageSize: r.pageSize, nextPage: r.nextPage, ...t?.extra });
   };
   app.post('/api/comments/search', commentSearch(false));
   app.post('/api/comments/search-by-author', commentSearch(true));
 
   app.post<{ Body: CommentSearchBody }>('/api/comments/search/count', async (req) => {
-    const { target, extra } = searchTarget(req, req.body?.threadId);
+    const t = searchTarget(req, req.body?.threadId);
     const body = { ...req.body, keyword: String(req.body?.keyword ?? '').trim() };
-    return ok({ total: body.keyword ? withSite(target, () => countComments(body, !!body.isSearchByAuthor)) : 0 }, extra);
+    const count = () => countComments(body, !!body.isSearchByAuthor);
+    return ok({ total: !body.keyword ? 0 : t ? withSite(t.target, count) : await sumOverSites(count) }, t?.extra);
   });
 
   app.get('/api/comments/search/meta', async () => {

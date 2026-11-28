@@ -2,8 +2,8 @@ import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
-import { loadConfig } from './config.ts';
-import { mainAll, run } from './db.ts';
+import { loadConfig, updateConfig } from './config.ts';
+import { mainAll, run, setTestFallback } from './db.ts';
 import { addSite, mainSite, registerSites, withSite } from './site.ts';
 import { ApiError, sendError } from './http.ts';
 import { registerSearch, searchComments, searchPosts } from './search.ts';
@@ -128,8 +128,19 @@ async function siteApp() {
   await app.ready();
   return app;
 }
-const threadSearch = async (site: string, url: string, threadId: string, keyword = 'chào') =>
-  (await siteApp()).inject({ method: 'POST', url, headers: { 'x-glean-site': site }, payload: { keyword, threadId } });
+/** Runs a request with the test fallback off, so code that reads a site store outside a site fails as it would in production. */
+async function noFallback<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = setTestFallback(null);
+  try {
+    return await fn();
+  } finally {
+    setTestFallback(prev);
+  }
+}
+const threadSearch = async (site: string, url: string, threadId: string, keyword = 'chào') => {
+  const app = await siteApp();
+  return noFallback(() => app.inject({ method: 'POST', url, headers: { 'x-glean-site': site }, payload: { keyword, threadId } }));
+};
 
 test('a thread link of another site searches that site', async () => {
   const r = await threadSearch(mainSite().code, '/api/comments/search', 'https://rphang.land/t/a.300/');
@@ -151,4 +162,99 @@ test('a bare thread id with * is refused', async () => {
 test('a link on an unknown domain is a 409', async () => {
   const r = await threadSearch(mainSite().code, '/api/comments/search', 'https://nowhere.example/t/a.300/');
   assert.deepEqual([r.statusCode, r.json().code], [409, 'UNKNOWN_SITE']);
+});
+
+/* ---------------- every site at once (x-glean-site: *) ---------------- */
+
+// The same keyword in both stores, with the same ids and times, two threads to a time.
+const hour = (i: number) => new Date(Date.UTC(2026, 9, 1) + Math.floor(i / 2) * 3_600_000).toISOString();
+const seedThreads = (n: number) => {
+  for (let i = 0; i < n; i++)
+    run(
+      `INSERT INTO thread(id, forum_id, title, author, url, created_at, comment_count, updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+      8001 + i,
+      1,
+      `xegop ${i}`,
+      'An',
+      'http://x.test',
+      hour(i),
+      i % 4,
+      hour(i),
+    );
+};
+seedThreads(25);
+withSite('rphang', () => seedThreads(17));
+upsertComments(70, 1, [post(7301, 'binhluangop một'), post(7302, 'binhluangop hai')]);
+withSite('rphang', () => upsertComments(300, 1, [post(7301, 'binhluangop ba')]));
+
+type Hit = { id: number; createdAt: string; commentCount: number; site: { code: string; name: string } };
+const everySite = async (url: string, payload?: object) => {
+  const app = await siteApp();
+  return noFallback(() => app.inject({ method: payload ? 'POST' : 'GET', url, headers: { 'x-glean-site': '*' }, payload }));
+};
+const key = (h: Hit) => `${h.site.code}:${h.id}`;
+/** Newest first; a tie goes by site code, then the higher id first. */
+const newer = (a: Hit, b: Hit) =>
+  a.createdAt > b.createdAt || (a.createdAt === b.createdAt && (a.site.code < b.site.code || (a.site.code === b.site.code && a.id > b.id)));
+
+test('merged post search pages through both stores without gaps or repeats', async () => {
+  updateConfig({ search: { pageSize: 20 } }, 0);
+  for (const sortDescendingField of ['createdAt', 'commentCount']) {
+    const rows: Hit[] = [];
+    for (const page of [1, 2, 3]) {
+      const r = await everySite('/api/posts/search', { keyword: 'xegop', page, sortDescendingField });
+      assert.equal(r.statusCode, 200);
+      const j = r.json<{ data: Hit[]; total: number; nextPage: number | null }>();
+      assert.equal(j.total, 42);
+      assert.equal(j.nextPage, page < 3 ? page + 1 : null);
+      rows.push(...j.data);
+    }
+    assert.equal(rows.length, 42);
+    assert.equal(new Set(rows.map(key)).size, 42);
+    for (let i = 1; i < rows.length; i++) {
+      const [a, b] = [rows[i - 1], rows[i]];
+      const ok = sortDescendingField === 'commentCount' ? a.commentCount > b.commentCount || (a.commentCount === b.commentCount && newer(a, b)) : newer(a, b);
+      assert.ok(ok, `${sortDescendingField}: ${key(a)} before ${key(b)}`);
+    }
+  }
+});
+
+test('every merged row names its site', async () => {
+  const codes = new Set(['demo', 'rphang']);
+  const posts = (await everySite('/api/posts/search', { keyword: 'xegop' })).json<{ data: Hit[] }>().data;
+  const comments = (await everySite('/api/comments/search', { keyword: 'binhluangop' })).json<{ data: Hit[]; total: number }>();
+  assert.deepEqual(comments.data.map(key), ['demo:7302', 'demo:7301', 'rphang:7301']);
+  assert.equal(comments.total, 3);
+  const suggested = (await everySite('/api/posts/search/suggestions?q=xegop%20khac&topK=8')).json<{ data: Hit[] }>().data;
+  assert.deepEqual(
+    suggested.map((s) => s.site.code),
+    ['demo', 'rphang', 'demo', 'rphang', 'demo', 'rphang', 'demo', 'rphang'],
+  );
+  for (const row of [...posts, ...comments.data, ...suggested]) {
+    assert.ok(codes.has(row.site.code), key(row));
+    assert.equal(row.site.name, row.site.code);
+  }
+  assert.equal((await everySite('/api/posts/search/count', { keyword: 'xegop' })).json().data.total, 42);
+  assert.equal((await everySite('/api/comments/search/count', { keyword: 'binhluangop' })).json().data.total, 3);
+  // One site: its rows name it too.
+  const app = await siteApp();
+  const one = (await app.inject({ method: 'POST', url: '/api/posts/search', headers: { 'x-glean-site': 'rphang' }, payload: { keyword: 'xegop' } })).json<{ data: Hit[] }>();
+  assert.ok(one.data.length > 0);
+  for (const row of one.data) assert.deepEqual(row.site, { code: 'rphang', name: 'rphang' });
+});
+
+test('a paused site stops merged search', async () => {
+  withSite('rphang', () => updateConfig({ maintenance: { searchPost: { isPaused: true, message: '' } } }, 0));
+  try {
+    const r = await everySite('/api/posts/search', { keyword: 'xegop' });
+    assert.equal(r.statusCode, 503);
+    assert.equal(r.json().code, 'FEATURE_PAUSED');
+    assert.match(r.json().message, /rphang/);
+    // The main site alone still searches.
+    const app = await siteApp();
+    const one = await app.inject({ method: 'POST', url: '/api/posts/search', headers: { 'x-glean-site': 'demo' }, payload: { keyword: 'xegop' } });
+    assert.equal(one.statusCode, 200);
+  } finally {
+    withSite('rphang', () => updateConfig({ maintenance: { searchPost: { isPaused: false, message: '' } } }, 0));
+  }
 });

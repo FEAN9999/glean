@@ -11,6 +11,7 @@ import { fetchRaw, pool, proxyStatus, checkProxies, sleep } from './net.ts';
 import { fetchThreadPage, parseThreadRef, threadUrl, ThreadGoneError, type ParsedPost } from './source/xenforo.ts';
 import { ensureForum, upsertComments } from './sync.ts';
 import { reconcileDeletions } from './archive.ts';
+import { mergeTop, newestFirst } from './merge.ts';
 import { telegram } from './notify.ts';
 import { BiError, biOf, pack, type Bi } from './bilingual.ts';
 import {
@@ -18,6 +19,7 @@ import {
   currentSiteOrNull,
   forEachSite,
   onSiteAdded,
+  requestSite,
   siteByCode,
   siteForLink,
   siteInfo,
@@ -722,6 +724,54 @@ function siteTag() {
   return { code: s.code, name: s.name };
 }
 
+/** A job the Archive lists: sieved, or failed, and not deleted. */
+const FINISHED = 'status IN (?,?) AND is_marked_deleted=0';
+const FINISHED_PARAMS = [ScrapeStatus.Completed, ScrapeStatus.Failed];
+const finishedTotal = () => get<{ n: number }>(`SELECT COUNT(*) n FROM scrape WHERE ${FINISHED}`, ...FINISHED_PARAMS)!.n;
+
+/** Archive rows of the current site, with what the list shows. */
+function archiveItems(rows: Record<string, SQLInputValue>[]) {
+  const site = siteTag();
+  return camelAll<{ id: number; threadId: number; createdAt: string }>(rows).map((s) => ({
+    ...s,
+    syncedCommentCount: get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.threadId)!.n,
+    site,
+  }));
+}
+
+/** The condition that keeps a site's jobs after the merged Archive's cursor (its time, site code and id). */
+function afterCursor(siteCode: string, [at, code, id]: string[]): [string, SQLInputValue[]] {
+  // At the cursor's time, the jobs of a site after the cursor's come next; in the cursor's own site, the lower ids.
+  if (siteCode > code) return ['AND created_at <= ?', [at]];
+  if (siteCode < code) return ['AND created_at < ?', [at]];
+  return ['AND (created_at < ? OR (created_at = ? AND id < ?))', [at, at, Number(id)]];
+}
+
+/**
+ * With `*`: the Archive of every site, newest first, then by site code, then the higher id first.
+ * The cursor `${createdAt}|${code}|${id}` is the last row shown; each site lists its rows after it.
+ */
+async function processedEverySite(cursor: string | undefined, size: number) {
+  const c = /^(.+)\|([^|]+)\|(\d+)$/.exec(cursor ?? '');
+  const per = await forEachSite((s) => {
+    const [after, params] = c ? afterCursor(s.code, c.slice(1)) : ['', []];
+    const rows = all(`SELECT * FROM scrape WHERE ${FINISHED} ${after} ORDER BY created_at DESC, id DESC LIMIT ?`, ...FINISHED_PARAMS, ...params, size);
+    return { items: archiveItems(rows), total: finishedTotal() };
+  });
+  const items = mergeTop(
+    per.map((p) => p.value.items),
+    newestFirst,
+    0,
+    size,
+  );
+  const last = items.at(-1);
+  return ok(items, {
+    nextCursor: items.length === size && last ? `${last.createdAt}|${last.site.code}|${last.id}` : null,
+    total: per.reduce((n, p) => n + p.value.total, 0),
+    totalBySite: Object.fromEntries(per.map((p) => [p.site.code, p.value.total])),
+  });
+}
+
 export function registerScraper(app: FastifyInstance) {
   // A link may queue in another site than the request's: sieving must not be paused there.
   app.post<{ Body: { url: string; source?: string } }>('/api/scrapes/create-scrape', async (req) =>
@@ -734,23 +784,12 @@ export function registerScraper(app: FastifyInstance) {
   });
 
   app.get<{ Querystring: { cursor?: string; size?: string } }>('/api/scrapes/processed', async (req) => {
-    const cursor = intParam(req.query.cursor, Number.MAX_SAFE_INTEGER);
     const size = intParam(req.query.size, 20, 1, 100);
-    const rows = all<{ id: number }>(
-      'SELECT * FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0 AND id<? ORDER BY id DESC LIMIT ?',
-      ScrapeStatus.Completed,
-      ScrapeStatus.Failed,
-      cursor,
-      size,
-    );
-    const site = siteTag();
-    const items = camelAll<{ threadId: number }>(rows).map((s) => ({
-      ...s,
-      syncedCommentCount: get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.threadId)!.n,
-      site,
-    }));
-    const total = get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0', ScrapeStatus.Completed, ScrapeStatus.Failed)!.n;
-    return ok(items, { nextCursor: rows.length === size ? rows.at(-1)!.id : null, total });
+    if (requestSite(req) === null) return processedEverySite(req.query.cursor, size);
+    const cursor = intParam(req.query.cursor, Number.MAX_SAFE_INTEGER);
+    const rows = all<{ id: number }>(`SELECT * FROM scrape WHERE ${FINISHED} AND id<? ORDER BY id DESC LIMIT ?`, ...FINISHED_PARAMS, cursor, size);
+    const total = finishedTotal();
+    return ok(archiveItems(rows), { nextCursor: rows.length === size ? rows.at(-1)!.id : null, total, totalBySite: { [currentSite().code]: total } });
   });
 
   app.get<{ Querystring: { refresh?: string } }>('/api/scrapes/check-proxy', async (req) => {
