@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import QRCode from 'qrcode';
-import { get, run, now } from './db.ts';
+import { mainGet, mainRun, now } from './db.ts';
 import { cfg } from './config.ts';
 import { ApiError, ok, sendError } from './http.ts';
 
@@ -113,7 +113,7 @@ interface UserRow {
   created_at: string;
 }
 const getUser = (id?: number) =>
-  id ? get<UserRow>('SELECT * FROM app_user WHERE id=?', id) : get<UserRow>('SELECT * FROM app_user ORDER BY id LIMIT 1');
+  id ? mainGet<UserRow>('SELECT * FROM app_user WHERE id=?', id) : mainGet<UserRow>('SELECT * FROM app_user ORDER BY id LIMIT 1');
 
 const publicUser = (u: UserRow) => ({ id: u.id, username: u.username, twoFactorEnabled: !!u.totp_enabled, createdAt: u.created_at });
 
@@ -122,8 +122,8 @@ function issueTokens(u: UserRow) {
   const accessToken = signJwt({ sub: u.id, scope: 'access' }, a.accessTokenMinutes * 60);
   const refreshToken = crypto.randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + a.refreshTokenDays * 86400_000).toISOString();
-  run('INSERT INTO refresh_token(token, user_id, expires_at, created_at) VALUES(?,?,?,?)', refreshToken, u.id, expires, now());
-  run('DELETE FROM refresh_token WHERE expires_at < ?', now());
+  mainRun('INSERT INTO refresh_token(token, user_id, expires_at, created_at) VALUES(?,?,?,?)', refreshToken, u.id, expires, now());
+  mainRun('DELETE FROM refresh_token WHERE expires_at < ?', now());
   return {
     accessToken,
     refreshToken,
@@ -208,7 +208,7 @@ export function registerAuth(app: FastifyInstance) {
     const { username, password }: Partial<typeof req.body> = req.body ?? {};
     if (!username?.trim() || !password || password.length < 8)
       throw new ApiError(400, 'INVALID_INPUT', ['Tên đăng nhập bắt buộc, mật khẩu tối thiểu 8 ký tự.', 'A username is required, and the password needs at least 8 characters.'], 'inline');
-    run('INSERT INTO app_user(username, password_hash, created_at) VALUES(?,?,?)', username.trim(), hashPassword(password), now());
+    mainRun('INSERT INTO app_user(username, password_hash, created_at) VALUES(?,?,?)', username.trim(), hashPassword(password), now());
     return ok(issueTokens(getUser()!));
   });
 
@@ -216,7 +216,7 @@ export function registerAuth(app: FastifyInstance) {
     const key = req.ip;
     assertNotLocked(key);
     const { username, password }: Partial<typeof req.body> = req.body ?? {};
-    const u = get<UserRow>('SELECT * FROM app_user WHERE username = ? COLLATE NOCASE', String(username ?? '').trim());
+    const u = mainGet<UserRow>('SELECT * FROM app_user WHERE username = ? COLLATE NOCASE', String(username ?? '').trim());
     if (!u || !verifyPassword(String(password ?? ''), u.password_hash)) {
       countFailure(key);
       throw new ApiError(401, 'INVALID_CREDENTIALS', ['Sai tên đăng nhập hoặc mật khẩu.', 'Wrong username or password.'], 'inline');
@@ -236,17 +236,17 @@ export function registerAuth(app: FastifyInstance) {
   });
 
   app.post<{ Params: { userId: string; token: string } }>('/api/auth/refresh/:userId/:token', async (req) => {
-    const row = get<{ user_id: number; expires_at: string }>('SELECT user_id, expires_at FROM refresh_token WHERE token=?', req.params.token);
+    const row = mainGet<{ user_id: number; expires_at: string }>('SELECT user_id, expires_at FROM refresh_token WHERE token=?', req.params.token);
     if (!row || row.user_id !== Number(req.params.userId) || row.expires_at < now())
       throw new ApiError(401, 'REFRESH_INVALID', ['Phiên đã hết hạn.', 'The session has expired.'], 'silent');
-    run('DELETE FROM refresh_token WHERE token=?', req.params.token);
+    mainRun('DELETE FROM refresh_token WHERE token=?', req.params.token);
     const u = getUser(row.user_id);
     if (!u) throw new ApiError(401, 'REFRESH_INVALID', ['Phiên đã hết hạn.', 'The session has expired.'], 'silent');
     return ok(issueTokens(u));
   });
 
   app.post<{ Body: { refreshToken?: string } }>('/api/auth/logout', async (req) => {
-    if (req.body?.refreshToken) run('DELETE FROM refresh_token WHERE token=?', req.body.refreshToken);
+    if (req.body?.refreshToken) mainRun('DELETE FROM refresh_token WHERE token=?', req.body.refreshToken);
     return ok(true);
   });
 
@@ -265,8 +265,8 @@ export function registerAuth(app: FastifyInstance) {
     if (!verifyPassword(String(currentPassword ?? ''), u.password_hash))
       throw new ApiError(400, 'INVALID_PASSWORD', ['Mật khẩu hiện tại không đúng.', 'The current password is wrong.'], 'inline');
     if (!newPassword || newPassword.length < 8) throw new ApiError(400, 'WEAK_PASSWORD', ['Mật khẩu mới tối thiểu 8 ký tự.', 'The new password needs at least 8 characters.'], 'inline');
-    run('UPDATE app_user SET password_hash=? WHERE id=?', hashPassword(newPassword), u.id);
-    run('DELETE FROM refresh_token WHERE user_id=?', u.id);
+    mainRun('UPDATE app_user SET password_hash=? WHERE id=?', hashPassword(newPassword), u.id);
+    mainRun('DELETE FROM refresh_token WHERE user_id=?', u.id);
     return ok(issueTokens(getUser(u.id)!));
   });
 
@@ -274,7 +274,7 @@ export function registerAuth(app: FastifyInstance) {
     const u = getUser(req.userId)!;
     if (u.totp_enabled) throw new ApiError(409, 'ALREADY_ENABLED', ['Xác thực 2 lớp đang bật.', 'Two-factor authentication is already on.'], 'inline');
     const secret = base32Encode(crypto.randomBytes(20));
-    run('UPDATE app_user SET totp_pending_secret=? WHERE id=?', secret, u.id);
+    mainRun('UPDATE app_user SET totp_pending_secret=? WHERE id=?', secret, u.id);
     const label = encodeURIComponent(`Glean:${u.username}`);
     const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent('Glean')}&algorithm=SHA1&digits=6&period=30`;
     const qrDataUrl = await QRCode.toDataURL(otpauthUrl, { margin: 1, width: 220, color: { dark: '#16203a', light: '#ffffff' } });
@@ -285,7 +285,7 @@ export function registerAuth(app: FastifyInstance) {
     const u = getUser(req.userId)!;
     if (!u.totp_pending_secret || !verifyTotp(u.totp_pending_secret, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
-    run('UPDATE app_user SET totp_secret=totp_pending_secret, totp_pending_secret=NULL, totp_enabled=1 WHERE id=?', u.id);
+    mainRun('UPDATE app_user SET totp_secret=totp_pending_secret, totp_pending_secret=NULL, totp_enabled=1 WHERE id=?', u.id);
     return ok(publicUser(getUser(u.id)!));
   });
 
@@ -293,7 +293,7 @@ export function registerAuth(app: FastifyInstance) {
     const u = getUser(req.userId)!;
     if (!u.totp_enabled || !codeMatches(u, req.body?.code))
       throw new ApiError(400, 'INVALID_2FA_CODE', ['Mã xác thực không đúng.', 'That code is not right.'], 'inline');
-    run('UPDATE app_user SET totp_secret=NULL, totp_enabled=0 WHERE id=?', u.id);
+    mainRun('UPDATE app_user SET totp_secret=NULL, totp_enabled=0 WHERE id=?', u.id);
     return ok(publicUser(getUser(u.id)!));
   });
 

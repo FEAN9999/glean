@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,14 +19,9 @@ if (!fs.existsSync(DB_PATH) && fs.existsSync(LEGACY_DB_PATH)) {
     if (fs.existsSync(LEGACY_DB_PATH + suffix)) fs.renameSync(LEGACY_DB_PATH + suffix, DB_PATH + suffix);
   }
 }
-export const db = new DatabaseSync(DB_PATH);
 
-db.exec(`
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
-
+/** Tables of every store. The shared ones (users, settings, backups, sites) are used in the main store only. */
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS app_user (
   id INTEGER PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
@@ -250,7 +246,15 @@ CREATE TABLE IF NOT EXISTS backup_run (
   media_error TEXT,
   error TEXT
 );
-`);
+
+CREATE TABLE IF NOT EXISTS site (
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  is_main INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  removed_at TEXT
+);
+`;
 
 /** Adds a column when the table lacks it (CREATE TABLE IF NOT EXISTS never alters existing tables). */
 export function ensureColumn(d: DatabaseSync, table: string, column: string, ddl: string): boolean {
@@ -320,6 +324,8 @@ const STEPS: ((d: DatabaseSync) => void)[] = [
                               WHERE id=?`);
     for (const j of jobs) totals.run(j.id);
   },
+  // 4: a backup run belongs to the site whose store it copied.
+  (d) => ensureColumn(d, 'backup_run', 'site_code', 'TEXT'),
 ];
 
 /** Runs the steps a database has not had yet, each in its own transaction with its version number. */
@@ -337,48 +343,127 @@ export function migrate(d: DatabaseSync, steps = STEPS) {
     }
   }
 }
-migrate(db);
+
+/** Opens a store, creating its folder, tables and upgrades as needed. */
+export function openStore(file: string): DatabaseSync {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const d = new DatabaseSync(file);
+  d.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  d.exec(SCHEMA);
+  migrate(d);
+  return d;
+}
+
+/** The store at data/glean.db: the main site's data and the shared tables. */
+export const mainDb = openStore(DB_PATH);
+/** Older name of mainDb, kept for the tests that use it. */
+export const db = mainDb;
+
+/* ---------------- the current site ---------------- */
+
+export interface StoreCtx {
+  code: string;
+  db: DatabaseSync;
+}
+
+/** A query on a site's store ran outside any site. There is no default site. */
+export class NoSiteError extends Error {
+  constructor() {
+    super('No site: this query must run inside runInSite().');
+    this.name = 'NoSiteError';
+  }
+}
+
+const currentSite = new AsyncLocalStorage<StoreCtx>();
+let testFallback: (() => StoreCtx) | null = null;
+
+/** Runs `fn` for a site: all/get/run/tx inside it, and the async work and timers it starts, use that site's store. */
+export function runInSite<T>(ctx: StoreCtx, fn: () => T): T {
+  return currentSite.run(ctx, fn);
+}
+
+/** The site being worked on, or in tests the fallback site, or null. */
+export function siteCtxOrNull(): StoreCtx | null {
+  return currentSite.getStore() ?? testFallback?.() ?? null;
+}
+
+export function siteDb(): DatabaseSync {
+  const ctx = siteCtxOrNull();
+  if (!ctx) throw new NoSiteError();
+  return ctx.db;
+}
+
+/** Tests only: the site used outside runInSite. Returns the previous one. */
+export function setTestFallback(fn: (() => StoreCtx) | null): (() => StoreCtx) | null {
+  if (!process.env.NODE_TEST_CONTEXT && process.env.NODE_ENV !== 'test') throw new Error('setTestFallback is only for tests.');
+  const prev = testFallback;
+  testFallback = fn;
+  return prev;
+}
 
 export const now = () => new Date().toISOString();
 
 type Row = Record<string, SQLInputValue>;
 
 /**
- * Prepared statements by SQL text, so a query that runs often is compiled once. Some queries are
- * built per call (IN lists, table names), so only the most recently used ones are kept.
+ * Prepared statements by store and SQL text, so a query that runs often is compiled once. Some
+ * queries are built per call (IN lists, table names), so only the most recently used ones are kept.
  */
-const statements = new Map<string, StatementSync>();
+const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
 const STATEMENTS_KEPT = 300;
-function prepared(sql: string) {
-  let s = statements.get(sql);
-  if (s) statements.delete(sql);
+function prepared(d: DatabaseSync, sql: string) {
+  let cache = statements.get(d);
+  if (!cache) statements.set(d, (cache = new Map()));
+  let s = cache.get(sql);
+  if (s) cache.delete(sql);
   else {
-    s = db.prepare(sql);
-    if (statements.size >= STATEMENTS_KEPT) statements.delete(statements.keys().next().value!);
+    s = d.prepare(sql);
+    if (cache.size >= STATEMENTS_KEPT) cache.delete(cache.keys().next().value!);
   }
-  statements.set(sql, s);
+  cache.set(sql, s);
   return s;
 }
 
-export function all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
-  return prepared(sql).all(...params) as T[];
-}
-export function get<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
-  return prepared(sql).get(...params) as T | undefined;
-}
-export function run(sql: string, ...params: SQLInputValue[]) {
-  return prepared(sql).run(...params);
-}
-export function tx<T>(fn: () => T): T {
-  db.exec('BEGIN');
+function inTx<T>(d: DatabaseSync, fn: () => T): T {
+  d.exec('BEGIN');
   try {
     const r = fn();
-    db.exec('COMMIT');
+    d.exec('COMMIT');
     return r;
   } catch (e) {
-    db.exec('ROLLBACK');
+    d.exec('ROLLBACK');
     throw e;
   }
+}
+
+/* Queries on the store of the current site. They throw NoSiteError outside a site. */
+
+export function all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
+  return prepared(siteDb(), sql).all(...params) as T[];
+}
+export function get<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
+  return prepared(siteDb(), sql).get(...params) as T | undefined;
+}
+export function run(sql: string, ...params: SQLInputValue[]) {
+  return prepared(siteDb(), sql).run(...params);
+}
+export function tx<T>(fn: () => T): T {
+  return inTx(siteDb(), fn);
+}
+
+/* Queries on the main store, for the shared tables. */
+
+export function mainAll<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
+  return prepared(mainDb, sql).all(...params) as T[];
+}
+export function mainGet<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
+  return prepared(mainDb, sql).get(...params) as T | undefined;
+}
+export function mainRun(sql: string, ...params: SQLInputValue[]) {
+  return prepared(mainDb, sql).run(...params);
+}
+export function mainTx<T>(fn: () => T): T {
+  return inTx(mainDb, fn);
 }
 
 /** snake_case row → camelCase object, 0/1 flag columns starting with is_/display_ become booleans. */

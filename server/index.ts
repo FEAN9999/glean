@@ -14,12 +14,19 @@ import { registerDemoForum } from './demo/forum.ts';
 import { registerWeb } from './web.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
+import { mainDb, runInSite, type StoreCtx } from './db.ts';
 
 const PORT = Number(process.env.GLEAN_PORT ?? 4318);
 const HOST = process.env.GLEAN_HOST ?? '127.0.0.1';
 
-loadConfig(PORT);
-initNet();
+// TEMP(Task 4): replaced by registerSites/initSites
+const MAIN_CTX: StoreCtx = { code: 'main', db: mainDb };
+
+// TEMP(Task 4): replaced by registerSites/initSites
+runInSite(MAIN_CTX, () => {
+  loadConfig(PORT);
+  initNet();
+});
 
 const app = Fastify({
   logger: { level: process.env.GLEAN_LOG ?? 'warn' },
@@ -28,6 +35,8 @@ const app = Fastify({
 });
 
 registerApiGuard(app);
+// TEMP(Task 4): replaced by registerSites/initSites
+app.addHook('onRequest', (_req, _reply, done) => runInSite(MAIN_CTX, done));
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ApiError) return sendError(reply, err);
@@ -79,6 +88,9 @@ if (fs.existsSync(path.join(webDist, 'index.html'))) await registerWeb(app, webD
 await app.listen({ port: PORT, host: HOST });
 console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 
-initScraper();
-initAutoSync();
-initBackup();
+// TEMP(Task 4): replaced by registerSites/initSites
+runInSite(MAIN_CTX, () => {
+  initScraper();
+  initAutoSync();
+  initBackup();
+});

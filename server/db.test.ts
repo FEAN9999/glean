@@ -1,8 +1,9 @@
 import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { db, ensureColumn, migrate } from './db.ts';
+import { DATA_DIR, NoSiteError, db, ensureColumn, get, mainGet, migrate, openStore, run, runInSite, setTestFallback, siteCtxOrNull } from './db.ts';
 
 /** A database shaped like one created before the data-preservation upgrade. */
 function legacyDb() {
@@ -118,4 +119,36 @@ test('ensureColumn reports when it adds a column', () => {
   const d = legacyDb();
   assert.equal(ensureColumn(d, 'scrape', 'extra_col', 'TEXT'), true);
   assert.ok(cols(d, 'scrape').includes('extra_col'));
+});
+
+/* ---- the store of the current site ---- */
+
+const b = openStore(path.join(DATA_DIR, 'stores', 'b.db'));
+const bCtx = { code: 'b', db: b };
+
+test('site helpers use the store of the current site', () => {
+  runInSite(bCtx, () => run("INSERT INTO forum(id,name) VALUES(1,'B')"));
+  assert.equal(mainGet('SELECT name FROM forum WHERE id=1'), undefined);
+  assert.equal(runInSite(bCtx, () => get<{ name: string }>('SELECT name FROM forum WHERE id=1'))?.name, 'B');
+});
+
+test('without a site the helpers throw NoSiteError', () => {
+  const prev = setTestFallback(null);
+  try {
+    assert.throws(() => get('SELECT 1'), NoSiteError);
+  } finally {
+    setTestFallback(prev);
+  }
+});
+
+test('the context follows async work and timers', async () => {
+  const code = await runInSite(bCtx, async () => {
+    await new Promise((r) => setTimeout(r, 5));
+    return siteCtxOrNull()!.code;
+  });
+  assert.equal(code, 'b');
+});
+
+test('migrate step 4 adds backup_run.site_code', () => {
+  assert.ok(cols(b, 'backup_run').includes('site_code'));
 });
