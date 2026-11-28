@@ -2454,7 +2454,14 @@ a.result-title:hover {
   }
   .topbar {
     padding: 0 18px;
-    gap: 12px;
+    gap: 8px;
+  }
+  /* the search box grows to the avatar by itself here; the spacer would only take a gap from it */
+  .topbar-spacer {
+    display: none;
+  }
+  .omni input {
+    padding: 0 12px;
   }
   .topbar-mark {
     display: block;
@@ -2466,7 +2473,8 @@ a.result-title:hover {
     width: auto;
     max-width: 132px;
     height: 34px;
-    padding: 0 10px;
+    padding: 0 8px;
+    gap: 6px;
   }
   .theme-btn,
   .me-name {
