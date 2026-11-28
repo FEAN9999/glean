@@ -12,18 +12,21 @@ interface Revision {
 
 /**
  * Tags for a comment that changed on the forum: "edited · N" (opens the earlier versions) and
- * "deleted on the forum". Renders nothing for an unchanged comment.
+ * "deleted on the forum". Renders nothing for an unchanged comment. `site`: the comment's site, when
+ * it is not the one chosen in the picker.
  */
 export function CommentChanges({
   id,
   editCount,
   editedAt,
   deletedAt,
+  site,
 }: {
   id: number;
   editCount?: number | null;
   editedAt?: string | null;
   deletedAt?: string | null;
+  site?: string;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -36,7 +39,7 @@ export function CommentChanges({
     setOpen(next);
     if (!next || revs) return;
     try {
-      setRevs((await api.get<Revision[]>(`/comments/${id}/revisions`, { quiet: true })).data);
+      setRevs((await api.get<Revision[]>(`/comments/${id}/revisions`, { quiet: true, site })).data);
     } catch (e) {
       setError((e as ApiErr).message);
     }

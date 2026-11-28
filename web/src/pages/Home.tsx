@@ -5,7 +5,8 @@ import { useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtNum } from '../lib/format';
 import { Donut, Empty, Status } from '../components/ui';
-import { pageSplit, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
+import { pageSplit, scrapePath, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
+import { useSites } from '../lib/site';
 
 interface Overview {
   threads: number;
@@ -117,10 +118,12 @@ function Sieving() {
 
 function SievingNow({ s, downloaded, downloadTotal }: { s: Scrape; downloaded?: number; downloadTotal?: number }) {
   const { t } = useI18n();
+  // The Desk shows one site: the chosen one.
+  const { selected } = useSites();
   const sp = pageSplit(s, downloadTotal ? { downloaded, total: downloadTotal } : undefined);
   return (
     <>
-      <Link to={`/sang/${s.id}`} className="muted ellipsis" style={{ textDecoration: 'none' }}>
+      <Link to={scrapePath(s.id, s.site?.code ?? selected)} className="muted ellipsis" style={{ textDecoration: 'none' }}>
         {scrapeTitle(s, t)}
       </Link>
       <div className="sieve-viz">
@@ -162,6 +165,7 @@ function SievingNow({ s, downloaded, downloadTotal }: { s: Scrape; downloaded?: 
 
 export function HomePage() {
   const { t } = useI18n();
+  const { selected } = useSites();
   const [ov, setOv] = useState<Overview | null>(null);
   const [auto, setAuto] = useState<AutoStatus | null>(null);
   const [saved, setSaved] = useState<Scrape[] | null>(null);
@@ -245,7 +249,7 @@ export function HomePage() {
           </p>
           {saved && !saved.length && <p className="muted" style={{ margin: 0 }}>{t('Chưa có lượt sàng nào.', 'No sieve jobs yet.')}</p>}
           {saved?.map((s) => (
-            <Link key={s.id} to={`/sang/${s.id}`} className="line">
+            <Link key={s.id} to={scrapePath(s.id, s.site?.code ?? selected)} className="line">
               <span className="thumb" aria-hidden="true" />
               <span className="line-text">
                 <span className="line-title ellipsis">{scrapeTitle(s, t)}</span>

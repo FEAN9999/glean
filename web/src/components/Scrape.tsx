@@ -41,7 +41,12 @@ export interface Scrape {
   donePages?: number[];
   /** Items kept from earlier runs whose posts are no longer on the forum (detail endpoint only). */
   missingCounts?: { images: number; videos: number; links: number; comments: number };
+  /** The site the job belongs to (archive rows only). */
+  site?: { code: string; name: string };
 }
+
+/** The detail page of job `id` of site `code`: job ids repeat across sites, so the link names the site. */
+export const scrapePath = (id: number, code: string) => `/sang/${id}?trang=${encodeURIComponent(code)}`;
 
 export function useStatusLabel() {
   const { t } = useI18n();
@@ -70,7 +75,7 @@ export function useCreateScrape() {
         site: { code: string; name: string };
       }>('/scrapes/create-scrape', { url: input, source }, { quiet: true, site: opts.site });
       const { scrape, reused, rerun, domainWarning, site } = r.data;
-      const to = `/sang/${scrape.id}?trang=${encodeURIComponent(site.code)}`;
+      const to = scrapePath(scrape.id, site.code);
       if (domainWarning) {
         toast(
           t(
@@ -227,6 +232,8 @@ export const threadOnForum = (s: Pick<Scrape, 'status' | 'isThreadDeleted'>): bo
 /** The job Glean is working on right now: donut, page strip and download bar. */
 export function NowSieving({ s, lp }: { s: Scrape; lp?: LiveProgress }) {
   const { t } = useI18n();
+  // The queue is one site's: the chosen one.
+  const { selected } = useSites();
   const sp = pageSplit(s, lp);
   return (
     <div className="job-now">
@@ -234,7 +241,7 @@ export function NowSieving({ s, lp }: { s: Scrape; lp?: LiveProgress }) {
         {sp.total ? `${sp.done}/${sp.total}` : '…'}
       </Donut>
       <div className="job-now-text">
-        <Link to={`/sang/${s.id}`} className="result-title">
+        <Link to={scrapePath(s.id, s.site?.code ?? selected)} className="result-title">
           {scrapeTitle(s, t)}
         </Link>
         <span className="row-meta plain">

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, type ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
 import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
+import { SiteTag, useSites } from '../lib/site';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { Donut, Empty, ExternalLink, Mesh, Pager, Spinner, Status, pageRange, useConfirm, useReturnFocus, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, threadOnForum, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
@@ -74,9 +75,9 @@ function scrollToTabs() {
   if (window.scrollY > top) window.scrollTo({ top, behavior: 'instant' });
 }
 
-/** A tab's list, brought back into view when another page of it is picked. */
-function useTabPages<T>(path: string, size: number, extra = '') {
-  const r = usePaged<T>(path, size, extra);
+/** A tab's list on `site`, brought back into view when another page of it is picked. */
+function useTabPages<T>(path: string, size: number, extra: string, site: string) {
+  const r = usePaged<T>(path, size, extra, site);
   // Scroll once the new page is on screen; scrolling earlier is cut short when the page gets shorter.
   const scrollPending = useRef(false);
   useEffect(() => {
@@ -272,10 +273,10 @@ function useTileSize() {
 
 const IMAGES_PER_PAGE = 48;
 
-function ImagesTab({ id, failed, selectedId, onPick }: { id: number; failed: boolean; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
+function ImagesTab({ id, site, failed, selectedId, onPick }: { id: number; site: string; failed: boolean; selectedId: number | null; onPick: (p: Picked, open: boolean) => void }) {
   const { t } = useI18n();
   const [tileSize, setTileSize] = useTileSize();
-  const { data, error, page, setPage } = useTabPages<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE);
+  const { data, error, page, setPage } = useTabPages<Img>(`/scrapes/${id}/images`, IMAGES_PER_PAGE, '', site);
   if (!data) return <TabLoading error={error} label={t('Đang tải ảnh', 'Loading images')} />;
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có ảnh', 'No images')}>{t('Chủ đề này không có ảnh nào, hoặc ảnh đến từ tên miền đang bị bỏ qua.', 'This thread has no images, or they come from ignored domains.')}</TabEmpty>;
   const viewable = data.items.filter(isViewable);
@@ -459,9 +460,9 @@ function VideoReel({ v }: { v: Vid }) {
 
 const VIDEOS_PER_PAGE = 12;
 
-function VideosTab({ id, failed }: { id: number; failed: boolean }) {
+function VideosTab({ id, site, failed }: { id: number; site: string; failed: boolean }) {
   const { t } = useI18n();
-  const { data, error, page, setPage } = useTabPages<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE);
+  const { data, error, page, setPage } = useTabPages<Vid>(`/scrapes/${id}/videos`, VIDEOS_PER_PAGE, '', site);
   if (!data) return <TabLoading error={error} label={t('Đang tải video', 'Loading videos')} />;
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có video', 'No videos')} />;
   return (
@@ -480,9 +481,9 @@ function VideosTab({ id, failed }: { id: number; failed: boolean }) {
   );
 }
 
-function LinksTab({ id, failed }: { id: number; failed: boolean }) {
+function LinksTab({ id, site, failed }: { id: number; site: string; failed: boolean }) {
   const { t } = useI18n();
-  const { data, error, page, setPage } = useTabPages<Lnk>(`/scrapes/${id}/links`, 40);
+  const { data, error, page, setPage } = useTabPages<Lnk>(`/scrapes/${id}/links`, 40, '', site);
   if (!data) return <TabLoading error={error} label={t('Đang tải liên kết', 'Loading links')} />;
   if (!data.total) return <TabEmpty failed={failed} title={t('Không có liên kết', 'No links')} />;
   return (
@@ -510,7 +511,7 @@ function LinksTab({ id, failed }: { id: number; failed: boolean }) {
   );
 }
 
-function CommentsTab({ id, failed, synced }: { id: number; failed: boolean; synced?: boolean }) {
+function CommentsTab({ id, site, failed, synced }: { id: number; site: string; failed: boolean; synced?: boolean }) {
   const { t } = useI18n();
   const [minLength, setMinLength] = useState(12);
   const [applied, setApplied] = useState(12);
@@ -518,7 +519,7 @@ function CommentsTab({ id, failed, synced }: { id: number; failed: boolean; sync
     const h = setTimeout(() => setApplied(minLength), 300);
     return () => clearTimeout(h);
   }, [minLength]);
-  const { data, error, page, setPage } = useTabPages<Cmt>(`/scrapes/${id}/${synced ? 'synced-comments' : 'comments'}`, 30, synced ? '' : `&minLength=${applied}`);
+  const { data, error, page, setPage } = useTabPages<Cmt>(`/scrapes/${id}/${synced ? 'synced-comments' : 'comments'}`, 30, synced ? '' : `&minLength=${applied}`, site);
   return (
     <>
       {synced ? (
@@ -561,7 +562,7 @@ function CommentsTab({ id, failed, synced }: { id: number; failed: boolean; sync
                 </div>
                 <div className="row-body">{c.content || <span className="muted">{t('(chỉ có ảnh hoặc trích dẫn)', '(images or quotes only)')}</span>}</div>
                 {synced ? (
-                  <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} />
+                  <CommentChanges id={c.id} editCount={c.editCount} editedAt={c.editedAt} deletedAt={c.deletedAt} site={site} />
                 ) : (
                   c.missingSince && <MissingTag since={c.missingSince} />
                 )}
@@ -582,7 +583,30 @@ function CommentsTab({ id, failed, synced }: { id: number; failed: boolean; sync
   );
 }
 
+/** The site a detail link opens: the one it names; a link from before there were several sites is the main site's. */
+export function detailSite(param: string | null, mainCode: string): string {
+  return param ?? mainCode;
+}
+
+/** A sieve job of the site in the link's `trang`, whatever site the picker shows; the picker is left as it is. */
 export function SieveDetailPage() {
+  const { t } = useI18n();
+  const [params] = useSearchParams();
+  const { sites } = useSites();
+  // An empty `trang=` names no site.
+  const site = detailSite(params.get('trang') || null, sites.find((s) => s.isMain)?.code ?? '');
+  // A link without `trang` waits for the list of sites to know which one is the main site.
+  if (!site)
+    return (
+      <div className="page">
+        <Spinner label={t('Đang tải', 'Loading')} />
+      </div>
+    );
+  // Job ids repeat across sites: another site is another job.
+  return <SieveJob key={site} site={site} />;
+}
+
+function SieveJob({ site }: { site: string }) {
   const { id: idParam } = useParams();
   const id = Number(idParam);
   const { t, lang } = useI18n();
@@ -601,39 +625,57 @@ export function SieveDetailPage() {
 
   const load = useCallback(() => {
     api
-      .get<Scrape>(`/scrapes/${id}`, { quiet: true })
+      .get<Scrape>(`/scrapes/${id}`, { quiet: true, site })
       .then((r) => {
         setS(r.data);
         // merge: realtime events may have arrived while this request was in flight
         setDone((d) => new Set([...d, ...(r.data.donePages ?? [])]));
-        if (r.data.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
+        if (r.data.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true, site }).then((x) => setRank(x.data));
         else setRank(null);
         setLoadError(null);
       })
       .catch((e: ApiErr) => (e.status === 404 ? setNotFound(true) : setLoadError(e.message)));
-  }, [id]);
+  }, [id, site]);
   useEffect(load, [load]);
-  useEvent(Ev.Reconnected, load);
+  // Only this site's events: the same id on another site is another job.
+  const own = { site };
+  useEvent(Ev.Reconnected, load, own);
 
-  useEvent<Scrape>(Ev.UpdateScrape, (m) => {
-    if (m.data.id === id) setS((x) => (x ? { ...x, ...m.data } : m.data));
-    else if (s?.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true }).then((x) => setRank(x.data));
-  });
-  useEvent<Scrape>(Ev.NewScrape, (m) => {
-    if (m.data.id === id) load();
-  });
-  useEvent<PageProgress>(Ev.UpdateScrapeProcess, (m) => {
-    if (m.data.scrapeId !== id) return;
-    setDone((d) => new Set(d).add(m.data.page));
-    setS((x) => (x ? { ...x, totalPages: m.data.totalPages, currentPage: m.data.currentPage, status: ScrapeStatus.Processing } : x));
-  });
-  useEvent<ImageProgress>(Ev.UpdateDownloadImageProcess, (m) => m.data.scrapeId === id && setDl({ downloaded: m.data.downloaded, total: m.data.total }));
-  useEvent<Scrape>(Ev.FinishScrape, (m) => {
-    if (m.data.id !== id) return;
-    load();
-    setVersion((v) => v + 1);
-    setDl(null);
-  });
+  useEvent<Scrape>(
+    Ev.UpdateScrape,
+    (m) => {
+      if (m.data.id === id) setS((x) => (x ? { ...x, ...m.data } : m.data));
+      else if (s?.status === ScrapeStatus.Waiting) api.get<QueueRank>(`/scrapes/${id}/rank`, { quiet: true, site }).then((x) => setRank(x.data));
+    },
+    own,
+  );
+  useEvent<Scrape>(
+    Ev.NewScrape,
+    (m) => {
+      if (m.data.id === id) load();
+    },
+    own,
+  );
+  useEvent<PageProgress>(
+    Ev.UpdateScrapeProcess,
+    (m) => {
+      if (m.data.scrapeId !== id) return;
+      setDone((d) => new Set(d).add(m.data.page));
+      setS((x) => (x ? { ...x, totalPages: m.data.totalPages, currentPage: m.data.currentPage, status: ScrapeStatus.Processing } : x));
+    },
+    own,
+  );
+  useEvent<ImageProgress>(Ev.UpdateDownloadImageProcess, (m) => m.data.scrapeId === id && setDl({ downloaded: m.data.downloaded, total: m.data.total }), own);
+  useEvent<Scrape>(
+    Ev.FinishScrape,
+    (m) => {
+      if (m.data.id !== id) return;
+      load();
+      setVersion((v) => v + 1);
+      setDl(null);
+    },
+    own,
+  );
 
 
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -676,7 +718,7 @@ export function SieveDetailPage() {
   const missingTotal = mc ? mc.images + mc.videos + mc.links + mc.comments : 0;
 
   const retry = async () => {
-    await api.post(`/scrapes/${id}/retry`);
+    await api.post(`/scrapes/${id}/retry`, {}, { site });
     setDone(new Set());
     setVersion((v) => v + 1);
     load();
@@ -689,7 +731,7 @@ export function SieveDetailPage() {
       true,
     );
     if (!yes) return;
-    await api.del(`/scrapes/${id}/mark-delete`);
+    await api.del(`/scrapes/${id}/mark-delete`, { site });
     toast(t('Đã xóa lượt sàng.', 'Sieve job deleted.'));
     navigate('/sang');
   };
@@ -726,6 +768,7 @@ export function SieveDetailPage() {
           </ExternalLink>
         </div>
         <p className="row-meta" style={{ margin: 0, paddingBottom: 14, fontSize: 14 }}>
+          <SiteTag code={site} />
           <span style={processing ? { color: 'var(--acc-ink)' } : s.status === ScrapeStatus.Failed ? { color: 'var(--bad-ink)' } : undefined}>{label(s.status)}</span>
           {s.totalPages > 0 && <span>{t(`${fmtNum(s.totalPages)} trang`, `${fmtNum(s.totalPages)} pages`)}</span>}
           <span>{s.finishedAt ? t(`sàng lúc ${fmtDate(s.finishedAt)}`, `sieved ${fmtDate(s.finishedAt)}`) : t(`thêm lúc ${fmtDate(s.createdAt)}`, `added ${fmtDate(s.createdAt)}`)}</span>
@@ -815,6 +858,7 @@ export function SieveDetailPage() {
           {tab === 'images' && (
             <ImagesTab
               id={id}
+              site={site}
               failed={jobFailed}
               selectedId={picked?.img.id ?? null}
               onPick={(p, open) => {
@@ -823,11 +867,11 @@ export function SieveDetailPage() {
               }}
             />
           )}
-          {tab === 'videos' && <VideosTab id={id} failed={jobFailed} />}
-          {tab === 'links' && <LinksTab id={id} failed={jobFailed} />}
-          {tab === 'comments' && <CommentsTab id={id} failed={jobFailed} />}
+          {tab === 'videos' && <VideosTab id={id} site={site} failed={jobFailed} />}
+          {tab === 'links' && <LinksTab id={id} site={site} failed={jobFailed} />}
+          {tab === 'comments' && <CommentsTab id={id} site={site} failed={jobFailed} />}
           {/* Archived comments come from syncing, not from this job: "none" is a fact there even when the job failed. */}
-          {tab === 'synced-comments' && <CommentsTab id={id} failed={false} synced />}
+          {tab === 'synced-comments' && <CommentsTab id={id} site={site} failed={false} synced />}
         </div>
       </div>
 

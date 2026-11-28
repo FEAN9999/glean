@@ -51,8 +51,9 @@ export interface PagedData<T> {
  * One numbered page of the list at `path` (`?page=&size=` is added, then `extra`). Opening another list
  * starts empty; refiltering the same list keeps the old rows until the new ones arrive. A failed load
  * keeps what is shown and sets `error`, so a failure does not look like an empty list.
+ * `site` asks that site instead of the one chosen in the picker.
  */
-export function usePaged<T>(path: string, size: number, extra = '') {
+export function usePaged<T>(path: string, size: number, extra = '', site?: string) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PagedData<T> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +69,7 @@ export function usePaged<T>(path: string, size: number, extra = '') {
   const load = useCallback(
     (p: number) => {
       const isLatest = latest();
-      api.get<T[]>(`${path}?page=${p}&size=${size}${extra}`, { quiet: true }).then(
+      api.get<T[]>(`${path}?page=${p}&size=${size}${extra}`, { quiet: true, site }).then(
         (r) => {
           if (!isLatest()) return;
           setData({ items: r.data, total: r.total ?? 0, extra: r });
@@ -79,7 +80,7 @@ export function usePaged<T>(path: string, size: number, extra = '') {
         },
       );
     },
-    [path, size, extra, latest],
+    [path, size, extra, site, latest],
   );
   useEffect(() => load(1), [load]);
   return {
