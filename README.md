@@ -68,6 +68,8 @@ Mỗi trang thêm sau có kho riêng, được chép vào thư mục `sites/<mã
 3. Chép thư mục `sites/<mã>/media` trong thư mục sao lưu vào `data/sites/<mã>/media`.
 4. Chạy lại Glean.
 
+Danh sách trang nằm trong kho chính: khôi phục `data/glean.db` từ một bản sao lưu có trước khi thêm một trang thì trang đó biến khỏi danh sách (thư mục `data/sites/<mã>/` vẫn còn; thêm lại trang với đúng mã đó trong Cài đặt → Trang là gắn lại kho cũ).
+
 ## Dùng với diễn đàn thật
 
 1. **Cài đặt → Nguồn dữ liệu**: đổi "Địa chỉ diễn đàn" (ví dụ `https://forum.example.com`).
