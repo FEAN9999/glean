@@ -588,6 +588,34 @@ test('auto sync of a site writes only to its store', async () => {
   }
 });
 
+test('a site with no sections refuses a manual sync, and its auto sync is a failed run, not 0 records', async () => {
+  const empty = addSite({ baseUrl: 'https://empty.test', code: 'empty', name: 'empty' });
+  const read: number[] = [];
+  setForumReader(async (id) => {
+    read.push(id);
+    return { threads: [], totalPages: 1 };
+  });
+  try {
+    assert.deepEqual(withSite(empty, () => cfg().source.forums), []);
+    const app = Fastify();
+    registerSites(app);
+    registerSync(app);
+    const r = await app.inject({ method: 'POST', url: '/api/manual-syncs/start', headers: { 'x-glean-site': 'empty' }, payload: { type: 'posts', pageFrom: 1, pageTo: 1 } });
+    assert.deepEqual([r.statusCode, r.json().code], [400, 'NO_FORUMS']);
+    assert.equal(withSite(empty, manualStatus).startedAt, null);
+
+    await withSite(empty, () => runAutoSync('posts'));
+    const auto = await app.inject({ method: 'GET', url: '/api/sync/auto-status', headers: { 'x-glean-site': 'empty' } });
+    const posts = auto.json().data.posts;
+    assert.ok(posts.at, 'the run is dated');
+    assert.match(posts.error, /chuyên mục/);
+    assert.deepEqual(read, []);
+  } finally {
+    removeSite('empty');
+    setForumReader(noForum);
+  }
+});
+
 test('removing a site clears its timers', async () => {
   const configured: (string | null)[] = [];
   onConfigChange(() => configured.push(siteCtxOrNull()?.code ?? null));

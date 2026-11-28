@@ -43,7 +43,7 @@ function clock(s: number) {
 
 /** Read-only state of the periodic sync; its schedule is edited in Settings. */
 function AutoRows() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [auto, setAuto] = useState<{ posts: AutoState; comments: AutoState } | null>(null);
   const load = () => api.get<{ posts: AutoState; comments: AutoState }>('/sync/auto-status', { quiet: true }).then((r) => setAuto(r.data)).catch(() => {});
   useEffect(() => void load(), []);
@@ -61,6 +61,7 @@ function AutoRows() {
               <span className="line-sub">
                 {a.at ? t(`Lần gần nhất ${fmtAgo(a.at)}`, `Last run ${fmtAgo(a.at)}`) : t('Chưa chạy lần nào', 'Not run yet')}
                 {a.enabled && t(` · mỗi ${every} phút`, ` · every ${every} min`)}
+                {a.error && !a.running && ` · ${unpack(a.error, lang)}`}
               </span>
             </span>
             {a.running ? (
@@ -255,6 +256,15 @@ function Inner() {
               </span>
               <div className="chips" aria-busy={!forums}>
                 {!forums && [96, 128, 84, 112].map((w) => <Bone key={w} w={w} h={32} />)}
+                {forums?.length === 0 && (
+                  <p className="error-text" style={{ margin: 0 }}>
+                    {t('Trang này chưa có chuyên mục nào để đồng bộ. Chọn chuyên mục trong ', 'This site has no sections to sync yet. Pick them in ')}
+                    <Link to="/cai-dat#src" className="link-btn">
+                      {t('Cài đặt › Nguồn dữ liệu', 'Settings › Source')}
+                    </Link>
+                    .
+                  </p>
+                )}
                 {forums?.map((f) => {
                   const on = picked.includes(f.id);
                   return (
@@ -274,7 +284,9 @@ function Inner() {
             </div>
             {error && <p className="error-text" style={{ margin: 0 }}>{error}</p>}
             {!running ? (
-              <button className="btn btn-primary btn-lg">{t('Bắt đầu đồng bộ', 'Start sync')}</button>
+              <button className="btn btn-primary btn-lg" disabled={forums?.length === 0}>
+                {t('Bắt đầu đồng bộ', 'Start sync')}
+              </button>
             ) : (
               <button type="button" className="btn btn-lg" style={{ color: 'var(--bad-ink)' }} onClick={() => void stop()} disabled={st?.stopRequested}>
                 {st?.stopRequested ? t('Đang dừng…', 'Stopping…') : t('Dừng đồng bộ', 'Stop sync')}

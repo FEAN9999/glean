@@ -13,6 +13,11 @@ import { currentSite, onSiteAdded, onSiteRemoved, siteByCode, sites, withSite } 
 
 type SyncType = 'posts' | 'comments';
 
+const NO_FORUMS: Bi = [
+  'Trang này chưa có chuyên mục nào để đồng bộ. Chọn chuyên mục trong Cài đặt › Nguồn dữ liệu.',
+  'This site has no sections to sync yet. Pick them in Settings › Source.',
+];
+
 /* ---------------- persistence helpers ---------------- */
 
 export function ensureForum(id: number, name?: string) {
@@ -542,6 +547,13 @@ export function syncTimersForTests(code: string): SyncType[] {
 export async function runAutoSync(type: SyncType) {
   const { autoRunning, lastAuto, manual } = syncState();
   if (autoRunning[type] || (manual.running && manual.type === type)) return;
+  if (!cfg().source.forums.length) {
+    // Nothing to read is a failed run, so the page says why instead of "done, 0 records".
+    // No Telegram message: it would come every interval until sections are picked.
+    lastAuto[type] = { at: now(), error: pack(NO_FORUMS) };
+    emit(Ev.AutoSyncFinished, { type, count: 0, finishedAt: lastAuto[type].at });
+    return;
+  }
   autoRunning[type] = true;
   const ctx: RunCtx = { trigger: 'auto', shouldStop: () => false, batchSize: 50, fetchListPage: readForum };
   let total = 0;
@@ -807,6 +819,7 @@ export function registerSync(app: FastifyInstance) {
     requireSudo(req);
     const { manual } = syncState();
     if (manual.running) throw new ApiError(409, 'ALREADY_RUNNING', ['Đang có một lượt đồng bộ thủ công chạy.', 'A manual sync is already running.'], 'inline');
+    if (!cfg().source.forums.length) throw new ApiError(400, 'NO_FORUMS', NO_FORUMS, 'inline');
     const b = req.body ?? {};
     const o: ManualOptions = {
       type: b.type === 'comments' ? 'comments' : 'posts',
