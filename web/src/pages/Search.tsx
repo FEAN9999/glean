@@ -6,14 +6,20 @@ import { useLatest } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDate, fmtNum, parseThreadInput } from '../lib/format';
 import { Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Spinner, Status, useUi } from '../components/ui';
-import { useCreateScrape } from '../components/Scrape';
+import { useAskSite, useCreateScrape } from '../components/Scrape';
+import { ALL, SiteTag, useSites } from '../lib/site';
 import { CommentChanges } from '../components/CommentHistory';
 
 type Scope = 'posts' | 'comments';
 type Mode = 'tu-khoa' | 'nguoi-dang-bai';
 
+interface RowSite {
+  code: string;
+  name: string;
+}
 interface PostItem {
   id: number;
+  site: RowSite;
   title: string;
   author: string;
   forumId: number;
@@ -33,6 +39,7 @@ const POST_SORTS: PostSort[] = ['commentCount', 'viewCount', 'likeCount'];
 const postSort = (v: string | null): PostSort => (POST_SORTS.find((s) => s === v) ?? 'createdAt');
 interface CommentItem {
   id: number;
+  site: RowSite;
   threadId: number;
   postNo: number;
   page: number;
@@ -58,6 +65,25 @@ interface Suggestion {
   title: string;
   author: string;
   commentCount: number;
+}
+
+/** The site a search goes to: the one named in the URL (a thread-scoped search), else the picker's choice. */
+export function searchSiteOf(params: URLSearchParams, selected: string): string {
+  return params.get('trang') ?? selected;
+}
+
+/** Request options for a search on `site`. */
+const quietAt = (site: string) => ({ quiet: true, site });
+
+/** Says which site a thread link in the scope sent the search to. */
+function SearchingIn({ site }: { site: RowSite | null }) {
+  const { t } = useI18n();
+  if (!site) return null;
+  return (
+    <p className="muted" role="status" style={{ marginTop: 0 }}>
+      {t(`Đang tìm trong trang ${site.name}`, `Searching in ${site.name}`)}
+    </p>
+  );
 }
 
 function historyPath(scope: Scope, byAuthor: boolean) {
@@ -160,10 +186,17 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const { toast } = useUi();
   const navigate = useNavigate();
   const createScrape = useCreateScrape();
+  const askSite = useAskSite();
+  const { selected } = useSites();
   const { mode = 'tu-khoa' } = useParams<{ mode: Mode }>();
   const byAuthor = mode === 'nguoi-dang-bai';
   const [params, setParams] = useSearchParams();
   const base = scope === 'posts' ? '/bai-viet' : '/binh-luan';
+  const trang = params.get('trang');
+  const site = searchSiteOf(params, selected);
+  const merged = site === ALL;
+  // Keeps a thread-scoped search on its site when the search's own links change the query.
+  const withTrang = (qs: string) => (trang ? `${qs}${qs ? '&' : '?'}trang=${encodeURIComponent(trang)}` : qs);
 
   // The URL is the source of truth: the global search box and the filters only change it.
   const q = (params.get('q') ?? '').trim();
@@ -190,11 +223,13 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const [suggest, setSuggest] = useState<Suggestion[]>([]);
   const [meta, setMeta] = useState<{ count: number; at: string | null } | null>(null);
   // A new query or filter clears the results shown for the previous one.
-  const query = `${q}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}`;
+  const query = `${q}|${byAuthor}|${scope}|${exact}|${sort}|${thread}|${changed}|${site}`;
   const [shownQuery, setShownQuery] = useState(query);
   // The query whose search last finished, and the page "Show more" is loading.
   const [answered, setAnswered] = useState('');
   const [morePage, setMorePage] = useState<number | null>(null);
+  // The site a thread link in the scope pointed to, when it is not the one searched.
+  const [threadSite, setThreadSite] = useState<RowSite | null>(null);
   if (shownQuery !== query) {
     setShownQuery(query);
     setItems([]);
@@ -203,6 +238,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
     setOther(null);
     setOtherScopeTotal(null);
     setSuggest([]);
+    setThreadSite(null);
     setError('');
     setMorePage(null);
   }
@@ -216,10 +252,12 @@ export function SearchPage({ scope }: { scope: Scope }) {
   const busy = (!!q && !inputError && answered !== query) || morePage !== null;
 
   useEffect(() => {
+    // The counts come from one store: with every site chosen there is nothing to ask.
+    if (merged) return;
     if (scope === 'posts')
       api.get<{ postCount: number; postUpdatedAt: string | null }>('/posts/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
     else api.get<{ commentCount: number; commentUpdatedAt: string | null }>('/comments/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
-  }, [scope]);
+  }, [scope, site, merged]);
 
   const setParam = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);
@@ -233,20 +271,22 @@ export function SearchPage({ scope }: { scope: Scope }) {
   // Searches page `page` of the current query. It sets no state before the answer arrives, so the
   // effect below can call it; a query that cannot be searched never reaches it (see inputError).
   const run = useCallback(
-    (page: number) => {
+    (page: number, site: string) => {
       const key = `${query}|${page}`;
       if (lastRun.current.key === key && Date.now() - lastRun.current.at < 600) return;
       lastRun.current = { key, at: Date.now() };
       // A newer run drops the answers of one still loading, so they cannot overwrite its results.
       const isLatest = latest();
-      const threadId = thread ? parseThreadInput(thread) : null;
+      // The server takes the text as typed: a link also tells it which site the thread is on.
+      const threadId = thread || null;
+      const opts = quietAt(site);
       const search: Promise<Envelope<(PostItem | CommentItem)[]>> =
         scope === 'posts'
-          ? api.post<PostItem[]>('/posts/search', { page, keyword: q, isSearchByAuthor: byAuthor, sortDescendingField: sort, isExactMatch: exact }, { quiet: true })
+          ? api.post<PostItem[]>('/posts/search', { page, keyword: q, isSearchByAuthor: byAuthor, sortDescendingField: sort, isExactMatch: exact }, opts)
           : api.post<CommentItem[]>(
               byAuthor ? '/comments/search-by-author' : '/comments/search',
               { page, keyword: q, isExactMatch: exact, threadId, onlyChanged: changed },
-              { quiet: true },
+              opts,
             );
       search
         .then(async (r) => {
@@ -256,24 +296,25 @@ export function SearchPage({ scope }: { scope: Scope }) {
           setNextPage((r.nextPage as number | null) ?? null);
           setSearched(q);
           setError('');
+          if (page === 1) setThreadSite((r.site as RowSite | undefined) ?? null);
           if (page !== 1) return;
           // the other tab's count, so both tabs can show a number
           api
-            .post<{ total: number }>(scope === 'posts' ? '/comments/search/count' : '/posts/search/count', { keyword: q, isSearchByAuthor: byAuthor, isExactMatch: exact }, { quiet: true })
+            .post<{ total: number }>(scope === 'posts' ? '/comments/search/count' : '/posts/search/count', { keyword: q, isSearchByAuthor: byAuthor, isExactMatch: exact }, opts)
             .then((c) => isLatest() && setOtherScopeTotal(c.data.total))
             .catch(() => {});
           if (!r.total) {
             const c = await api.post<{ total: number }>(
               scope === 'posts' ? '/posts/search/count' : '/comments/search/count',
               { keyword: q, isSearchByAuthor: !byAuthor, isExactMatch: exact, threadId, onlyChanged: changed },
-              { quiet: true },
+              opts,
             );
             if (!isLatest()) return;
             setOther(c.data.total);
           }
           if (scope === 'posts' && !byAuthor) {
             api
-              .get<Suggestion[]>(`/posts/search/suggestions?q=${encodeURIComponent(q)}&topK=8`, { quiet: true })
+              .get<Suggestion[]>(`/posts/search/suggestions?q=${encodeURIComponent(q)}&topK=8`, opts)
               .then((s) => isLatest() && setSuggest(s.data))
               .catch(() => {});
           }
@@ -287,25 +328,41 @@ export function SearchPage({ scope }: { scope: Scope }) {
           setMorePage(null);
         });
     },
-    [query, byAuthor, changed, exact, q, scope, sort, thread, latest],
+    // setMorePage is stable; listing it is what the React Compiler lint wants once the component reads threadSite
+    [query, byAuthor, changed, exact, q, scope, sort, thread, latest, setMorePage],
   );
 
   // Run whenever the query or a filter in the URL changes.
   useEffect(() => {
-    if (q && !inputError) run(1);
-  }, [run, q, inputError]);
+    if (q && !inputError) run(1, site);
+  }, [run, q, inputError, site]);
 
   const pick = (k: string) => setParam('q', k);
-  const switchMode = (kw: string) => navigate(`${base}/${byAuthor ? 'tu-khoa' : 'nguoi-dang-bai'}?q=${encodeURIComponent(kw)}`);
-  const applyThread = () => {
+  const switchMode = (kw: string) => navigate(withTrang(`${base}/${byAuthor ? 'tu-khoa' : 'nguoi-dang-bai'}?q=${encodeURIComponent(kw)}`));
+  const applyThread = async () => {
     const v = threadDraft.trim();
-    if (!v) setParam('thread', null);
-    else if (parseThreadInput(v) != null) setParam('thread', v);
+    if (!v) {
+      // leaving the thread also leaves the site it pinned the search to
+      const next = new URLSearchParams(params);
+      next.delete('thread');
+      next.delete('trang');
+      setParams(next, { replace: true });
+    } else if (parseThreadInput(v) != null) {
+      // A bare ID with every site chosen: say which site it is on.
+      if (merged && /^\d+$/.test(v)) {
+        const code = await askSite(t('Một ID bài viết chưa nói bài ở trang nào.', 'A thread ID does not say which site the thread is on.'));
+        if (code == null) return;
+        const next = new URLSearchParams(params);
+        next.set('thread', v);
+        next.set('trang', code);
+        setParams(next, { replace: true });
+      } else setParam('thread', v);
+    }
   };
 
-  const sieve = async (threadId: number) => {
+  const sieve = async (threadId: number, rowSite: string) => {
     try {
-      await createScrape(String(threadId), scope === 'posts' ? 'search-post' : 'search-comment', { askNavigate: true });
+      await createScrape(String(threadId), scope === 'posts' ? 'search-post' : 'search-comment', { site: rowSite, askNavigate: true });
     } catch (err) {
       toast((err as ApiErr).message, 'error');
     }
@@ -320,11 +377,13 @@ export function SearchPage({ scope }: { scope: Scope }) {
       if (thread) p.set('thread', thread);
       if (changed) p.set('changed', '1');
     }
+    if (trang) p.set('trang', trang);
     const str = p.toString();
     return str ? `?${str}` : '';
   };
   const count = (s: Scope) => (!searched ? null : s === scope ? total : otherScopeTotal);
-  const synced = meta ? (meta.at ? t(`dữ liệu đồng bộ ${fmtAgo(meta.at)}`, `data synced ${fmtAgo(meta.at)}`) : t('chưa đồng bộ lần nào', 'not synced yet')) : '';
+  const shownMeta = merged ? null : meta;
+  const synced = shownMeta ? (shownMeta.at ? t(`dữ liệu đồng bộ ${fmtAgo(shownMeta.at)}`, `data synced ${fmtAgo(shownMeta.at)}`) : t('chưa đồng bộ lần nào', 'not synced yet')) : '';
 
   return (
     <div className="page">
@@ -339,8 +398,8 @@ export function SearchPage({ scope }: { scope: Scope }) {
         <p className="page-lede">
           {searched
             ? `${t(`${fmtNum(total)} kết quả`, `${fmtNum(total)} results`)}${synced ? ` · ${synced}` : ''}`
-            : meta
-              ? `${scope === 'posts' ? t(`Kho có ${fmtNum(meta.count)} bài viết`, `${fmtNum(meta.count)} threads in the archive`) : t(`Kho có ${fmtNum(meta.count)} bình luận`, `${fmtNum(meta.count)} comments in the archive`)} · ${synced}`
+            : shownMeta
+              ? `${scope === 'posts' ? t(`Kho có ${fmtNum(shownMeta.count)} bài viết`, `${fmtNum(shownMeta.count)} threads in the archive`) : t(`Kho có ${fmtNum(shownMeta.count)} bình luận`, `${fmtNum(shownMeta.count)} comments in the archive`)} · ${synced}`
               : ''}
         </p>
       </header>
@@ -406,11 +465,11 @@ export function SearchPage({ scope }: { scope: Scope }) {
           style={{ maxWidth: 520, paddingTop: 18 }}
           onSubmit={(e) => {
             e.preventDefault();
-            applyThread();
+            void applyThread();
           }}
         >
           <span>{t('Link hoặc ID bài viết', 'Thread link or ID')}</span>
-          <input className="input" value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)} onBlur={applyThread} placeholder="…/threads/ten-bai.12345/" autoFocus={!thread} />
+          <input className="input" value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)} onBlur={() => void applyThread()} placeholder="…/threads/ten-bai.12345/" autoFocus={!thread} />
           <small>
             {threadDraft
               ? parseThreadInput(threadDraft)
@@ -428,6 +487,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
               {inputError || error}
             </p>
           )}
+          <SearchingIn site={threadSite} />
           {busy && !items.length && <Spinner label={scope === 'comments' ? t('Đang quét dữ liệu bình luận…', 'Scanning comments…') : t('Đang tìm…', 'Searching…')} />}
 
           {!q && (
@@ -480,6 +540,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       {byAuthor ? p.title : <Highlight text={p.title} q={searched ?? ''} />}
                     </ExternalLink>
                     <span className="row-meta">
+                      {merged && <SiteTag code={p.site.code} />}
                       <button className="link-btn muted" onClick={() => navigate(`/bai-viet/nguoi-dang-bai?q=${encodeURIComponent(p.author)}&exact=1`)}>
                         {byAuthor ? <Highlight text={p.author} q={searched ?? ''} /> : p.author}
                       </button>
@@ -488,7 +549,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       <span>{t(`${fmtNum(p.commentCount)} bình luận`, `${fmtNum(p.commentCount)} comments`)}</span>
                       <span>{t(`${fmtNum(p.viewCount)} lượt xem`, `${fmtNum(p.viewCount)} views`)}</span>
                       <span>{t(`${fmtNum(p.likeCount)} like`, `${fmtNum(p.likeCount)} likes`)}</span>
-                      <Link className="link-btn muted" to={`/binh-luan/tu-khoa?thread=${p.id}`}>
+                      <Link className="link-btn muted" to={`/binh-luan/tu-khoa?thread=${p.id}&trang=${p.site.code}`}>
                         {t('Tìm bình luận trong bài', 'Search its comments')}
                       </Link>
                     </span>
@@ -496,7 +557,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                   {p.isDeleted ? (
                     <Status tone="bad">{t('Đã xóa · còn bản lưu', 'Deleted · copy kept')}</Status>
                   ) : (
-                    <button className="btn btn-primary" onClick={() => void sieve(p.id)}>
+                    <button className="btn btn-primary" onClick={() => void sieve(p.id, p.site.code)}>
                       {t('Sàng bài này', 'Sieve thread')}
                     </button>
                   )}
@@ -510,6 +571,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                   <div className="comment-text">
                     <span className="row-body">{byAuthor ? c.content : <Highlight text={c.content} q={searched ?? ''} />}</span>
                     <span className="row-meta comment-meta">
+                      {merged && <SiteTag code={c.site.code} />}
                       <button className="link-btn muted" onClick={() => navigate(`/binh-luan/nguoi-dang-bai?q=${encodeURIComponent(c.author)}&exact=1`)}>
                         {byAuthor ? <Highlight text={c.author} q={searched ?? ''} /> : c.author}
                       </button>
@@ -525,7 +587,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
                       <ExternalLink href={c.url} className="link-btn">
                         {t('Xem bình luận', 'View comment')}
                       </ExternalLink>
-                      <button className="link-btn" onClick={() => void sieve(c.threadId)}>
+                      <button className="link-btn" onClick={() => void sieve(c.threadId, c.site.code)}>
                         {t('Sàng bài này', 'Sieve this thread')}
                       </button>
                     </span>
@@ -539,7 +601,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
               disabled={busy}
               onClick={() => {
                 setMorePage(nextPage);
-                run(nextPage);
+                run(nextPage, site);
               }}
             >
               {busy
