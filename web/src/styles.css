@@ -35,6 +35,11 @@
   --on-acc: #fff;
   --warm: oklch(0.78 0.15 75);
   --cool: oklch(0.78 0.11 200);
+  /* the night surfaces (Desk hero, page heads, sign-in) look the same in both themes */
+  --night: #1a1440;
+  --violet: #a99bff;
+  --wheat: #f2c46d;
+  --mist: #ece9ff;
 
   --font-display: 'Lexend', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-ui: 'Lexend', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -516,6 +521,62 @@ img {
 .page-head .spacer {
   flex: 1;
 }
+/* A screen's own head is a night band (a sieve job's sits in its main column); the skeleton heads nested in a page stay plain. */
+:is(.page > .page-head, .job-head) {
+  align-items: center;
+  gap: 8px 18px;
+  margin-bottom: 24px;
+  padding: 28px 32px;
+  border-radius: 24px;
+  color: var(--mist);
+  background:
+    radial-gradient(60% 140% at 8% 0%, hsla(252, 100%, 82%, 0.18), transparent 62%),
+    radial-gradient(45% 110% at 100% 100%, color-mix(in oklab, var(--wheat) 13%, transparent), transparent 70%),
+    var(--night);
+}
+:is(.page > .page-head, .job-head) .page-title {
+  color: #fff;
+  font-size: clamp(24px, 2.6vw, 32px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+:is(.page > .page-head, .job-head) .page-lede {
+  color: color-mix(in oklab, var(--mist) 72%, transparent);
+}
+:is(.page > .page-head, .job-head) .btn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+:is(.page > .page-head, .job-head) .btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+:is(.page > .page-head, .job-head) .skeleton {
+  background: rgba(255, 255, 255, 0.1);
+}
+.crumbs + .page-head {
+  margin-top: 10px;
+}
+.page-head.job-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.job-head .row-meta {
+  color: color-mix(in oklab, var(--mist) 72%, transparent);
+}
+.job-head .tag {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.job-head .st-run {
+  color: var(--wheat);
+}
+.job-head .st-bad {
+  color: #ffb4a8;
+}
 .page-title {
   font-size: 22px;
   font-weight: 500;
@@ -566,12 +627,14 @@ img {
   grid-template-columns: minmax(0, 1fr) 360px;
 }
 .cols > .col-main {
-  padding-right: 40px;
+  padding-right: 28px;
   min-width: 0;
 }
 .cols > .col-side {
-  border-left: 1px solid var(--line);
-  padding-left: 36px;
+  align-self: start;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 24px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -612,7 +675,7 @@ img {
   gap: var(--s2);
   height: 34px;
   padding: 0 16px;
-  border-radius: var(--r-field);
+  border-radius: 999px;
   border: 1px solid var(--bd);
   background: transparent;
   color: var(--acc-ink);
@@ -621,8 +684,11 @@ img {
   font-weight: 500;
   white-space: nowrap;
   text-decoration: none;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.2s, transform 0.15s;
   flex: none;
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .btn:hover {
   border-color: var(--dim);
@@ -642,7 +708,8 @@ img {
 }
 .btn-primary:hover {
   border-color: transparent;
-  filter: brightness(0.94);
+  filter: brightness(1.05);
+  box-shadow: 0 8px 24px -8px color-mix(in oklab, var(--acc) 70%, transparent);
 }
 .btn-primary:disabled:hover {
   border-color: transparent;
@@ -690,7 +757,7 @@ img {
 .dialog-actions .btn-danger {
   height: 34px;
   padding: 0 16px;
-  border-radius: var(--r-field);
+  border-radius: 999px;
   background: var(--bad);
   color: #fff;
   font-weight: 500;
@@ -752,11 +819,12 @@ img {
 .select,
 .textarea {
   height: 40px;
-  padding: 0 12px;
-  border-radius: var(--r-field);
+  padding: 0 14px;
+  border-radius: 12px;
   border: 1px solid var(--bd);
   background: var(--bg);
   width: 100%;
+  transition: border-color 0.15s, box-shadow 0.2s;
   min-width: 0;
   font-size: 14px;
 }
@@ -776,7 +844,7 @@ img {
 .textarea:focus {
   border-color: var(--acc);
   outline: none;
-  box-shadow: 0 0 0 1px var(--acc);
+  box-shadow: 0 0 0 4px var(--tint);
 }
 .input:disabled {
   opacity: 0.6;
@@ -824,7 +892,7 @@ img {
 .seg {
   display: inline-flex;
   border: 1px solid var(--bd);
-  border-radius: var(--r-field);
+  border-radius: 999px;
   overflow: hidden;
   font-size: 13px;
   flex: none;
@@ -948,6 +1016,7 @@ img {
 }
 .tabs > button,
 .tabs > a {
+  position: relative;
   border: 0;
   background: none;
   padding: 10px 0 12px;
@@ -965,7 +1034,15 @@ img {
 .tabs > .on {
   color: var(--ink);
   font-weight: 500;
-  box-shadow: inset 0 -2px 0 var(--acc);
+}
+.tab-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--acc), var(--violet));
 }
 .tabs .count {
   margin-left: 4px;
@@ -1290,7 +1367,7 @@ a.gtr:hover .gt-title {
   display: block;
   height: 100%;
   border-radius: 3px;
-  background: var(--acc);
+  background: linear-gradient(90deg, var(--acc), var(--violet));
   transition: width 0.3s;
 }
 
@@ -1394,8 +1471,8 @@ a.gtr:hover .gt-title {
 /* ================= feedback ================= */
 
 .notice {
-  border-radius: var(--r-field);
-  padding: 10px 14px;
+  border-radius: 14px;
+  padding: 12px 16px;
   background: var(--field);
   display: flex;
   gap: var(--s3);
@@ -1468,15 +1545,20 @@ a.gtr:hover .gt-title {
 .figures {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 36px;
+  gap: 12px;
 }
 .figure {
   display: flex;
   flex-direction: column;
+  min-width: 140px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
 }
 .figure .num {
-  font-size: 24px;
-  font-weight: 500;
+  font-size: 28px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
   line-height: 1.2;
 }
 .figure span:last-child {
@@ -1703,7 +1785,8 @@ a.gtr:hover .gt-title {
 .tile {
   position: relative;
   aspect-ratio: 4 / 3;
-  border-radius: 8px;
+  border-radius: 14px;
+  transition: transform 0.2s, box-shadow 0.2s;
   overflow: hidden;
   background: repeating-linear-gradient(135deg, var(--line) 0 7px, var(--field) 7px 14px);
   border: 0;
@@ -1716,8 +1799,12 @@ a.gtr:hover .gt-title {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--acc);
   overflow: visible;
 }
+.tile:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 30px -14px rgba(26, 20, 64, 0.55);
+}
 .tile.on img {
-  border-radius: 8px;
+  border-radius: 14px;
 }
 .tile img {
   width: 100%;
@@ -1892,6 +1979,38 @@ a.gtr:hover .gt-title {
   cursor: pointer;
   opacity: 0.7;
 }
+/* Rows and tiles come in one after another as a list loads or turns a page. `backwards` leaves
+   no transform behind once done, so nothing inside gains a new containing block. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)) {
+  animation: rise-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(2) { animation-delay: 30ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(3) { animation-delay: 60ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(4) { animation-delay: 90ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(5) { animation-delay: 120ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(6) { animation-delay: 150ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(7) { animation-delay: 180ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(8) { animation-delay: 210ms; }
+:is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)):nth-child(n + 9) { animation-delay: 240ms; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.result, .comment, .gallery > *, .gtable .gtr:not(.head)) {
+    animation: none;
+  }
+  .tile,
+  .btn {
+    transition: none;
+  }
+  .tile:hover,
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
 @keyframes toast-in {
   from {
     transform: translateY(8px);
@@ -1951,31 +2070,38 @@ a.gtr:hover .gt-title {
 .settings-nav a {
   text-decoration: none;
   color: var(--dim);
-  padding: 7px 0;
+  padding: 7px 12px;
+  border-radius: 999px;
   font-size: 13px;
+  transition: background 0.15s, color 0.15s;
 }
 .settings-nav a:hover {
   color: var(--ink);
+  background: var(--field);
 }
 .settings-body {
-  border-left: 1px solid var(--line);
-  padding-left: 36px;
   min-width: 0;
   max-width: 760px;
 }
 .settings fieldset {
-  border: 0;
-  margin: 0 0 28px;
-  padding: 0 0 28px;
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  margin: 0 0 20px;
+  padding: 24px 26px;
   scroll-margin-top: calc(var(--topbar-h) + 24px);
   min-width: 0;
 }
 .settings legend {
+  /* floated, so it sits inside the card instead of cutting into its border */
+  float: left;
+  width: 100%;
   font-size: 16px;
   font-weight: 400;
   padding: 0;
   margin-bottom: 2px;
+}
+.settings legend + * {
+  clear: both;
 }
 .settings fieldset > p {
   margin: 0 0 14px;
@@ -2230,9 +2356,15 @@ a.gtr:hover .gt-title {
   display: flex;
   align-items: center;
   gap: 8px 20px;
-  padding: 14px 0;
+  padding: 14px 16px;
+  margin: 0 -16px;
   border-bottom: 1px solid var(--line2);
+  border-radius: 16px;
   flex-wrap: wrap;
+  transition: background 0.15s;
+}
+.result:hover {
+  background: var(--field);
 }
 .result-text {
   flex: 1;
@@ -2415,7 +2547,6 @@ a.result-title:hover {
   .cols-3 > :nth-child(2) {
     padding-right: 0;
   }
-  .cols > .col-side,
   .desk-top > :last-child,
   .cols-3 > :nth-child(2),
   .cols-3 > :nth-child(3) {
@@ -2423,18 +2554,16 @@ a.result-title:hover {
     padding-left: 0;
     padding-top: 28px;
   }
+  .cols > .col-side,
   .cols.pad-top > .col-side {
-    padding-top: 28px;
+    margin-top: 28px;
+    padding: 22px;
   }
   .settings {
     grid-template-columns: minmax(0, 1fr);
   }
   .settings-nav {
     display: none;
-  }
-  .settings-body {
-    border-left: 0;
-    padding-left: 0;
   }
 }
 

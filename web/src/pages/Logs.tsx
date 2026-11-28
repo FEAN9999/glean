@@ -5,7 +5,7 @@ import { useLatest, usePaged } from '../lib/load';
 import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Bone, Empty, ExternalLink, Pager, Skeleton, SkeletonResults, Status, boneWidth, useUi } from '../components/ui';
+import { Bone, Empty, ExternalLink, Pager, Skeleton, SkeletonResults, Status, boneWidth, TabMark, useUi } from '../components/ui';
 
 type Kind = 'posts' | 'comments';
 
@@ -27,9 +27,11 @@ function KindTabs({ kind }: { kind: Kind }) {
     <nav className="tabs" aria-label={t('Loại dữ liệu', 'Data type')}>
       <Link className={kind === 'posts' ? 'on' : ''} aria-current={kind === 'posts' ? 'page' : undefined} to="/nhat-ky/bai-viet">
         {t('Bài viết', 'Threads')}
+        {kind === 'posts' && <TabMark id="log-tabs" />}
       </Link>
       <Link className={kind === 'comments' ? 'on' : ''} aria-current={kind === 'comments' ? 'page' : undefined} to="/nhat-ky/binh-luan">
         {t('Bình luận', 'Comments')}
+        {kind === 'comments' && <TabMark id="log-tabs" />}
       </Link>
     </nav>
   );
@@ -209,7 +211,7 @@ export function SyncLogDetailPage({ kind }: { kind: Kind }) {
       <nav className="crumbs" aria-label={t('Vị trí', 'Breadcrumb')}>
         <Link to={`/nhat-ky/${kind === 'posts' ? 'bai-viet' : 'binh-luan'}`}>{t('Nhật ký đồng bộ', 'Sync log')}</Link> › {kind === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments')}
       </nav>
-      <header className="page-head tight" style={{ paddingTop: 4 }}>
+      <header className="page-head tight">
         <h1 className="page-title">{h.forumName}</h1>
         <p className="page-lede">
           {fmtDate(h.syncStartedAt)} · {h.trigger === 'auto' ? t('tự động', 'automatic') : t('thủ công', 'manual')} ·{' '}

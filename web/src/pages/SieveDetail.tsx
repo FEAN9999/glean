@@ -6,7 +6,7 @@ import { usePaged } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { SiteTag, useSites } from '../lib/site';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { Bone, Donut, Empty, ExternalLink, Mesh, Pager, Skeleton, Status, boneWidth, pageRange, useConfirm, useReturnFocus, useUi } from '../components/ui';
+import { Bone, Donut, Empty, ExternalLink, Mesh, Pager, Skeleton, Status, boneWidth, pageRange, useConfirm, useReturnFocus, TabMark, useUi } from '../components/ui';
 import { ScrapeStatus, scrapeTitle, threadOnForum, useStatusLabel, type ImageProgress, type PageProgress, type Scrape } from '../components/Scrape';
 import { ProxyNotice } from './Sieve';
 import { CommentChanges } from '../components/CommentHistory';
@@ -131,13 +131,15 @@ function JobSkeleton() {
     <Skeleton label={t('Đang tải lượt sàng', 'Loading the sieve job')} className="page cols">
       <div className="col-main">
         <Bone w={130} h={11} style={{ margin: '3px 0' }} />
-        <div className="hstack" style={{ gap: '10px 12px', padding: '8px 0 6px' }}>
-          <Bone w="50%" h={24} style={{ flex: 1, minWidth: 240, maxWidth: 520 }} />
-          <span style={{ flex: 1 }} />
-          <Bone w={86} h={34} />
-          <Bone w={104} h={34} />
+        <div className="page-head job-head">
+          <div className="hstack" style={{ gap: '10px 12px' }}>
+            <Bone w="50%" h={24} style={{ flex: 1, minWidth: 240, maxWidth: 520 }} />
+            <span style={{ flex: 1 }} />
+            <Bone w={86} h={34} />
+            <Bone w={104} h={34} />
+          </div>
+          <Bone w={320} h={12} />
         </div>
-        <Bone w={320} h={12} style={{ margin: '6px 0 20px' }} />
         <div className="tabs" style={{ marginBottom: 20 }}>
           {[56, 60, 72, 84, 128].map((w) => (
             <Bone key={w} w={w} h={13} style={{ margin: '12px 0 14px' }} />
@@ -851,7 +853,8 @@ function SieveJob({ site }: { site: string }) {
         <nav className="crumbs" aria-label={t('Vị trí', 'Breadcrumb')}>
           <Link to="/sang">{t('Kho', 'Archive')}</Link> › {t(`Bài #${s.threadId}`, `Thread #${s.threadId}`)}
         </nav>
-        <div className="hstack" style={{ gap: '10px 12px', padding: '4px 0 2px' }}>
+        <header className="page-head job-head">
+        <div className="hstack" style={{ gap: '10px 12px' }}>
           <h1 className="page-title" style={{ flex: 1, minWidth: 240 }}>
             {scrapeTitle(s, t)}
           </h1>
@@ -867,12 +870,13 @@ function SieveJob({ site }: { site: string }) {
             {t('Mở bài gốc', 'Open thread')}
           </ExternalLink>
         </div>
-        <p className="row-meta" style={{ margin: 0, paddingBottom: 14, fontSize: 14 }}>
+        <p className="row-meta" style={{ margin: 0, fontSize: 14 }}>
           <SiteTag code={site} />
-          <span style={processing ? { color: 'var(--acc-ink)' } : s.status === ScrapeStatus.Failed ? { color: 'var(--bad-ink)' } : undefined}>{label(s.status)}</span>
+          <span className={processing ? 'st-run' : s.status === ScrapeStatus.Failed ? 'st-bad' : undefined}>{label(s.status)}</span>
           {s.totalPages > 0 && <span>{t(`${fmtNum(s.totalPages)} trang`, `${fmtNum(s.totalPages)} pages`)}</span>}
           <span>{s.finishedAt ? t(`sàng lúc ${fmtDate(s.finishedAt)}`, `sieved ${fmtDate(s.finishedAt)}`) : t(`thêm lúc ${fmtDate(s.createdAt)}`, `added ${fmtDate(s.createdAt)}`)}</span>
         </p>
+        </header>
 
         <ProxyNotice />
         {s.isThreadDeleted && (
@@ -951,6 +955,7 @@ function SieveJob({ site }: { site: string }) {
             >
               {x.label}
               {x.count != null && <span className="count">{fmtNum(x.count)}</span>}
+              {tab === x.key && <TabMark id="job-tabs" />}
             </button>
           ))}
         </div>

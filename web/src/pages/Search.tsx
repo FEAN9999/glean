@@ -5,7 +5,7 @@ import { useI18n } from '../lib/i18n';
 import { useLatest } from '../lib/load';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDate, fmtNum, parseThreadInput } from '../lib/format';
-import { Bone, Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Skeleton, SkeletonLines, SkeletonResults, Status, boneWidth, useUi } from '../components/ui';
+import { Bone, Empty, ExternalLink, Highlight, PausedNotice, Sentinel, Skeleton, SkeletonLines, SkeletonResults, Status, boneWidth, TabMark, useUi } from '../components/ui';
 import { useAskSite, useCreateScrape } from '../components/Scrape';
 import { ALL, SiteTag, useSites } from '../lib/site';
 import { CommentChanges } from '../components/CommentHistory';
@@ -437,6 +437,7 @@ export function SearchPage({ scope }: { scope: Scope }) {
             <Link key={s} to={`/${s === 'posts' ? 'bai-viet' : 'binh-luan'}/${mode}${tabQuery(s)}`} className={s === scope ? 'on' : ''} aria-current={s === scope ? 'page' : undefined}>
               {s === 'posts' ? t('Bài viết', 'Threads') : t('Bình luận', 'Comments')}
               {count(s) != null && <span className="count">{fmtNum(count(s))}</span>}
+              {s === scope && <TabMark id="search-tabs" />}
             </Link>
           ))}
         </nav>

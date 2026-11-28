@@ -238,6 +238,11 @@ export function useReturnFocus() {
   );
 }
 
+/** The bar under the current tab. It slides over when another tab of the same strip (`id`) is picked. */
+export function TabMark({ id }: { id: string }) {
+  return <motion.span layoutId={id} aria-hidden="true" className="tab-mark" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />;
+}
+
 export function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   useReturnFocus();
   useEffect(() => {

@@ -4,7 +4,7 @@ import { api, ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
 import { Ev, useEvent } from '../lib/realtime';
 import { fmtAgo, fmtDuration, fmtNum } from '../lib/format';
-import { Bone, Empty, PausedNotice, Sentinel, Skeleton, SkeletonLines, boneWidth, useConfirm, useUi } from '../components/ui';
+import { Bone, Empty, PausedNotice, Sentinel, Skeleton, SkeletonLines, boneWidth, useConfirm, TabMark, useUi } from '../components/ui';
 import { NowSieving, ScrapeStatus, SieveForm, scrapePath, scrapeTitle, useScrapeQueue, type Scrape } from '../components/Scrape';
 import { ALL, SiteTag, useSites } from '../lib/site';
 import type { AppConfig } from '../../../server/config';
@@ -318,6 +318,7 @@ export function SievePage() {
           <button role="tab" aria-selected="true" className="on">
             {t('Đã sàng', 'Sieved')}
             {archiveCount != null && <span className="count">{fmtNum(archiveCount)}</span>}
+            <TabMark id="archive-tabs" />
           </button>
         </div>
         {!!total && (
