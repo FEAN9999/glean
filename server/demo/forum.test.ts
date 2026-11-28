@@ -58,3 +58,20 @@ test('the first post of a thread cannot be deleted on its own', async () => {
 test('unknown posts are a 404', async () => {
   assert.equal((await app.inject({ method: 'POST', url: '/demo-forum/_edit-post/1' })).statusCode, 404);
 });
+
+test('the second demo forum shares ids but tags titles', async () => {
+  const app2 = Fastify();
+  registerDemoForum(app2, { prefix: '/demo-forum-2', titleTag: '[B] ' });
+  const list = (await app2.inject({ method: 'GET', url: '/demo-forum-2/forums/x.1/' })).body;
+  const href = list.match(/href="(\/demo-forum-2\/threads\/[^"]+)"/)![1];
+  const id = href.match(/\.(\d+)\/$/)![1];
+  const res = await app2.inject({ method: 'GET', url: `/demo-forum-2/threads/x.${id}/` });
+  assert.equal(res.statusCode, 200);
+  assert.match(res.body, /<h1 class="p-title-value">\[B\] /);
+  const first = (await app.inject({ method: 'GET', url: `/demo-forum/threads/x.${id}/` })).body;
+  assert.doesNotMatch(first, /\[B\] /);
+  const links = [...res.body.matchAll(/(?:href|src)="(\/[^"]*)"/g)].map((m) => m[1]);
+  assert.ok(links.length > 3);
+  for (const l of links) assert.ok(l.startsWith('/demo-forum-2/'), l);
+  assert.doesNotMatch(res.body, /\/demo-forum\//);
+});

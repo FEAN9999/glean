@@ -132,12 +132,12 @@ function build() {
             const kind = pr();
             const src =
               kind < 0.04
-                ? `/demo-forum/img/${id}-${n}-${j}-bin.jpg`
+                ? `{{P}}/img/${id}-${n}-${j}-bin.jpg`
                 : kind < 0.08
-                  ? `/demo-forum/img/missing-${id}-${n}-${j}.png`
+                  ? `{{P}}/img/missing-${id}-${n}-${j}.png`
                   : kind < 0.12
                     ? `http://ads.example.invalid/banner-${j}.gif`
-                    : `/demo-forum/img/${id}-${n}-${j}.svg`;
+                    : `{{P}}/img/${id}-${n}-${j}.svg`;
             html += `<br /><img src="${src}" class="bbImage" alt="ảnh ${j}" loading="lazy" />`;
           }
         }
@@ -145,7 +145,7 @@ function build() {
           html += `<br /><span data-s9e-mediaembed="youtube"><iframe src="https://www.youtube-nocookie.com/embed/${['aqz-KE-bpKQ', 'ScMzIvxBSi4', 'LXb3EKWsInQ'][n % 3]}" allowfullscreen></iframe></span>`;
         }
         if (pr() < 0.03) {
-          html += `<br /><video controls><source src="/demo-forum/video/${id}-${n}.mp4" type="video/mp4" /></video>`;
+          html += `<br /><video controls><source src="{{P}}/video/${id}-${n}.mp4" type="video/mp4" /></video>`;
         }
         if (pr() < 0.12) {
           const slug = pick(pr, ['Đèo_Mã_Pí_Lèng', 'Phở', 'Máy_ảnh_rangefinder', 'Bàn_phím_cơ', 'Hà_Giang', 'Cá_kho']);
@@ -231,16 +231,20 @@ function demoReactions(postId: number) {
   return `<div class="reactionsBar js-reactionsList is-active"><a class="reactionsBar-link">${who}</a></div>`;
 }
 
-export function registerDemoForum(app: FastifyInstance) {
-  app.get('/demo-forum/', async (_req, reply) => {
+export function registerDemoForum(app: FastifyInstance, opts: { prefix?: string; titleTag?: string } = {}) {
+  const prefix = opts.prefix ?? '/demo-forum';
+  const titleTag = opts.titleTag ?? '';
+  const fill = (html: string) => html.replaceAll('{{P}}', prefix);
+
+  app.get(`${prefix}/`, async (_req, reply) => {
     const nodes = FORUMS.map(
-      (f) => `<div class="node node--forum node--id${f.id}"><h3 class="node-title"><a href="/demo-forum/forums/${slugify(f.name)}.${f.id}/">${esc(f.name)}</a></h3></div>`,
+      (f) => `<div class="node node--forum node--id${f.id}"><h3 class="node-title"><a href="${prefix}/forums/${slugify(f.name)}.${f.id}/">${esc(f.name)}</a></h3></div>`,
     ).join('');
     const body = `<div class="block block--category"><div class="block-container"><h2 class="block-header"><a>Chuyên mục mẫu</a></h2><div class="block-body">${nodes}</div></div></div>`;
     reply.type('text/html').send(layout('Trang chủ', `<h1 class="p-title-value">Diễn đàn mẫu</h1>${body}`));
   });
 
-  app.get<{ Params: { slug: string; page?: string } }>('/demo-forum/forums/:slug/:page?', async (req, reply) => {
+  app.get<{ Params: { slug: string; page?: string } }>(`${prefix}/forums/:slug/:page?`, async (req, reply) => {
     const id = Number(req.params.slug.split('.').pop());
     const f = FORUMS.find((x) => x.id === id);
     if (!f) return reply.code(404).type('text/html').send(layout('Không tìm thấy', '<h1>Không tìm thấy</h1>'));
@@ -256,7 +260,7 @@ export function registerDemoForum(app: FastifyInstance) {
       .map(
         ({ t, posts }) => `<div class="structItem structItem--thread js-inlineModContainer" data-author="${esc(t.author)}">
   <div class="structItem-cell structItem-cell--main">
-    <div class="structItem-title"><a href="/demo-forum/threads/${slugify(t.title)}.${t.id}/">${esc(t.title)}</a></div>
+    <div class="structItem-title"><a href="${prefix}/threads/${slugify(t.title)}.${t.id}/">${esc(titleTag + t.title)}</a></div>
     <div class="structItem-minor"><ul class="structItem-parts"><li><a class="username">${esc(t.author)}</a></li><li class="structItem-startDate"><a>${timeTag(t.createdAt)}</a></li></ul></div>
   </div>
   <div class="structItem-cell structItem-cell--meta"><dl class="pairs pairs--justified"><dt>Trả lời</dt><dd>${posts.length - 1}</dd></dl><dl class="pairs pairs--justified structItem-minor"><dt>Lượt xem</dt><dd>${demoViews(t.id, posts.length)}</dd></dl></div>
@@ -266,10 +270,10 @@ export function registerDemoForum(app: FastifyInstance) {
       .join('');
     reply
       .type('text/html')
-      .send(layout(f.name, `<h1 class="p-title-value">${esc(f.name)}</h1>${items}${pageNav(`/demo-forum/forums/${slugify(f.name)}.${f.id}/`, page, total)}`));
+      .send(layout(f.name, `<h1 class="p-title-value">${esc(f.name)}</h1>${items}${pageNav(`${prefix}/forums/${slugify(f.name)}.${f.id}/`, page, total)}`));
   });
 
-  app.get<{ Params: { slug: string; page?: string } }>('/demo-forum/threads/:slug/:page?', async (req, reply) => {
+  app.get<{ Params: { slug: string; page?: string } }>(`${prefix}/threads/:slug/:page?`, async (req, reply) => {
     const id = Number(req.params.slug.split('.').pop());
     const t = threads.find((x) => x.id === id);
     const nowMs = Date.now();
@@ -279,7 +283,7 @@ export function registerDemoForum(app: FastifyInstance) {
     const posts = visiblePosts(t, nowMs);
     const total = Math.max(1, Math.ceil(posts.length / PER_PAGE));
     const forum = FORUMS.find((f) => f.id === t.forumId)!;
-    const base = `/demo-forum/threads/${slugify(t.title)}.${t.id}/`;
+    const base = `${prefix}/threads/${slugify(t.title)}.${t.id}/`;
     const items = posts
       .slice((page - 1) * PER_PAGE, page * PER_PAGE)
       .map(
@@ -290,7 +294,7 @@ export function registerDemoForum(app: FastifyInstance) {
       <ul class="message-attribution-main"><li><a href="${base}post-${p.id}" class="u-concealed">${timeTag(p.at)}</a></li></ul>
       <ul class="message-attribution-opposite"><li><a href="${base}post-${p.id}">#${p.no}</a></li></ul>
     </header>
-    <div class="message-content"><div class="message-body"><div class="bbWrapper">${editedPosts.get(p.id)?.html ?? p.html}</div></div>${
+    <div class="message-content"><div class="message-body"><div class="bbWrapper">${fill(editedPosts.get(p.id)?.html ?? p.html)}</div></div>${
       editedPosts.has(p.id) ? `<div class="message-lastEdit">Sửa lần cuối: ${timeTag(editedPosts.get(p.id)!.at)}</div>` : ''
     }${demoReactions(p.id)}</div>
   </div>
@@ -299,28 +303,28 @@ export function registerDemoForum(app: FastifyInstance) {
       .join('');
     reply.type('text/html').send(
       layout(
-        t.title,
-        `<div class="p-breadcrumbs"><a href="/demo-forum/">Diễn đàn</a> › <a href="/demo-forum/forums/${slugify(forum.name)}.${forum.id}/">${esc(forum.name)}</a></div>
-<h1 class="p-title-value">${esc(t.title)}</h1>${pageNav(base, page, total)}${items}${pageNav(base, page, total)}`,
+        titleTag + t.title,
+        `<div class="p-breadcrumbs"><a href="${prefix}/">Diễn đàn</a> › <a href="${prefix}/forums/${slugify(forum.name)}.${forum.id}/">${esc(forum.name)}</a></div>
+<h1 class="p-title-value">${esc(titleTag + t.title)}</h1>${pageNav(base, page, total)}${items}${pageNav(base, page, total)}`,
       ),
     );
   });
 
-  app.get<{ Params: { file: string } }>('/demo-forum/img/:file', async (req, reply) => {
+  app.get<{ Params: { file: string } }>(`${prefix}/img/:file`, async (req, reply) => {
     const f = req.params.file;
     if (f.startsWith('missing-')) return reply.code(404).send('not found');
     if (f.endsWith('-bin.jpg')) return reply.type('text/html').send('<html><body>Hotlink protection</body></html>');
     reply.header('cache-control', 'public, max-age=86400').type('image/svg+xml').send(svgImage(f.replace(/\.svg$/, '')));
   });
   // Demo-only: simulate a moderator deleting (or restoring) a thread on the forum.
-  app.post<{ Params: { id: string } }>('/demo-forum/_toggle-delete/:id', async (req) => {
+  app.post<{ Params: { id: string } }>(`${prefix}/_toggle-delete/:id`, async (req) => {
     const id = Number(req.params.id);
     if (manualDeleted.has(id)) manualDeleted.delete(id);
     else manualDeleted.add(id);
     return { threadId: id, deleted: manualDeleted.has(id) };
   });
   // Demo-only: simulate a member editing a post. Without `text`, " (đã sửa)" is appended.
-  app.post<{ Params: { id: string }; Body: { text?: string } | undefined }>('/demo-forum/_edit-post/:id', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { text?: string } | undefined }>(`${prefix}/_edit-post/:id`, async (req, reply) => {
     const found = findPost(Number(req.params.id));
     if (!found) return reply.code(404).send({ error: 'post not found' });
     const at = Date.now();
@@ -330,15 +334,15 @@ export function registerDemoForum(app: FastifyInstance) {
     return { postId: found.p.id, threadId: found.t.id, editedAt: new Date(Math.floor(at / 1000) * 1000).toISOString() };
   });
   // Demo-only: simulate a moderator deleting (or restoring) a single post.
-  app.post<{ Params: { id: string } }>('/demo-forum/_toggle-post-delete/:id', async (req, reply) => {
+  app.post<{ Params: { id: string } }>(`${prefix}/_toggle-post-delete/:id`, async (req, reply) => {
     const found = findPost(Number(req.params.id));
     if (!found) return reply.code(404).send({ error: 'post not found' });
-    if (found.p.no === 1) return reply.code(400).send({ error: 'delete the thread instead (/demo-forum/_toggle-delete/:threadId)' });
+    if (found.p.no === 1) return reply.code(400).send({ error: `delete the thread instead (${prefix}/_toggle-delete/:threadId)` });
     if (deletedPosts.has(found.p.id)) deletedPosts.delete(found.p.id);
     else deletedPosts.add(found.p.id);
     return { postId: found.p.id, threadId: found.t.id, deleted: deletedPosts.has(found.p.id) };
   });
-  app.get('/demo-forum/video/:file', async (_req, reply) => reply.code(404).send('video not available in demo'));
+  app.get(`${prefix}/video/:file`, async (_req, reply) => reply.code(404).send('video not available in demo'));
 }
 
 export const demoStats = () => ({ threads: threads.length, posts: threads.reduce((a, t) => a + t.posts.length, 0) });

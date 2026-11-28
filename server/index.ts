@@ -77,6 +77,7 @@ registerScraper(app);
 registerSystem(app, PORT);
 registerBackup(app);
 registerDemoForum(app);
+registerDemoForum(app, { prefix: '/demo-forum-2', titleTag: '[B] ' });
 
 /* ---- built web app (production) ---- */
 const webDist = path.resolve('dist/web');

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
 import { cfg, loadConfig, updateConfig } from './config.ts';
-import { DATA_DIR, DB_PATH, get, run, setTestFallback, siteCtxOrNull } from './db.ts';
+import { DATA_DIR, DB_PATH, get, openStore, run, setTestFallback, siteCtxOrNull } from './db.ts';
 import { ApiError } from './http.ts';
 import {
   addSite,
@@ -181,4 +181,23 @@ test('the sites API lists, adds, renames and removes sites', async () => {
   const removed = await app.inject({ method: 'DELETE', url: '/api/sites/api-site' });
   assert.equal(removed.json().data, true);
   assert.ok(!(await app.inject({ url: '/api/sites' })).json().data.some((s: { code: string }) => s.code === 'api-site'));
+});
+
+test('upgrading an old database only adds', () => {
+  const file = path.join(DATA_DIR, 'old.db');
+  const old = openStore(file);
+  old.exec('DROP TABLE site; ALTER TABLE backup_run DROP COLUMN site_code; PRAGMA user_version = 3');
+  old.exec(`INSERT INTO thread (id, forum_id, title, author, url, created_at, updated_at) VALUES (7, 1, 'Cũ', 'a', 'http://x/7', '2026-01-01', '2026-01-01')`);
+  old.exec(`INSERT INTO scrape (id, thread_id, thread_url, source, status, created_at) VALUES (1, 7, 'http://x/7', 'demo', 2, '2026-01-01')`);
+  old.exec(`INSERT INTO scrape_image (scrape_id, page, origin_url, current_url) VALUES (1, 1, 'http://x/a.jpg', '/media/scrapes/1/a.jpg')`);
+  old.close();
+
+  const d = openStore(file);
+  const cols = (t: string) => (d.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+  assert.ok(d.prepare(`SELECT 1 FROM sqlite_master WHERE name='site'`).get());
+  assert.ok(cols('backup_run').includes('site_code'));
+  assert.deepEqual({ ...(d.prepare('SELECT id, title, url FROM thread').get() as object) }, { id: 7, title: 'Cũ', url: 'http://x/7' });
+  assert.equal((d.prepare('SELECT COUNT(*) n FROM scrape').get() as { n: number }).n, 1);
+  assert.equal((d.prepare('SELECT current_url c FROM scrape_image').get() as { c: string }).c, '/media/scrapes/1/a.jpg');
+  d.close();
 });
