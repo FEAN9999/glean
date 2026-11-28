@@ -315,6 +315,79 @@ img {
   background: var(--ok);
 }
 
+/* site picker: top of the rail menu; on the top bar while the rail is hidden */
+.site-picker {
+  position: relative;
+}
+.site-picker-btn {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r-field);
+  background: transparent;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+.site-picker-btn:hover {
+  border-color: var(--dim);
+}
+.site-picker-btn svg {
+  flex: none;
+  color: var(--dim);
+}
+.site-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-picker-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: max(100%, 180px);
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-field);
+  box-shadow: var(--shadow-tip);
+  z-index: 25;
+}
+.site-picker-list button {
+  display: block;
+  width: 100%;
+  padding: 9px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.site-picker-list button:hover {
+  background: var(--field);
+}
+.site-picker-list button[aria-current='true'] {
+  color: var(--acc-ink);
+  font-weight: 500;
+}
+.site-picker-all {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.topbar-site {
+  display: none;
+  flex: none;
+}
+
 .content {
   min-width: 0;
   display: flex;
@@ -2367,6 +2440,15 @@ a.result-title:hover {
   }
   .topbar-mark {
     display: block;
+  }
+  .topbar-site {
+    display: block;
+  }
+  .topbar-site .site-picker-btn {
+    width: auto;
+    max-width: 132px;
+    height: 34px;
+    padding: 0 10px;
   }
   .theme-btn,
   .me-name {

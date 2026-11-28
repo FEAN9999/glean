@@ -31,8 +31,7 @@ const app = Fastify({
 });
 
 registerApiGuard(app);
-// TEMP(Task 12): until the web app sends x-glean-site, a request without it runs in the main site.
-registerSites(app, { legacyMainFallback: true });
+registerSites(app);
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ApiError) return sendError(reply, err);

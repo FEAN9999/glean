@@ -1,4 +1,5 @@
 import { currentLang, type Both } from './i18n';
+import { selectedSite } from './site';
 
 /**
  * HTTP client:
@@ -125,6 +126,8 @@ export interface ReqOpts {
   headers?: Record<string, string>;
   /** override how errors are surfaced; default follows the server header */
   quiet?: boolean;
+  /** the site the request is for (`x-glean-site`); default: the one chosen in the site picker */
+  site?: string;
 }
 
 let sudoToken: string | null = null;
@@ -151,6 +154,8 @@ export async function request<T = unknown>(path: string, opts: ReqOpts = {}): Pr
     };
     if (session) headers.authorization = `Bearer ${session.accessToken}`;
     if (sudoToken) headers['x-sudo-token'] = sudoToken;
+    const site = opts.site ?? selectedSite();
+    if (site) headers['x-glean-site'] = site;
     let body: BodyInit | undefined;
     if (method !== 'GET' && method !== 'DELETE') {
       headers['content-type'] = 'application/json';

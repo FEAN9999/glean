@@ -17,6 +17,7 @@ import { SettingsPage } from './pages/Settings';
 import { BackupPage } from './pages/Backup';
 import { ProfilePage } from './pages/Profile';
 import { Empty, PageErrorBoundary } from './components/ui';
+import { SingleSiteOnly } from './lib/site';
 
 initTheme();
 
@@ -49,21 +50,21 @@ function App() {
       <Shell>
         <PageErrorBoundary resetKey={pathname}>
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          <Route path="/" element={<SingleSiteOnly><HomePage /></SingleSiteOnly>} />
           <Route path="/bai-viet" element={<Navigate to="/bai-viet/tu-khoa" replace />} />
           <Route path="/bai-viet/:mode" element={<SearchPage key="posts" scope="posts" />} />
           <Route path="/binh-luan" element={<Navigate to="/binh-luan/tu-khoa" replace />} />
           <Route path="/binh-luan/:mode" element={<SearchPage key="comments" scope="comments" />} />
           <Route path="/sang" element={<SievePage />} />
           <Route path="/sang/:id" element={<SieveDetailRoute />} />
-          <Route path="/hang-doi" element={<QueuePage />} />
+          <Route path="/hang-doi" element={<SingleSiteOnly><QueuePage /></SingleSiteOnly>} />
           <Route path="/nhat-ky" element={<Navigate to="/nhat-ky/bai-viet" replace />} />
-          <Route path="/nhat-ky/bai-viet" element={<SyncLogPage kind="posts" />} />
-          <Route path="/nhat-ky/bai-viet/:id" element={<SyncLogDetailPage kind="posts" />} />
-          <Route path="/nhat-ky/binh-luan" element={<SyncLogPage kind="comments" />} />
-          <Route path="/nhat-ky/binh-luan/:id" element={<SyncLogDetailPage kind="comments" />} />
-          <Route path="/dong-bo" element={<ManualSyncPage />} />
-          <Route path="/cai-dat" element={<SettingsPage />} />
+          <Route path="/nhat-ky/bai-viet" element={<SingleSiteOnly><SyncLogPage kind="posts" /></SingleSiteOnly>} />
+          <Route path="/nhat-ky/bai-viet/:id" element={<SingleSiteOnly><SyncLogDetailPage kind="posts" /></SingleSiteOnly>} />
+          <Route path="/nhat-ky/binh-luan" element={<SingleSiteOnly><SyncLogPage kind="comments" /></SingleSiteOnly>} />
+          <Route path="/nhat-ky/binh-luan/:id" element={<SingleSiteOnly><SyncLogDetailPage kind="comments" /></SingleSiteOnly>} />
+          <Route path="/dong-bo" element={<SingleSiteOnly><ManualSyncPage /></SingleSiteOnly>} />
+          <Route path="/cai-dat" element={<SingleSiteOnly><SettingsPage /></SingleSiteOnly>} />
           <Route path="/sao-luu" element={<BackupPage />} />
           <Route path="/ho-so" element={<ProfilePage />} />
           <Route path="*" element={<NotFound />} />

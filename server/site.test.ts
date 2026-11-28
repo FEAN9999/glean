@@ -93,9 +93,9 @@ test('forEachSite runs each site in its own context, and each site has its own m
   assert.equal(siteMediaPrefix(mainSite()), '/media');
 });
 
-async function appWithSites(opts?: { legacyMainFallback?: boolean }) {
+async function appWithSites() {
   const app = Fastify();
-  registerSites(app, opts);
+  registerSites(app);
   app.get('/api/threads/x', async () => currentSite().code);
   app.post('/api/threads/x', async () => currentSite().code);
   app.get('/api/scrapes/processed', async (req) => requestSite(req)?.code ?? '*');
@@ -152,14 +152,6 @@ test('account routes are shared: they need no x-glean-site and run outside any s
   } finally {
     setTestFallback(prev);
   }
-});
-
-test('with the legacy fallback, a request without x-glean-site runs in the main site', async () => {
-  const app = await appWithSites({ legacyMainFallback: true });
-  assert.equal((await app.inject({ url: '/api/threads/x' })).body, mainSite().code);
-  assert.equal((await app.inject({ url: '/api/scrapes/processed' })).body, mainSite().code);
-  const unknown = await app.inject({ url: '/api/threads/x', headers: { 'x-glean-site': 'nope' } });
-  assert.equal(unknown.json().code, 'SITE_UNKNOWN');
 });
 
 test('the sites API lists, adds, renames and removes sites', async () => {

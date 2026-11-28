@@ -301,28 +301,21 @@ const MERGE_ROUTES = new Set([
   'PUT /api/systems/config',
 ]);
 
-/**
- * Runs each /api/ request in the site its `x-glean-site` header names. `legacyMainFallback` runs a
- * request without the header in the main site, for a web app that does not send it yet.
- */
-export function registerSites(app: FastifyInstance, opts: { legacyMainFallback?: boolean } = {}) {
+/** Runs each /api/ request in the site its `x-glean-site` header names. */
+export function registerSites(app: FastifyInstance) {
   app.decorateRequest('site', null);
   app.addHook('onRequest', (req, reply, done) => {
     const url = req.url.split('?')[0].replace(/(.)\/+$/, '$1');
     if (!url.startsWith('/api/')) return done();
     if (SHARED_ROUTES.some((r) => r.test(url))) return done();
     const code = req.headers['x-glean-site'];
-    let site: Site | undefined;
-    if (typeof code !== 'string' || !code) {
-      if (!opts.legacyMainFallback) return sendError(reply, siteRequired());
-      site = mainSite();
-    } else if (code === '*') {
+    if (typeof code !== 'string' || !code) return sendError(reply, siteRequired());
+    if (code === '*') {
       if (!MERGE_ROUTES.has(`${req.method} ${url}`)) return sendError(reply, siteRequired());
       return done();
-    } else {
-      site = siteByCode(code);
-      if (!site) return sendError(reply, siteUnknown(code));
     }
+    const site = siteByCode(code);
+    if (!site) return sendError(reply, siteUnknown(code));
     req.site = site;
     runInSite(site, done);
   });

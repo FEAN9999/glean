@@ -90,7 +90,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       (e: ApiErr) => toast(e.message, 'error'),
       () => refreshMaintenance(),
     );
-    refreshMaintenance();
+    // The pause flags belong to a site: Shell loads them once the chosen site is known.
     api
       .get<{ version: string }>('/systems/version', { quiet: true })
       .then((r) => (bootVersion.current = r.data.version))

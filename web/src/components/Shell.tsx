@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiErr } from '../lib/api';
 import { singleFlight } from '../lib/load';
 import { useAuth } from '../lib/auth';
 import { useI18n } from '../lib/i18n';
+import { ALL, SitePicker, selectedSite, useSites } from '../lib/site';
 import { Ev, useEvent, useRealtimeConnected } from '../lib/realtime';
 import { isLinkLike, parseThreadInput } from '../lib/format';
 import { useCreateScrape } from './Scrape';
 import { Icon, Mark, type IconName } from './Icons';
+import { Empty, useUi } from './ui';
 
 /* ---------------- theme (auto / light / dark), shared by every component ---------------- */
 
@@ -197,9 +199,29 @@ export function Shell({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState(0);
   const loc = useLocation();
   const path = loc.pathname;
+  const { sites, selected, reload } = useSites();
+  const [sitesFailed, setSitesFailed] = useState(false);
+  const ready = sites.length > 0;
+  const { refreshMaintenance } = useUi();
 
-  // Single-flight: a bulk re-sieve sends one NewScrape per job.
-  const loadQueue = useMemo(() => singleFlight(() => api.get<unknown[]>('/scrapes/unprocessed', { quiet: true }).then((r) => setQueue(r.data.length))), []);
+  useEffect(() => {
+    reload().catch(() => setSitesFailed(true));
+  }, [reload]);
+  // The pause flags belong to a site.
+  useEffect(() => {
+    if (ready && selected !== ALL) refreshMaintenance();
+  }, [ready, selected, refreshMaintenance]);
+
+  // Single-flight: a bulk re-sieve sends one NewScrape per job. The queue is one site's.
+  const loadQueue = useMemo(
+    () =>
+      singleFlight(async () => {
+        if (!ready || selected === ALL) return setQueue(0);
+        const r = await api.get<unknown[]>('/scrapes/unprocessed', { quiet: true, site: selected });
+        if (selectedSite() === selected) setQueue(r.data.length);
+      }),
+    [ready, selected],
+  );
   useEffect(loadQueue, [loadQueue]);
   useEvent([Ev.NewScrape, Ev.FinishScrape, Ev.UpdateScrape, Ev.Reconnected], loadQueue);
 
@@ -234,6 +256,27 @@ export function Shell({ children }: { children: ReactNode }) {
     );
   };
 
+  // Nothing until the sites are known, as while the page loads: every screen needs the chosen site.
+  if (!ready) {
+    if (!sitesFailed) return null;
+    return (
+      <main className="main" id="main">
+        <Empty page title={t('Không tải được danh sách trang', 'Could not load the list of sites')}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setSitesFailed(false);
+              reload().catch(() => setSitesFailed(true));
+            }}
+          >
+            {t('Thử lại', 'Try again')}
+          </button>
+        </Empty>
+      </main>
+    );
+  }
+
   return (
     <div className="shell">
       <a
@@ -252,6 +295,8 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="wordmark">GLEAN</span>
         </NavLink>
         <nav aria-label={t('Điều hướng chính', 'Main navigation')}>
+          <div className="rail-group-title">{t('Trang', 'Site')}</div>
+          <SitePicker />
           <div className="rail-group-title">{t('Menu', 'Menu')}</div>
           {main.map(railLink)}
           <div className="rail-group-title">{t('Hệ thống', 'System')}</div>
@@ -271,6 +316,9 @@ export function Shell({ children }: { children: ReactNode }) {
           <Link to="/" className="topbar-mark" aria-label={t('Bàn làm việc', 'Desk')}>
             <Mark size={30} />
           </Link>
+          <div className="topbar-site">
+            <SitePicker />
+          </div>
           <Omnibox narrow={narrow} />
           <span className="topbar-spacer" />
           <button className="theme-btn" onClick={() => setTheme(dark ? 'light' : 'dark')}>
@@ -295,7 +343,8 @@ export function Shell({ children }: { children: ReactNode }) {
         )}
 
         <main className="main" id="main" tabIndex={-1}>
-          {children}
+          {/* Another site is another set of data: every screen starts again. */}
+          <Fragment key={selected}>{children}</Fragment>
         </main>
 
         <nav className="bottomnav" aria-label={t('Điều hướng chính', 'Main navigation')}>
