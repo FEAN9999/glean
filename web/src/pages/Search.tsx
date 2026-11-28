@@ -255,8 +255,8 @@ export function SearchPage({ scope }: { scope: Scope }) {
     // The counts come from one store: with every site chosen there is nothing to ask.
     if (merged) return;
     if (scope === 'posts')
-      api.get<{ postCount: number; postUpdatedAt: string | null }>('/posts/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
-    else api.get<{ commentCount: number; commentUpdatedAt: string | null }>('/comments/search/meta', { quiet: true }).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
+      api.get<{ postCount: number; postUpdatedAt: string | null }>('/posts/search/meta', quietAt(site)).then((r) => setMeta({ count: r.data.postCount, at: r.data.postUpdatedAt })).catch(() => {});
+    else api.get<{ commentCount: number; commentUpdatedAt: string | null }>('/comments/search/meta', quietAt(site)).then((r) => setMeta({ count: r.data.commentCount, at: r.data.commentUpdatedAt })).catch(() => {});
   }, [scope, site, merged]);
 
   const setParam = (k: string, v: string | null) => {
@@ -339,6 +339,8 @@ export function SearchPage({ scope }: { scope: Scope }) {
 
   const pick = (k: string) => setParam('q', k);
   const switchMode = (kw: string) => navigate(withTrang(`${base}/${byAuthor ? 'tu-khoa' : 'nguoi-dang-bai'}?q=${encodeURIComponent(kw)}`));
+  // The ID the site dialog was opened for (open, or cancelled): Enter and blur must not ask again.
+  const askedFor = useRef('');
   const applyThread = async () => {
     const v = threadDraft.trim();
     if (!v) {
@@ -350,6 +352,8 @@ export function SearchPage({ scope }: { scope: Scope }) {
     } else if (parseThreadInput(v) != null) {
       // A bare ID with every site chosen: say which site it is on.
       if (merged && /^\d+$/.test(v)) {
+        if (askedFor.current === v) return;
+        askedFor.current = v;
         const code = await askSite(t('Một ID bài viết chưa nói bài ở trang nào.', 'A thread ID does not say which site the thread is on.'));
         if (code == null) return;
         const next = new URLSearchParams(params);
@@ -469,7 +473,10 @@ export function SearchPage({ scope }: { scope: Scope }) {
           }}
         >
           <span>{t('Link hoặc ID bài viết', 'Thread link or ID')}</span>
-          <input className="input" value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)} onBlur={() => void applyThread()} placeholder="…/threads/ten-bai.12345/" autoFocus={!thread} />
+          <input className="input" value={threadDraft} onChange={(e) => {
+              askedFor.current = '';
+              setThreadDraft(e.target.value);
+            }} onBlur={() => void applyThread()} placeholder="…/threads/ten-bai.12345/" autoFocus={!thread} />
           <small>
             {threadDraft
               ? parseThreadInput(threadDraft)
