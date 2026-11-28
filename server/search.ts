@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { all, get, run, now, camelAll, camel } from './db.ts';
+import { all, get, now, camelAll, camel, mainAll, mainRun } from './db.ts';
 import { cfg } from './config.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError, assertNotPaused, intParam, ok } from './http.ts';
@@ -47,8 +47,8 @@ function validate(keyword: string) {
 function record(kind: Kind, keyword: string, resultCount: number) {
   const createdAt = now();
   // Searching the same thing again moves it to the top instead of adding a duplicate row.
-  run('DELETE FROM search_history WHERE kind = ? AND keyword = ? COLLATE NOCASE', kind, keyword);
-  const r = run('INSERT INTO search_history(kind, keyword, result_count, created_at) VALUES(?,?,?,?)', kind, keyword, resultCount, createdAt);
+  mainRun('DELETE FROM search_history WHERE kind = ? AND keyword = ? COLLATE NOCASE', kind, keyword);
+  const r = mainRun('INSERT INTO search_history(kind, keyword, result_count, created_at) VALUES(?,?,?,?)', kind, keyword, resultCount, createdAt);
   const item = { id: Number(r.lastInsertRowid), keyword, resultCount, createdAt };
   emit(HISTORY_EVENT[kind], item, undefined, kind.startsWith('post') ? 'search-post' : 'search-comment');
 }
@@ -224,7 +224,7 @@ async function suggestions(q: string, topK: number) {
 
 function history(kind: Kind, cursor: unknown) {
   const c = intParam(cursor, Number.MAX_SAFE_INTEGER);
-  const rows = all<{ id: number; keyword: string; result_count: number; created_at: string }>(
+  const rows = mainAll<{ id: number; keyword: string; result_count: number; created_at: string }>(
     'SELECT id, keyword, result_count, created_at FROM search_history WHERE kind = ? AND id < ? ORDER BY id DESC LIMIT 20',
     kind,
     c,
@@ -299,7 +299,7 @@ export function registerSearch(app: FastifyInstance) {
   });
 
   app.delete<{ Params: { kind: Kind } }>('/api/search-history/:kind', async (req) => {
-    run('DELETE FROM search_history WHERE kind = ?', req.params.kind);
+    mainRun('DELETE FROM search_history WHERE kind = ?', req.params.kind);
     return ok(true);
   });
 

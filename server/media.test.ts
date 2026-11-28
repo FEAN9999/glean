@@ -8,8 +8,10 @@ import { cfg, loadConfig } from './config.ts';
 import { DATA_DIR } from './db.ts';
 import { signJwt } from './auth.ts';
 import { browserCookie, registerMedia } from './media.ts';
+import { addSite, siteByCode, siteMediaRoot } from './site.ts';
 
 loadConfig(0);
+addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 
 const root = cfg().storage.basePath;
 fs.mkdirSync(path.join(root, 'scrapes', '1'), { recursive: true });
@@ -58,4 +60,15 @@ test('no path reaches a file outside the media folder', async () => {
     assert.equal(r.statusCode, 404, url);
     assert.ok(!r.body.startsWith('SQLite format') && r.body !== 'secret', url);
   }
+});
+
+test("/media/sites/:code serves that site's folder", async () => {
+  const dir = path.join(siteMediaRoot(siteByCode('rphang')), 'scrapes', '1');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'a.jpg'), Buffer.from([0xff, 0xd8, 1, 2]));
+  assert.equal((await get('/media/sites/rphang/scrapes/1/a.jpg', {})).statusCode, 401);
+  const r = await get('/media/sites/rphang/scrapes/1/a.jpg');
+  assert.deepEqual([r.statusCode, r.headers['content-type']], [200, 'image/jpeg']);
+  assert.equal((await get('/media/sites/khong-co/scrapes/1/a.jpg')).statusCode, 404);
+  assert.equal((await get('/media/sites/rphang/..%2F..%2Fglean.db')).statusCode, 404);
 });

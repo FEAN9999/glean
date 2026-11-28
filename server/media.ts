@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { cfg } from './config.ts';
 import { ok } from './http.ts';
 import { signJwt, verifyJwt } from './auth.ts';
+import { siteByCode, siteMediaRoot } from './site.ts';
 
 const MIME: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -60,13 +61,21 @@ export function registerMedia(app: FastifyInstance) {
     return ok(true);
   });
 
-  app.get<{ Params: { '*': string } }>('/media/*', async (req, reply) => {
+  const send = (req: FastifyRequest, reply: FastifyReply, root: string, rel: string) => {
     if (!cookieUser(req)) return reply.code(401).send('unauthorized');
-    const full = safeJoin(cfg().storage.basePath, req.params['*']);
+    const full = safeJoin(root, rel);
     if (!full || !fs.existsSync(full) || !fs.statSync(full).isFile()) return reply.code(404).send('not found');
     const ext = path.extname(full).slice(1).toLowerCase();
     reply.header('cache-control', 'private, max-age=604800, immutable');
     if (ext === 'svg') reply.header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'");
     return reply.type(MIME[ext] ?? 'application/octet-stream').send(fs.createReadStream(full));
+  };
+
+  // The main site's images stay at /media/...; every other site has its own folder.
+  app.get<{ Params: { code: string; '*': string } }>('/media/sites/:code/*', async (req, reply) => {
+    const site = siteByCode(req.params.code);
+    if (!site || site.isMain) return cookieUser(req) ? reply.code(404).send('not found') : reply.code(401).send('unauthorized');
+    return send(req, reply, siteMediaRoot(site), req.params['*']);
   });
+  app.get<{ Params: { '*': string } }>('/media/*', async (req, reply) => send(req, reply, cfg().storage.basePath, req.params['*']));
 }

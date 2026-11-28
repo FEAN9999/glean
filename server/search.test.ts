@@ -3,12 +3,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
-import { run } from './db.ts';
+import { mainAll, run } from './db.ts';
+import { addSite, registerSites } from './site.ts';
 import { registerSearch, searchComments, searchPosts } from './search.ts';
 import { upsertComments } from './sync.ts';
 import type { ParsedPost } from './source/xenforo.ts';
 
 loadConfig(0);
+addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 
 const post = (postId: number, text: string): ParsedPost => ({
   postId,
@@ -91,4 +93,13 @@ test('searchPosts sorts by views and by likes', () => {
     byLikes.map((p) => p.likeCount),
     [9, 4, 1],
   );
+});
+
+test('search history is shared by all sites', async () => {
+  const app = Fastify();
+  registerSites(app);
+  registerSearch(app);
+  const r = await app.inject({ method: 'POST', url: '/api/posts/search', headers: { 'x-glean-site': 'rphang' }, payload: { keyword: 'tukhoadungchung' } });
+  assert.equal(r.statusCode, 200);
+  assert.ok(mainAll<{ keyword: string }>('SELECT keyword FROM search_history').some((x) => x.keyword === 'tukhoadungchung'));
 });

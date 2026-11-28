@@ -275,7 +275,6 @@ const MERGE_ROUTES = new Set([
 
 /** Shared routes whose tables are still read through the site helpers. */
 const SHARED_IN_MAIN_STORE = [
-  /^\/api\/(search-history\/|posts\/search\/recent-|comments\/recent-)/, // TEMP(Task 5): search history moves to the main store
   /^\/api\/backups\//, // TEMP(Task 10): backups cover every store
 ];
 

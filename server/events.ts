@@ -1,4 +1,5 @@
 import type { FastifyReply } from 'fastify';
+import { siteCtxOrNull } from './db.ts';
 
 /** Event type codes (kept compatible with the analysed realtime contract). */
 export const Ev = {
@@ -55,11 +56,11 @@ function write(c: Client, payload: string) {
 }
 
 /**
- * Broadcast `{type, data, message}`. When `group` is given only clients that joined it
+ * Broadcast `{type, data, message, site}`; `site` is the code of the site it happened in, or null. When `group` is given only clients that joined it
  * (or the wildcard `*`) receive the event — mirrors JoinGroup/LeaveGroup semantics.
  */
 export function emit(type: number, data: unknown = null, message?: string, group?: string) {
-  const payload = `data: ${JSON.stringify({ type, data, message: message ?? null })}\n\n`;
+  const payload = `data: ${JSON.stringify({ type, data, message: message ?? null, site: siteCtxOrNull()?.code ?? null })}\n\n`;
   for (const c of clients.values()) {
     if (group && !c.groups.has(group) && !c.groups.has('*')) continue;
     write(c, payload);
