@@ -5,20 +5,24 @@ import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
 import { registerApiGuard, registerAuth } from './auth.ts';
 import { registerSystem } from './system.ts';
+import { addSite, mainSite, registerSites } from './site.ts';
 import { ApiError, sendError } from './http.ts';
 
 loadConfig(0);
+addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 
 const app = Fastify();
 app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+registerSites(app);
 registerApiGuard(app);
 registerAuth(app);
 registerSystem(app, 0);
 await app.ready();
 const setup = await app.inject({ method: 'POST', url: '/api/auth/setup', payload: { username: 'an', password: 'mat-khau-thu-1' } });
-const headers = { authorization: `Bearer ${setup.json().data.accessToken}` };
-const save = (payload: unknown) => app.inject({ method: 'PUT', url: '/api/systems/config', headers, payload: payload as object });
-const settings = () => app.inject({ url: '/api/systems/config', headers });
+const auth = { authorization: `Bearer ${setup.json().data.accessToken}` };
+const save = (payload: unknown, site = mainSite().code) =>
+  app.inject({ method: 'PUT', url: '/api/systems/config', headers: { ...auth, 'x-glean-site': site }, payload: payload as object });
+const settings = (site = mainSite().code) => app.inject({ url: '/api/systems/config', headers: { ...auth, 'x-glean-site': site } });
 
 // Regression: ISSUE-008 — a list setting sent as text was stored, and then Settings could not load
 // and no request could put it right. Found by /qa-only on 2026-11-26.
@@ -77,4 +81,31 @@ test('an old domain must be a full http(s) address; blank lines are dropped', as
   const r = await save({ source: { previousBaseUrls: [' https://old.example ', '', 'http://older.example'] } });
   assert.equal(r.statusCode, 200);
   assert.deepEqual((await settings()).json().data.source.previousBaseUrls, ['https://old.example', 'http://older.example']);
+});
+
+test('settings of one site do not reach another', async () => {
+  assert.equal((await save({ source: { postsPerPage: 25 } }, 'rphang')).statusCode, 200);
+  assert.equal((await settings('rphang')).json().data.source.postsPerPage, 25);
+  const main = (await settings()).json();
+  assert.equal(main.data.source.postsPerPage, 20);
+  assert.equal(main.site.code, mainSite().code);
+  assert.equal((await settings('rphang')).json().site.code, 'rphang');
+});
+
+test('shared settings can be saved with *', async () => {
+  assert.equal((await save({ backup: { keep: 9 } }, '*')).statusCode, 200);
+  assert.equal((await settings()).json().data.backup.keep, 9);
+  for (const patch of [{ source: { postsPerPage: 30 } }, { search: { semanticTopK: 3 } }, { sync: {} }]) {
+    const r = await save(patch, '*');
+    assert.deepEqual([r.statusCode, r.json().code], [400, 'SITE_REQUIRED'], JSON.stringify(patch));
+  }
+  assert.equal((await settings()).json().data.source.postsPerPage, 20);
+});
+
+test('a source address another site uses is refused', async () => {
+  for (const patch of [{ source: { baseUrl: 'https://www.rphang.land/' } }, { source: { previousBaseUrls: ['https://rphang.land'] } }]) {
+    const r = await save(patch);
+    assert.deepEqual([r.statusCode, r.json().code], [409, 'SITE_HOST_TAKEN'], JSON.stringify(patch));
+  }
+  assert.equal((await save({ source: { baseUrl: 'https://rphang.land/' } }, 'rphang')).statusCode, 200);
 });

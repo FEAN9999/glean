@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from './config.ts';
 import { mainAll, run } from './db.ts';
-import { addSite, registerSites } from './site.ts';
+import { addSite, mainSite, registerSites, withSite } from './site.ts';
+import { ApiError, sendError } from './http.ts';
 import { registerSearch, searchComments, searchPosts } from './search.ts';
 import { upsertComments } from './sync.ts';
 import type { ParsedPost } from './source/xenforo.ts';
@@ -102,4 +103,52 @@ test('search history is shared by all sites', async () => {
   const r = await app.inject({ method: 'POST', url: '/api/posts/search', headers: { 'x-glean-site': 'rphang' }, payload: { keyword: 'tukhoadungchung' } });
   assert.equal(r.statusCode, 200);
   assert.ok(mainAll<{ keyword: string }>('SELECT keyword FROM search_history').some((x) => x.keyword === 'tukhoadungchung'));
+});
+
+// A thread link picks the site by its domain.
+withSite('rphang', () => {
+  run(
+    `INSERT INTO thread(id, forum_id, title, author, url, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
+    300,
+    1,
+    'Chủ đề 300',
+    'Bình',
+    'http://x.test',
+    '2026-11-01T00:00:00.000Z',
+    '2026-11-01T00:00:00.000Z',
+  );
+  upsertComments(300, 1, [post(9, 'xin chào rphang')]);
+});
+
+async function siteApp() {
+  const app = Fastify();
+  app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+  registerSites(app);
+  registerSearch(app);
+  await app.ready();
+  return app;
+}
+const threadSearch = async (site: string, url: string, threadId: string, keyword = 'chào') =>
+  (await siteApp()).inject({ method: 'POST', url, headers: { 'x-glean-site': site }, payload: { keyword, threadId } });
+
+test('a thread link of another site searches that site', async () => {
+  const r = await threadSearch(mainSite().code, '/api/comments/search', 'https://rphang.land/t/a.300/');
+  assert.equal(r.statusCode, 200);
+  const j = r.json<{ data: { id: number }[]; site: { code: string } }>();
+  assert.deepEqual(j.data.map((c) => c.id), [9]);
+  assert.equal(j.site.code, 'rphang');
+  const c = await threadSearch('*', '/api/comments/search/count', 'https://rphang.land/t/a.300/');
+  assert.equal(c.json().data.total, 1);
+  const q = await threadSearch('*', '/api/comments/search-by-author', 'https://rphang.land/t/a.300/', 'Bình');
+  assert.equal(q.json().site.code, 'rphang');
+});
+
+test('a bare thread id with * is refused', async () => {
+  const r = await threadSearch('*', '/api/comments/search', '300');
+  assert.deepEqual([r.statusCode, r.json().code], [400, 'SITE_REQUIRED']);
+});
+
+test('a link on an unknown domain is a 409', async () => {
+  const r = await threadSearch(mainSite().code, '/api/comments/search', 'https://nowhere.example/t/a.300/');
+  assert.deepEqual([r.statusCode, r.json().code], [409, 'UNKNOWN_SITE']);
 });

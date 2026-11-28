@@ -19,7 +19,7 @@ import {
   forEachSite,
   onSiteAdded,
   siteByCode,
-  siteForHost,
+  siteForLink,
   siteInfo,
   siteMediaPrefix,
   siteMediaRoot,
@@ -627,16 +627,6 @@ export function initScraper() {
 
 const SOURCES = new Set(['direct', 'search-post', 'search-comment', 'home']);
 
-/** The host name of a pasted link; null for a thread ID or a link without one. */
-function linkHost(s: string): string | null {
-  if (/^\d+$/.test(s) || s.startsWith('/')) return null;
-  try {
-    return new URL(s.startsWith('http') ? s : `https://${s}`).hostname;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Queues a thread from a pasted link or ID. A link goes to the site of its domain, whichever site is
  * current; an ID to the current site. `beforeQueue` runs first in that site: the route checks there
@@ -646,18 +636,7 @@ export function createScrape(input: string, source: string, beforeQueue = () => 
   const s = String(input ?? '').trim();
   // parseThreadRef needs no site to tell a thread link from other text (outside one it skips its domain check).
   if (!parseThreadRef(s)) throw new ApiError(400, 'INVALID_THREAD', ['Không nhận ra link hoặc ID bài viết. Dán link dạng …/threads/ten-bai.12345/ hoặc chỉ số ID.', 'Not a thread link or ID. Paste a link like …/threads/thread-title.12345/ or just the ID.'], 'inline');
-  const host = linkHost(s);
-  const site = host ? siteForHost(host) : currentSiteOrNull();
-  if (!site && host)
-    throw new ApiError(
-      409,
-      'UNKNOWN_SITE',
-      [
-        `Link thuộc ${host}, nhưng chưa có trang nào trong Glean dùng tên miền này. Thêm trang cho ${host} trong Cài đặt → Trang rồi dán lại link.`,
-        `The link is on ${host}, but no site in Glean uses that domain. Add a site for ${host} in Settings → Sites, then paste the link again.`,
-      ],
-      'inline',
-    );
+  const site = siteForLink(s) ?? currentSiteOrNull();
   if (!site) throw siteRequired();
   return withSite(site, () => {
     beforeQueue();

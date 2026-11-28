@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { all, get, DATA_DIR, DB_PATH } from './db.ts';
-import { assertPatchTypes, cfg, loadConfig, maskedConfig, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
+import { assertPatchTypes, cfg, loadConfig, maskedConfig, SITE_SEARCH_FIELDS, SITE_SECTIONS, unmaskPatch, updateConfig, type ConfigPatch } from './config.ts';
 import { emit, Ev, clientCount } from './events.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
@@ -12,6 +12,7 @@ import { ffmpegStatus } from './scraper.ts';
 import { demoStats } from './demo/forum.ts';
 import { fetchForumIndex } from './source/xenforo.ts';
 import { validateBackupDir } from './backup.ts';
+import { assertHostFree, currentSite, requestSite, siteInfo, siteRequired } from './site.ts';
 
 /** Identifies the running build; clients compare it to decide whether to reload. */
 export const APP_VERSION = (() => {
@@ -20,15 +21,24 @@ export const APP_VERSION = (() => {
   return `1.0.0+${crypto.createHash('sha1').update(String(stamp)).digest('hex').slice(0, 8)}`;
 })();
 
+/** Whether a patch touches a setting each site keeps for itself. */
+function hasSiteSettings(patch: ConfigPatch | undefined) {
+  const p = (patch ?? {}) as Record<string, unknown>;
+  const search = p.search as Record<string, unknown> | null | undefined;
+  return SITE_SECTIONS.some((k) => k in p) || (!!search && typeof search === 'object' && SITE_SEARCH_FIELDS.some((k) => k in search));
+}
+
 export function registerSystem(app: FastifyInstance, port: number) {
   app.get('/api/systems/maintenance', async () => ok(cfg().maintenance));
   app.get('/api/systems/version', async () => ok({ version: APP_VERSION }));
 
-  app.get('/api/systems/config', async () => ok(maskedConfig(cfg())));
+  app.get('/api/systems/config', async () => ok(maskedConfig(cfg()), { site: siteInfo(currentSite()) }));
 
   app.put<{ Body: ConfigPatch }>('/api/systems/config', async (req) => {
     requireSudo(req);
     assertPatchTypes(req.body);
+    // With `*` there is no site: only the shared settings can be saved.
+    if (!requestSite(req) && hasSiteSettings(req.body)) throw siteRequired();
     const patch = unmaskPatch(structuredClone(req.body ?? {}));
     if (patch.backup && 'targetDir' in patch.backup) {
       patch.backup.targetDir = String(patch.backup.targetDir ?? '').trim();
@@ -49,6 +59,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
           );
         }
       }
+      for (const u of patch.source.previousBaseUrls) assertHostFree(u, currentSite().code);
     }
     if (patch.source?.baseUrl) {
       try {
@@ -57,6 +68,7 @@ export function registerSystem(app: FastifyInstance, port: number) {
       } catch {
         throw new ApiError(400, 'INVALID_URL', ['Địa chỉ nguồn không hợp lệ.', 'The source address is not valid.'], 'inline');
       }
+      assertHostFree(patch.source.baseUrl, currentSite().code);
       const old = cfg().source.baseUrl;
       if (patch.source.baseUrl !== old) {
         const prev = new Set([...(patch.source.previousBaseUrls ?? cfg().source.previousBaseUrls), old]);

@@ -127,6 +127,34 @@ export function siteForHost(host: string): Site | undefined {
   return sites().find((s) => urlsOf(s).some((u) => hostOf(u) === h));
 }
 
+/** The host name of a pasted link; null for a thread ID or text that is not a link. */
+function linkHost(s: string): string | null {
+  if (/^\d+$/.test(s) || s.startsWith('/')) return null;
+  try {
+    return new URL(s.startsWith('http') ? s : `https://${s}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** The site whose domain a pasted link is on; null for a bare ID. A domain no site uses is a 409. */
+export function siteForLink(input: string): Site | null {
+  const host = linkHost(input.trim());
+  if (!host) return null;
+  const site = siteForHost(host);
+  if (!site)
+    throw new ApiError(
+      409,
+      'UNKNOWN_SITE',
+      [
+        `Link thuộc ${host}, nhưng chưa có trang nào trong Glean dùng tên miền này. Thêm trang cho ${host} trong Cài đặt → Trang rồi dán lại link.`,
+        `The link is on ${host}, but no site in Glean uses that domain. Add a site for ${host} in Settings → Sites, then paste the link again.`,
+      ],
+      'inline',
+    );
+  return site;
+}
+
 function parseBaseUrl(raw: string): URL {
   try {
     const url = new URL(raw.trim());

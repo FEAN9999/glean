@@ -4,6 +4,7 @@ import { cfg } from './config.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError, assertNotPaused, intParam, ok } from './http.ts';
 import { parseThreadRef } from './source/xenforo.ts';
+import { requestSite, siteForLink, siteInfo, siteRequired, withSite } from './site.ts';
 
 /**
  * Full-text search over synced threads/comments (SQLite FTS5, diacritic-insensitive tokenizer)
@@ -268,19 +269,34 @@ export function registerSearch(app: FastifyInstance) {
     return ok(r.items, { source: r.source });
   });
 
+  /**
+   * The site a comment search runs in. A thread link goes to the site of its domain, whichever site
+   * the request is for; an ID, or no thread, to the request's site (none with `*`).
+   */
+  const searchTarget = (req: FastifyRequest, threadId: CommentSearchBody['threadId']) => {
+    const id = resolveThreadId(threadId) && String(threadId).trim();
+    const target = (id ? siteForLink(id) : null) ?? requestSite(req);
+    if (!target) throw siteRequired();
+    return { target, extra: target === requestSite(req) ? {} : { site: siteInfo(target) } };
+  };
+
   const commentSearch = (byAuthor: boolean) => async (req: FastifyRequest<{ Body: CommentSearchBody }>) => {
-    assertNotPaused(req, 'searchComment');
-    const body = { ...req.body, keyword: validate(req.body?.keyword) };
-    const r = searchComments(body, byAuthor);
-    if ((body.page ?? 1) <= 1) record(byAuthor ? 'comment_author' : 'comment_keyword', body.keyword, r.total);
-    return ok(r.items, { total: r.total, page: r.page, pageSize: r.pageSize, nextPage: r.nextPage });
+    const { target, extra } = searchTarget(req, req.body?.threadId);
+    const r = withSite(target, () => {
+      assertNotPaused(req, 'searchComment');
+      const body = { ...req.body, keyword: validate(req.body?.keyword) };
+      return { body, ...searchComments(body, byAuthor) };
+    });
+    if ((r.body.page ?? 1) <= 1) record(byAuthor ? 'comment_author' : 'comment_keyword', r.body.keyword, r.total);
+    return ok(r.items, { total: r.total, page: r.page, pageSize: r.pageSize, nextPage: r.nextPage, ...extra });
   };
   app.post('/api/comments/search', commentSearch(false));
   app.post('/api/comments/search-by-author', commentSearch(true));
 
   app.post<{ Body: CommentSearchBody }>('/api/comments/search/count', async (req) => {
+    const { target, extra } = searchTarget(req, req.body?.threadId);
     const body = { ...req.body, keyword: String(req.body?.keyword ?? '').trim() };
-    return ok({ total: body.keyword ? countComments(body, !!body.isSearchByAuthor) : 0 });
+    return ok({ total: body.keyword ? withSite(target, () => countComments(body, !!body.isSearchByAuthor)) : 0 }, extra);
   });
 
   app.get('/api/comments/search/meta', async () => {
