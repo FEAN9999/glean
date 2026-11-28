@@ -205,9 +205,12 @@ test('detail reports missing counts and the pages done in the current run', asyn
   assert.deepEqual([...done.donePages].sort(), [1, 2]);
 });
 
-test('a cdn.anh.moe video has a mirror on amvideo.cyou; other links have none', () => {
+test('a cdn.anh.moe or zpi.cx video has a mirror on amvideo.cyou; other links have none', () => {
   assert.equal(videoMirror('https://cdn.anh.moe/s9/N5QpKLvV.mp4'), 'https://s9.amvideo.cyou/N5QpKLvV.mp4');
   assert.equal(videoMirror('https://cdn.anh.moe/s4/7mL8oF.mp4'), 'https://s4.amvideo.cyou/7mL8oF.mp4');
+  assert.equal(videoMirror('https://zpi.cx/s3/C9vtAd.mp4'), 'https://s3.amvideo.cyou/C9vtAd.mp4');
+  assert.equal(videoMirror('https://zpi.cx/s12/616I1u.mp4'), 'https://s12.amvideo.cyou/616I1u.mp4');
+  assert.equal(videoMirror('https://3oo.zpi.cx/z1eHWi.mp4'), null);
   assert.equal(videoMirror('https://cdn.anh.moe/N5QpKLvV.mp4'), null);
   assert.equal(videoMirror('https://cdn.save.moe/s9/N5QpKLvV.mp4'), null);
   assert.equal(videoMirror('https://evil.test/cdn.anh.moe/s9/a.mp4'), null);

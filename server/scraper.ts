@@ -550,12 +550,14 @@ async function hasFfmpeg() {
 export const ffmpegStatus = () => hasFfmpeg();
 
 /**
- * Another address of the same video file, tried when its own link fails. cdn.anh.moe sends
- * /sN/<file> to sN.amvideo.cfd, whose bucket was closed (403, found on 2026-11-26); the same
- * files are served from sN.amvideo.cyou, where save.moe and zpi.cx already send theirs.
+ * Another address of the same video file, tried when its own link fails. The same files are
+ * served from sN.amvideo.cyou, where save.moe and the zpi.cx subdomains send theirs:
+ * - cdn.anh.moe sends /sN/<file> to sN.amvideo.cfd, whose bucket was closed (403, found on 2026-11-26);
+ * - zpi.cx/sN/<file> is cut off by name on some networks (connection reset in the TLS handshake,
+ *   seen on 2026-11-28), while its subdomains on the same address still answer.
  */
 export function videoMirror(url: string): string | null {
-  const m = /^https:\/\/cdn\.anh\.moe\/(s\d+)\/([^/?#]+)$/.exec(url);
+  const m = /^https:\/\/(?:cdn\.anh\.moe|zpi\.cx)\/(s\d+)\/([^/?#]+)$/.exec(url);
   return m ? `https://${m[1]}.amvideo.cyou/${m[2]}` : null;
 }
 
