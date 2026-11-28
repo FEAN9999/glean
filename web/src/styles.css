@@ -33,8 +33,6 @@
   --bad-ink: oklch(0.48 0.17 25);
   --tip: #2b2d42;
   --on-acc: #fff;
-  --warm: oklch(0.78 0.15 75);
-  --cool: oklch(0.78 0.11 200);
   /* the night surfaces (Desk hero, page heads, sign-in) look the same in both themes */
   --night: #1a1440;
   --violet: #a99bff;
@@ -642,26 +640,6 @@ img {
 .cols.pad-top > * {
   padding-top: 24px;
 }
-.cols-3 {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) 330px;
-}
-.cols-3 > * {
-  min-width: 0;
-  padding-top: 26px;
-}
-.cols-3 > :first-child {
-  padding-right: 32px;
-}
-.cols-3 > :nth-child(2) {
-  border-left: 1px solid var(--line);
-  padding-left: 36px;
-  padding-right: 36px;
-}
-.cols-3 > :nth-child(3) {
-  border-left: 1px solid var(--line);
-  padding-left: 36px;
-}
 .rule-below {
   border-bottom: 1px solid var(--line);
 }
@@ -1222,23 +1200,6 @@ mark {
 .dot-acc {
   background: var(--acc);
 }
-.dot-acc2 {
-  background: var(--acc2);
-}
-.dot-acc3 {
-  background: var(--acc3);
-}
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 28px;
-  font-size: 13px;
-}
-.legend > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .tag {
   display: inline-flex;
@@ -1444,30 +1405,6 @@ a.gtr:hover .gt-title {
   font-size: 17px;
 }
 
-.tooltip {
-  background: var(--tip);
-  color: #fff;
-  border-radius: var(--r-field);
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-tip);
-  line-height: 1.4;
-}
-.tooltip .tt-head {
-  font-weight: 400;
-  font-size: 13px;
-}
-.tooltip .tt-sub {
-  font-size: 12.5px;
-  color: #b9bbcf;
-}
-.tooltip .tt-big {
-  font-weight: 500;
-  font-size: 17px;
-  padding-top: 6px;
-}
-
 /* ================= feedback ================= */
 
 .notice {
@@ -1564,11 +1501,6 @@ a.gtr:hover .gt-title {
 .figure span:last-child {
   font-size: 13px;
   color: var(--dim);
-}
-.big-num {
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.2;
 }
 
 /* ================= gallery ================= */
@@ -2254,103 +2186,6 @@ a.gtr:hover .gt-title {
 
 /* ================= screen-specific ================= */
 
-/* Bàn làm việc */
-.desk-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 28px;
-}
-.desk-top > * {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.desk-top > :first-child {
-  padding-right: 40px;
-}
-.desk-top > :last-child {
-  border-left: 1px solid var(--line);
-  padding-left: 36px;
-}
-.sieve-viz {
-  position: relative;
-  height: 186px;
-  margin-top: 10px;
-  max-width: 320px;
-}
-.sieve-viz .donut {
-  position: absolute;
-  left: 30px;
-  top: 14px;
-}
-.sieve-viz .tooltip {
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-.bubbles {
-  position: relative;
-  height: 230px;
-  width: 216px;
-  margin-top: 8px;
-}
-.bubble {
-  position: absolute;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  line-height: 1.2;
-  text-align: center;
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-.bubble small {
-  font-size: 12px;
-}
-.bubble-c {
-  left: 62px;
-  top: 44px;
-  width: 148px;
-  height: 148px;
-  background: var(--warm);
-  color: #1f2233;
-  font-size: 26px;
-  box-shadow: 0 0 0 5px var(--bg), 0 0 0 6px var(--warm);
-}
-.bubble-c small {
-  font-size: 13px;
-}
-.bubble-i {
-  left: 6px;
-  top: 6px;
-  width: 100px;
-  height: 100px;
-  background: var(--acc);
-  color: var(--on-acc);
-  font-size: 19px;
-  box-shadow: 0 0 0 4px var(--bg), 0 0 0 5px var(--acc);
-}
-.bubble-t {
-  left: 0;
-  top: 136px;
-  width: 88px;
-  height: 88px;
-  background: var(--cool);
-  color: #1f2233;
-  font-size: 18px;
-  box-shadow: 0 0 0 4px var(--bg), 0 0 0 5px var(--cool);
-}
-/* the bubbles keep their place and size while the numbers load */
-.bubble.skeleton {
-  background: linear-gradient(90deg, var(--line2), var(--line), var(--line2));
-  background-size: 200% 100%;
-  box-shadow: none;
-}
-
 /* Tìm kiếm */
 .result {
   display: flex;
@@ -2536,23 +2371,11 @@ a.result-title:hover {
 
 /* medium: sidebar stays, every split collapses to one column */
 @media (max-width: 1239px) {
-  .cols,
-  .cols-3,
-  .desk-top {
+  .cols {
     grid-template-columns: minmax(0, 1fr);
   }
-  .cols > .col-main,
-  .desk-top > :first-child,
-  .cols-3 > :first-child,
-  .cols-3 > :nth-child(2) {
+  .cols > .col-main {
     padding-right: 0;
-  }
-  .desk-top > :last-child,
-  .cols-3 > :nth-child(2),
-  .cols-3 > :nth-child(3) {
-    border-left: 0;
-    padding-left: 0;
-    padding-top: 28px;
   }
   .cols > .col-side,
   .cols.pad-top > .col-side {

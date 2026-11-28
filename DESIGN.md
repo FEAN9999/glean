@@ -25,7 +25,7 @@ Chỗ nào code khác bản tham chiếu đều ghi ở mục [Khác với bản
    - Đầu mỗi màn là một dải đêm (xem [Đầu trang](#đầu-trang)).
    - Cột phụ, từng mục Cài đặt, ô số liệu và thẻ ở Bàn làm việc là thẻ bo tròn, viền 1px `--line`, không nền nổi, không bóng.
    - Trong một vùng, các dòng vẫn tách nhau bằng kẻ.
-   - Bóng chỉ có ở tooltip, gợi ý ô tìm, toast, hộp thoại, ô ảnh khi rê chuột và quầng sáng của nút chính khi rê chuột.
+   - Bóng chỉ có ở gợi ý ô tìm, danh sách chọn trang, toast, hộp thoại, ô ảnh khi rê chuột và quầng sáng của nút chính khi rê chuột.
 3. **Chữ mảnh.** Thân chữ Lexend 300; nhấn bằng 400–500, không dùng đậm 700. Chữ lớn trên mảng đêm dùng 300.
 4. **Chuyển động có lý do.**
    - Mỗi màn có một nhịp vào: chuyển trang, hoặc danh sách hiện so le.
@@ -60,9 +60,8 @@ Token khai báo trên `:root`. Tối áp dụng khi `<html data-theme="dark">`, 
 | `--acc3` | `oklch(0.92 0.03 285)` | `oklch(0.3 0.04 285)` | Bậc 3: rãnh thanh tiến độ, trang chưa quét |
 | `--ok` / `--ok-ink` | `oklch(0.62 0.15 150)` / `oklch(0.45 0.13 150)` | `oklch(0.72 0.15 150)` / `oklch(0.8 0.13 150)` | Thành công, đang bật |
 | `--bad` / `--bad-ink` | `oklch(0.6 0.19 25)` / `oklch(0.48 0.17 25)` | `oklch(0.68 0.17 25)` / `oklch(0.78 0.12 25)` | Lỗi, đã xóa, hành động nguy hiểm |
-| `--tip` | `#2b2d42` | `#0c0d14` | Nền tooltip, toast, khung log |
+| `--tip` | `#2b2d42` | `#0c0d14` | Nền toast, khung log |
 | `--on-acc` | `#fff` | `#15161f` | Chữ trên nền `--acc` |
-| `--warm` / `--cool` | `oklch(0.78 0.15 75)` / `oklch(0.78 0.11 200)` | như sáng | Chỉ còn ở CSS bong bóng cũ (`.bubble-c`, `.bubble-t`), không màn nào dùng |
 
 **Mảng đêm** giống nhau ở cả hai chế độ:
 
@@ -81,7 +80,7 @@ Nút trên nền đêm là kính mờ: nền trắng 8%, viền trắng 16%.
 
 `--mist` ở đây là token mới, không liên quan tới `--mist` của bản cũ trong bảng ánh xạ dưới.
 
-Tailwind thấy các token trên dưới tên `ink`, `dim`, `acc`, `acc-ink`, `line`, `field`, `tint`, `background`, `border` (trỏ về biến của app, nên theo sáng/tối) và `night`, `violet`, `wheat`, `mist`. Chữ trên `--warm` / `--cool` luôn là `#1f2233`. Khung log dùng chữ `#d5d7e6`, giờ `#9a9db5`.
+Tailwind thấy các token trên dưới tên `ink`, `dim`, `acc`, `acc-ink`, `line`, `field`, `tint`, `background`, `border` (trỏ về biến của app, nên theo sáng/tối) và `night`, `violet`, `wheat`, `mist`. Khung log dùng chữ `#d5d7e6`, giờ `#9a9db5`.
 
 **Chế độ hiển thị** có ba giá trị `auto | light | dark`, lưu ở `localStorage['theme']`. `useTheme()` trong `Shell.tsx` là một store dùng chung, nên nút trên thanh trên và bộ chọn ở trang Bảo mật luôn đồng bộ với nhau. Nút trên thanh trên đọc chế độ đang hiện thực tế (kể cả khi `auto`) và chuyển sang chế độ ngược lại.
 
@@ -133,7 +132,7 @@ Một họ duy nhất: **Lexend** 300 / 400 / 500 / 600, gói `@fontsource/lexen
 
   | Bo | Dùng cho |
   |---|---|
-  | `--r-field` 6px | Chip, tooltip, log, toast, ô mã, nút trang của `Pager` |
+  | `--r-field` 6px | Chip, log, toast, ô mã, nút trang của `Pager` |
   | 8px | Mục thanh bên, hộp thoại, mã QR |
   | 12px | Ô nhập |
   | 14px | Notice, ô ảnh |
@@ -145,7 +144,7 @@ Một họ duy nhất: **Lexend** 300 / 400 / 500 / 600, gói `@fontsource/lexen
   | 999px | Nút, segmented, nhãn trạng thái đồng bộ |
   | 50% | Avatar, chấm, donut, thumbnail |
 - **Bóng**:
-  - `--shadow-tip` (`0 10px 24px -10px rgba(0,0,0,.5)`): tooltip, gợi ý ô tìm, toast.
+  - `--shadow-tip` (`0 10px 24px -10px rgba(0,0,0,.5)`): gợi ý ô tìm, danh sách chọn trang, toast.
   - Hộp thoại có bóng riêng.
   - Ô ảnh khi rê chuột: `0 14px 30px -14px rgba(26,20,64,.55)`.
   - Nút chính khi rê chuột: quầng `0 8px 24px -8px` màu `--acc` 70%.
@@ -258,7 +257,7 @@ Trang chi tiết lượt sàng đặt đầu trang trong cột chính, nên dùn
 | `.crumbs` | 13px `--dim` | Bài đã sàng, chi tiết nhật ký |
 | `.rule-below` | kẻ dưới `--line` | |
 
-`.page` không giới hạn chiều rộng. `.desk-top`, `.cols-3`, `.bubbles`, `.bubble*`, `.sieve-viz`, `.big-num` còn trong `styles.css` từ Bàn làm việc bản 4a nhưng không màn nào dùng nữa.
+`.page` không giới hạn chiều rộng.
 
 ## Responsive
 
@@ -331,13 +330,11 @@ Tab mới phải đặt `<TabMark id="…" />` trong mục đang chọn, mỗi h
 | Thành phần | Class / component | Quy cách |
 |---|---|---|
 | Chấm trạng thái | `Status tone="ok \| bad \| off \| acc"` → `.status` + `.dot` | Chấm 9px + chữ 13px; `bad` đổi chữ sang `--bad-ink` |
-| Chú giải | `.legend` + `.dot-acc` / `.dot-acc2` / `.dot-acc3` | |
 | Ô số liệu | `.figures` > `.figure` | Thẻ viền `--line`, bo 18, padding `16px 20px`, rộng tối thiểu 140px, cách nhau 12px |
 | Thanh tiến độ | `.bar` > `span` | Cao 6, bo 3, rãnh `--acc3`, phần chạy màu chuyển `--acc` → `--violet` |
 | Khối tiến độ có nhãn | `.progress` | Dòng "Tải ảnh … 38 / 61" + `.bar` |
 | Dải trang | `Mesh` → `.pages` > `.page-cell` (`.done`, `.now`) | Mỗi trang một thanh cao 8px bo 2: xong `--acc`, đang quét `--acc2`, chưa `--acc3`. Tới 20 trang: lưới `repeat(n, 1fr)` gap 4px kèm số trang 11.5px. Trên 20 trang (hoặc `size="sm"`): `.dense`, các thanh xuống dòng, không số. |
 | Donut | `Donut total done current size` | `conic-gradient(--acc 0 A%, --acc2 A% B%, --acc3 B%)` quanh lõi `--bg`. `lg` 164px vành 26 · `md` 108px vành 17 (chữ 18px/500) · `sm` 96px vành 15 (chữ 17px). Bàn làm việc không dùng donut mà dùng vòng SVG riêng |
-| Tooltip | `.tooltip` (`.tt-head`, `.tt-sub`, `.tt-big`) | Nền `--tip`, chữ trắng, bo 6, có bóng |
 | Khung log | `.log` (`time` cho giờ) | Nền `--tip`, 12.5px lh 1.7, cao tối đa 220px, cuộn |
 
 ### Ảnh và người
@@ -523,7 +520,7 @@ Hai thẻ trượt lên sau khung đêm (0.25s và 0.35s).
 ### Bản 4b đổi so với 4a
 
 - **Nguyên tắc "Kẻ, không khung" của 4a nhường chỗ cho "Đêm ở đầu, thẻ cho phần phụ":** dải đêm ở đầu mọi màn; cột phụ, mục Cài đặt và ô số liệu thành thẻ.
-- **Bàn làm việc:** bỏ ba bong bóng "Trong kho" và hàng ba cột. Các số chuyển lên khung đêm; donut và tooltip của "Đang sàng" thay bằng vòng SVG có số ảnh viết thẳng bên cạnh.
+- **Bàn làm việc:** bỏ ba bong bóng "Trong kho" và hàng ba cột. Các số chuyển lên khung đêm; donut và tooltip của "Đang sàng" thay bằng vòng SVG có số ảnh viết thẳng bên cạnh. CSS của các phần đã bỏ (`.desk-top`, `.cols-3`, `.bubble*`, `.sieve-viz`, `.big-num`, `.tooltip`, `.legend`, `.dot-acc2`, `.dot-acc3`, token `--warm` / `--cool`) cũng đã xóa.
 - **Trang đăng nhập:** nửa trái đổi từ nền `--side` sang mảng đêm, và hiện cả trên mobile (dạng dải trên form).
 - **Hình khối:** nút và segmented thành viên thuốc; ô nhập, notice, ô ảnh, kết quả tìm bo tròn hơn.
 - **Tab:** vạch dưới tab đang chọn là `TabMark` trượt được, thay `box-shadow` tĩnh.
@@ -547,7 +544,7 @@ Hai thẻ trượt lên sau khung đêm (0.25s và 0.35s).
 
 ## Khi thêm hoặc sửa màn hình
 
-- **Màu:** dùng token, không viết mã màu trực tiếp. Ngoại lệ đã nêu: chữ trên `--warm`/`--cool`; chữ trong log và tooltip; trạng thái và kính mờ trên nền đêm.
+- **Màu:** dùng token, không viết mã màu trực tiếp. Ngoại lệ đã nêu: chữ trong log; trạng thái và kính mờ trên nền đêm.
 - **Đầu trang:** `header.page-head` (`.page-title` + `.page-lede`) đặt trực tiếp trong `.page` sẽ tự thành dải đêm. Đầu trang nằm sâu hơn thì thêm class riêng như `.job-head`. Tiêu đề mục dùng `.section-title`.
 - **Bố cục:** màn có nội dung phụ thì dùng `.cols` / `.col-main` / `.col-side` (cột phụ tự thành thẻ). Trong một vùng, các dòng tách bằng kẻ; không thêm nền đặc hay bóng.
 - **Trạng thái và hành động:** trạng thái dùng `Status`, tiến trình dùng `.bar`, `Mesh`, `Donut`; hành động nguy hiểm dùng `.btn-danger`.
