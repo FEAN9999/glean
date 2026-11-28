@@ -50,11 +50,14 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
   const mainCode = sites.find((s) => s.isMain)?.code;
 
   useEffect(() => {
+    // Without the main site's code the request would go out as `*` and be turned down.
+    if (!mainCode) return;
     api
       .get<AppConfig>('/systems/config', { quiet: true, site: mainCode })
       .then((r) => {
         setForm(r.data.backup);
         setSaved(r.data.backup);
+        setError('');
       })
       .catch((err) => setError((err as ApiErr).message));
   }, [mainCode]);
