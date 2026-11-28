@@ -4,14 +4,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import Fastify from 'fastify';
 import { cfg, loadConfig, updateConfig } from './config.ts';
-import { DATA_DIR, get, run } from './db.ts';
-import { autoBackupName, backupStatus, isBackupDue, mirrorMedia, pruneAutoBackups, runBackup, validateBackupDir } from './backup.ts';
+import { DATA_DIR, get, now, run, setTestFallback } from './db.ts';
+import { autoBackupName, backupStatus, isBackupDue, mirrorMedia, pruneAutoBackups, registerBackup, runBackup, validateBackupDir, type BackupRun } from './backup.ts';
 import { ApiError } from './http.ts';
+import { addSite, mainSite, registerSites, siteMediaRoot } from './site.ts';
 
 loadConfig(0);
+const rphang = addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
 
 const tmp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `glean-${name}-`));
+/** The run of the main store among the runs of one backup. */
+const mainOf = (runs: BackupRun[]) => runs.find((r) => r.siteCode === null)!;
+const autoCopies = (dir: string) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^glean-auto-\d{8}-\d{6}\.db$/.test(f)) : []);
 const write = (file: string, content: string) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
@@ -71,7 +78,7 @@ test('runBackup writes a database copy and records the run', async () => {
   const target = tmp('target');
   write(path.join(cfg().storage.basePath, 'scrapes', '1', '1.jpg'), 'img');
   updateConfig({ backup: { targetDir: target, includeMedia: true } }, 0);
-  const r = await runBackup('manual');
+  const r = mainOf(await runBackup('manual'));
   assert.equal(r.error, null);
   assert.ok(r.finishedAt);
   assert.match(r.file!, /^glean-auto-\d{8}-\d{6}\.db$/);
@@ -87,7 +94,7 @@ test('a media copy failure keeps the database copy and still counts as a backup'
   fs.mkdirSync(path.join(target, 'media', 'scrapes', '2', 'x.jpg'), { recursive: true });
   updateConfig({ backup: { targetDir: target, includeMedia: true } }, 0);
   try {
-    const r = await runBackup('auto');
+    const r = mainOf(await runBackup('manual'));
     assert.equal(r.error, null);
     assert.ok(r.file && fs.existsSync(path.join(target, r.file)));
     assert.match(r.mediaError!, /x\.jpg/);
@@ -102,7 +109,7 @@ test('a media copy failure keeps the database copy and still counts as a backup'
 test('media is mirrored only into a folder the user chose', async () => {
   write(path.join(cfg().storage.basePath, 'scrapes', '3', 'y.jpg'), 'img');
   updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
-  const r = await runBackup('manual');
+  const r = mainOf(await runBackup('manual'));
   assert.equal(r.error, null);
   assert.equal(r.mediaCopied, 0);
   assert.equal(fs.existsSync(path.join(DATA_DIR, 'backups', 'media')), false);
@@ -130,7 +137,7 @@ test('runBackup records an error when the folder is unusable', async () => {
   write(blocker, 'not a folder');
   updateConfig({ backup: { targetDir: blocker } }, 0);
   try {
-    const r = await runBackup('auto');
+    const r = mainOf(await runBackup('manual'));
     assert.ok(r.error);
     assert.equal(r.file, null);
     // Regression: ISSUE-003 — failure text stayed Vietnamese in the English UI (/qa, 2026-11-26)
@@ -153,15 +160,15 @@ test('isBackupDue waits for the interval and does not retry a failure more than 
   run('DELETE FROM backup_run');
   const t0 = new Date('2026-11-13T00:00:00.000Z');
   const at = (h: number) => new Date(t0.getTime() + h * 3600_000);
-  assert.equal(isBackupDue(t0), true); // never backed up
+  assert.equal(isBackupDue(t0, mainSite()), true); // never backed up
   run('INSERT INTO backup_run(trigger, started_at, finished_at, file) VALUES(?,?,?,?)', 'auto', t0.toISOString(), t0.toISOString(), 'x.db');
-  assert.equal(isBackupDue(at(23)), false);
-  assert.equal(isBackupDue(at(24)), true);
+  assert.equal(isBackupDue(at(23), mainSite()), false);
+  assert.equal(isBackupDue(at(24), mainSite()), true);
   run('INSERT INTO backup_run(trigger, started_at, finished_at, error) VALUES(?,?,?,?)', 'auto', at(24).toISOString(), at(24).toISOString(), 'drive missing');
-  assert.equal(isBackupDue(at(24.5)), false);
-  assert.equal(isBackupDue(at(25)), true);
+  assert.equal(isBackupDue(at(24.5), mainSite()), false);
+  assert.equal(isBackupDue(at(25), mainSite()), true);
   updateConfig({ backup: { enabled: false } }, 0);
-  assert.equal(isBackupDue(at(48)), false);
+  assert.equal(isBackupDue(at(48), mainSite()), false);
   updateConfig({ backup: { enabled: true } }, 0);
   assert.ok(get('SELECT 1 x FROM backup_run'));
 });
@@ -180,7 +187,7 @@ test('the server keeps answering while a large database is copied', async () => 
   };
   try {
     setImmediate(spin);
-    const r = await runBackup('manual');
+    const r = mainOf(await runBackup('manual'));
     assert.equal(r.error, null);
     assert.ok(r.sizeBytes! > 20_000_000);
     assert.ok(turns > 20, `the event loop turned only ${turns} times during the copy`);
@@ -189,4 +196,137 @@ test('the server keeps answering while a large database is copied', async () => 
     run('DROP TABLE filler');
     updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
   }
+});
+
+test('a manual backup copies every store with the main file name unchanged', async () => {
+  const target = tmp('every');
+  write(path.join(siteMediaRoot(rphang), 'scrapes', '1', 'r.jpg'), 'img');
+  updateConfig({ backup: { targetDir: target, includeMedia: true } }, 0);
+  try {
+    const runs = await runBackup('manual');
+    assert.deepEqual(
+      runs.map((r) => [r.siteCode, r.error]),
+      [
+        [null, null],
+        ['rphang', null],
+      ],
+    );
+    assert.deepEqual(autoCopies(target), [mainOf(runs).file]);
+    const site = runs.find((r) => r.siteCode === 'rphang')!;
+    assert.deepEqual(autoCopies(path.join(target, 'sites', 'rphang')), [site.file]);
+    // The copy in sites/rphang is rphang's own store.
+    const copy = new DatabaseSync(path.join(target, 'sites', 'rphang', site.file!), { readOnly: true });
+    try {
+      const source = copy.prepare("SELECT value FROM config WHERE key='source'").get() as { value: string };
+      assert.equal(JSON.parse(source.value).baseUrl, 'https://rphang.land');
+    } finally {
+      copy.close();
+    }
+    assert.equal(site.mediaCopied, 1);
+    assert.ok(fs.existsSync(path.join(target, 'sites', 'rphang', 'media', 'scrapes', '1', 'r.jpg')));
+  } finally {
+    updateConfig({ backup: { targetDir: '' } }, 0);
+  }
+});
+
+test('a failing site is retried alone', async () => {
+  run('DELETE FROM backup_run');
+  const target = tmp('retry');
+  updateConfig({ backup: { targetDir: target, includeMedia: false } }, 0);
+  const dbPath = rphang.dbPath;
+  rphang.dbPath = path.join(tmp('gone'), 'missing', 'glean.db');
+  try {
+    const runs = await runBackup('manual');
+    const failed = runs.find((r) => r.siteCode === 'rphang')!;
+    assert.equal(mainOf(runs).error, null);
+    assert.ok(failed.error);
+    assert.equal(isBackupDue(new Date(), mainSite()), false);
+    assert.equal(isBackupDue(new Date(), rphang), false); // retried at most hourly
+    assert.equal(isBackupDue(new Date(Date.now() + 2 * 3600_000), rphang), true);
+
+    const status = backupStatus();
+    assert.equal(status.last?.siteCode, null);
+    assert.equal(status.last?.error, null);
+    const rp = status.sites.find((s) => s.code === 'rphang')!;
+    assert.equal(rp.name, 'rphang');
+    assert.equal(rp.last?.id, failed.id);
+    assert.equal(rp.lastSuccessAt, null);
+
+    // Two hours later the automatic check retries rphang only: the main store keeps its copies.
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000).toISOString();
+    run('UPDATE backup_run SET started_at=?, finished_at=? WHERE id=?', twoHoursAgo, twoHoursAgo, failed.id);
+    const copies = autoCopies(target).length;
+    const again = await runBackup('auto');
+    assert.deepEqual(
+      again.map((r) => r.siteCode),
+      ['rphang'],
+    );
+    assert.equal(autoCopies(target).length, copies);
+
+    // Nor does rphang's fresh failure hold back the main store once that is due.
+    const dayAgo = new Date(Date.now() - 25 * 3600_000).toISOString();
+    run('UPDATE backup_run SET started_at=?, finished_at=? WHERE site_code IS NULL', dayAgo, dayAgo);
+    assert.equal(isBackupDue(new Date(), mainSite()), true);
+  } finally {
+    rphang.dbPath = dbPath;
+    updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
+  }
+});
+
+test('back up now during an automatic run still copies every store', async () => {
+  run('DELETE FROM backup_run');
+  // Every store was just copied, so the automatic run skips them all.
+  for (const code of [null, 'rphang'])
+    run('INSERT INTO backup_run(trigger, started_at, finished_at, file, site_code) VALUES(?,?,?,?,?)', 'auto', now(), now(), 'x.db', code);
+  updateConfig({ backup: { targetDir: tmp('during'), includeMedia: false } }, 0);
+  try {
+    const auto = runBackup('auto');
+    const manual = await runBackup('manual');
+    assert.deepEqual(await auto, []);
+    assert.deepEqual(
+      manual.map((r) => [r.siteCode, r.trigger, r.error]),
+      [
+        [null, 'manual', null],
+        ['rphang', 'manual', null],
+      ],
+    );
+  } finally {
+    updateConfig({ backup: { targetDir: '', includeMedia: true } }, 0);
+  }
+});
+
+test('the backups API runs outside any site and answers with the main store run', async () => {
+  const app = Fastify();
+  registerSites(app);
+  registerBackup(app);
+  await app.ready();
+  const prev = setTestFallback(null);
+  try {
+    const res = await app.inject({ method: 'POST', url: '/api/backups/run' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as { data: BackupRun; runs: BackupRun[] };
+    assert.equal(body.data.siteCode, null);
+    assert.equal(body.data.error, null);
+    assert.deepEqual(
+      body.runs.map((r) => r.siteCode),
+      [null, 'rphang'],
+    );
+    const status = await app.inject({ url: '/api/backups/status' });
+    assert.equal(status.statusCode, 200);
+    assert.ok(status.json().data.sites.some((s: { code: string }) => s.code === 'rphang'));
+  } finally {
+    setTestFallback(prev);
+  }
+});
+
+test('a backup folder inside any site media folder is refused', () => {
+  assert.throws(
+    () => validateBackupDir(path.join(siteMediaRoot(rphang), 'bk')),
+    (e: unknown) => e instanceof ApiError && e.code === 'INVALID_BACKUP_DIR',
+  );
+  // The main media would be mirrored into rphang's media folder.
+  assert.throws(
+    () => validateBackupDir(rphang.dir!),
+    (e: unknown) => e instanceof ApiError && e.code === 'INVALID_BACKUP_DIR',
+  );
 });

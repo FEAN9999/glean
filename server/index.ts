@@ -15,7 +15,7 @@ import { registerWeb } from './web.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
 import { NoSiteError } from './db.ts';
-import { initSites, mainSite, registerSites, siteRequired, withSite } from './site.ts';
+import { initSites, registerSites, siteRequired } from './site.ts';
 
 const PORT = Number(process.env.GLEAN_PORT ?? 4318);
 const HOST = process.env.GLEAN_HOST ?? '127.0.0.1';
@@ -87,4 +87,4 @@ console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' 
 
 initScraper();
 initAutoSync();
-withSite(mainSite(), initBackup); // TEMP(Task 10): one backup run copies every store
+initBackup();

@@ -61,6 +61,13 @@ Khôi phục từ bản sao lưu:
 3. Chép thư mục `media/` trong thư mục sao lưu vào `data/media`.
 4. Chạy lại Glean.
 
+Mỗi trang thêm sau có kho riêng, được chép vào thư mục `sites/<mã>/` trong thư mục sao lưu (số bản giữ lại tính riêng cho từng kho; ảnh nằm ở `sites/<mã>/media` khi đã chọn thư mục sao lưu riêng). Khôi phục một trang thêm sau:
+
+1. Dừng Glean.
+2. Chép tệp `sites/<mã>/glean-auto-….db` muốn dùng thành `data/sites/<mã>/glean.db`, rồi xóa `data/sites/<mã>/glean.db-wal` và `data/sites/<mã>/glean.db-shm` nếu có.
+3. Chép thư mục `sites/<mã>/media` trong thư mục sao lưu vào `data/sites/<mã>/media`.
+4. Chạy lại Glean.
+
 ## Dùng với diễn đàn thật
 
 1. **Cài đặt → Nguồn dữ liệu**: đổi "Địa chỉ diễn đàn" (ví dụ `https://forum.example.com`).

@@ -2,22 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { FastifyInstance } from 'fastify';
-import { DATA_DIR, DB_PATH, camel, get, now, run } from './db.ts';
+import { DATA_DIR, camel, mainGet, mainRun, now } from './db.ts';
 import { cfg } from './config.ts';
 import { ApiError, ok } from './http.ts';
 import { requireSudo } from './auth.ts';
 import { telegram } from './notify.ts';
 import { BiError, biOf, pack, type Bi } from './bilingual.ts';
+import { siteMediaRoot, sites, withSite, type Site } from './site.ts';
 
 /**
- * Automatic backups: a full database copy on a schedule (newest `keep` copies kept) plus an
- * add-only mirror of the media folder. Only glean-auto-* files are pruned; other files in the folder are
- * left alone.
+ * Automatic backups: a full copy of every site's store on a schedule (newest `keep` copies kept per
+ * store) plus an add-only mirror of each media folder. The main store goes in the backup folder
+ * itself, the others in sites/<code>/. Only glean-auto-* files are pruned; other files in the folder
+ * are left alone. Each store's runs are tracked on their own, so only a store that failed is retried.
  */
 
 export interface BackupRun {
   id: number;
   trigger: 'auto' | 'manual';
+  /** The site whose store was copied; null for the main site. */
+  siteCode: string | null;
   startedAt: string;
   finishedAt: string | null;
   file: string | null;
@@ -45,11 +49,15 @@ export const backupDirPath = (p: string) => {
   return raw ? path.resolve(DATA_DIR, raw) : path.join(DATA_DIR, 'backups');
 };
 
-/** Resolves and creates the backup folder; rejects folders that would hold or be the media folder. */
+/** Where a site's copies go inside the backup folder. */
+const storeDir = (dir: string, site: Site) => (site.isMain ? dir : path.join(dir, 'sites', site.code));
+
+/** Resolves and creates the backup folder; rejects folders inside a site's media folder or that would mirror media onto one. */
 export function validateBackupDir(p: string): string {
   const dir = backupDirPath(p);
-  const media = path.resolve(cfg().storage.basePath);
-  if (isInside(dir, media) || path.resolve(dir, 'media') === media) {
+  const media = sites().map((s) => path.resolve(siteMediaRoot(s)));
+  const mirrors = sites().map((s) => path.resolve(storeDir(dir, s), 'media'));
+  if (media.some((m) => isInside(dir, m) || mirrors.includes(m))) {
     throw new ApiError(400, 'INVALID_BACKUP_DIR', ['Thư mục sao lưu không được nằm trong thư mục ảnh hay trùng thư mục dữ liệu.', 'The backup folder cannot be inside the media folder or be the data folder.'], 'inline');
   }
   try {
@@ -128,10 +136,10 @@ export async function mirrorMedia(src: string, dest: string): Promise<MirrorResu
 }
 
 /**
- * Copies the database with VACUUM INTO on its own read-only connection in a worker thread, so a
- * large archive does not stall every request while it is copied.
+ * Copies the store at `src` with VACUUM INTO on its own read-only connection in a worker thread, so
+ * a large archive does not stall every request while it is copied.
  */
-function vacuumInto(dest: string) {
+function vacuumInto(src: string, dest: string) {
   const code = `
     const { DatabaseSync } = require('node:sqlite');
     const { workerData } = require('node:worker_threads');
@@ -143,7 +151,7 @@ function vacuumInto(dest: string) {
       d.close();
     }`;
   return new Promise<void>((resolve, reject) => {
-    const w = new Worker(code, { eval: true, workerData: { src: DB_PATH, dest } });
+    const w = new Worker(code, { eval: true, workerData: { src, dest } });
     w.once('error', reject);
     w.once('exit', (exit) =>
       exit === 0 ? resolve() : reject(new BiError([`Sao lưu dừng giữa chừng (mã ${exit}).`, `The backup stopped partway (code ${exit}).`])),
@@ -151,24 +159,28 @@ function vacuumInto(dest: string) {
   });
 }
 
-const getRun = (id: number) => camel<BackupRun>(get('SELECT * FROM backup_run WHERE id=?', id));
+// backup_run is a shared table in the main store; site_code is NULL for the main site's runs.
+const getRun = (id: number) => camel<BackupRun>(mainGet('SELECT * FROM backup_run WHERE id=?', id));
+const siteCodeOf = (site: Site) => (site.isMain ? null : site.code);
 
-async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
-  const id = Number(run('INSERT INTO backup_run(trigger, started_at) VALUES(?,?)', trigger, now()).lastInsertRowid);
+/** Copies one site's store (and media); called inside that site, so a Telegram message names it. */
+async function doBackup(trigger: BackupRun['trigger'], site: Site): Promise<BackupRun> {
+  const id = Number(mainRun('INSERT INTO backup_run(trigger, started_at, site_code) VALUES(?,?,?)', trigger, now(), siteCodeOf(site)).lastInsertRowid);
   const label = trigger === 'auto' ? 'sao lưu tự động' : 'sao lưu';
   try {
     const c = cfg().backup;
-    const dir = validateBackupDir(c.targetDir);
+    const dir = storeDir(validateBackupDir(c.targetDir), site);
+    fs.mkdirSync(dir, { recursive: true });
     const name = autoBackupName(new Date());
     const file = path.join(dir, name);
-    await vacuumInto(file);
+    await vacuumInto(site.dbPath, file);
     // The database copy is the backup; record it before the (slower, optional) media copy.
-    run('UPDATE backup_run SET file=?, size_bytes=? WHERE id=?', name, fs.statSync(file).size, id);
+    mainRun('UPDATE backup_run SET file=?, size_bytes=? WHERE id=?', name, fs.statSync(file).size, id);
     pruneAutoBackups(dir, Math.max(1, c.keep));
     // Media is mirrored only into a folder the user chose: a copy next to data/ on the same disk protects nothing.
     let media: MirrorResult = { copied: 0, bytes: 0, failed: 0, firstError: null };
     if (c.includeMedia && String(c.targetDir ?? '').trim()) {
-      media = await mirrorMedia(cfg().storage.basePath, path.join(dir, 'media')).catch((e) => ({ ...media, failed: 1, firstError: (e as Error).message }));
+      media = await mirrorMedia(siteMediaRoot(site), path.join(dir, 'media')).catch((e) => ({ ...media, failed: 1, firstError: (e as Error).message }));
     }
     const mediaError: Bi | null = media.failed
       ? [
@@ -176,7 +188,7 @@ async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
           `${media.failed} media file${media.failed === 1 ? '' : 's'} could not be copied: ${media.firstError}`,
         ]
       : null;
-    run(
+    mainRun(
       'UPDATE backup_run SET finished_at=?, media_copied=?, media_bytes=?, media_error=? WHERE id=?',
       now(),
       media.copied,
@@ -187,32 +199,52 @@ async function doBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
     if (mediaError && c.notifyOnFail) void telegram(`Glean: ${label} xong kho dữ liệu nhưng ${mediaError[0]}`);
   } catch (e) {
     const msg = biOf(e);
-    run('UPDATE backup_run SET finished_at=?, error=? WHERE id=?', now(), pack(msg), id);
+    mainRun('UPDATE backup_run SET finished_at=?, error=? WHERE id=?', now(), pack(msg), id);
     if (cfg().backup.notifyOnFail) void telegram(`Glean: ${label} lỗi — ${msg[0]}`);
   }
   return getRun(id);
 }
 
-let running: Promise<BackupRun> | null = null;
-
-/** Runs one backup; a call while one is running gets that run. Never throws: failures are recorded. */
-export function runBackup(trigger: BackupRun['trigger']): Promise<BackupRun> {
-  running ??= doBackup(trigger).finally(() => {
-    running = null;
-  });
-  return running;
+/** Copies the stores one after another: every store when manual, the ones due when automatic. */
+async function backUpStores(trigger: BackupRun['trigger']): Promise<BackupRun[]> {
+  const runs: BackupRun[] = [];
+  for (const site of sites()) {
+    if (trigger === 'auto' && !isBackupDue(new Date(), site)) continue;
+    runs.push(await withSite(site, () => doBackup(trigger, site)));
+  }
+  return runs;
 }
 
-const lastSuccessAt = () =>
-  get<{ at: string | null }>('SELECT MAX(finished_at) at FROM backup_run WHERE error IS NULL AND file IS NOT NULL')!.at;
+let running: Promise<BackupRun[]> | null = null;
+let runningTrigger: BackupRun['trigger'] = 'auto';
 
-/** Enabled, no successful backup within the interval, and no failed attempt within the last hour. */
-export function isBackupDue(at = new Date()): boolean {
+/**
+ * Runs one backup of the stores, one run per store copied. A call while one is running gets that
+ * run, except a manual call during an automatic run, which may have skipped stores: it runs next.
+ * Never throws: failures are recorded.
+ */
+export function runBackup(trigger: BackupRun['trigger']): Promise<BackupRun[]> {
+  if (running && (trigger === 'auto' || runningTrigger === 'manual')) return running;
+  const next: Promise<BackupRun[]> = (running ?? Promise.resolve())
+    .then(() => backUpStores(trigger))
+    .finally(() => {
+      if (running === next) running = null;
+    });
+  running = next;
+  runningTrigger = trigger;
+  return next;
+}
+
+const lastSuccessAt = (site: Site) =>
+  mainGet<{ at: string | null }>('SELECT MAX(finished_at) at FROM backup_run WHERE error IS NULL AND file IS NOT NULL AND site_code IS ?', siteCodeOf(site))!.at;
+
+/** For one site's store: enabled, no successful backup within the interval, and no failed attempt within the last hour. */
+export function isBackupDue(at: Date, site: Site): boolean {
   const c = cfg().backup;
   if (!c.enabled) return false;
-  const ok = lastSuccessAt();
+  const ok = lastSuccessAt(site);
   if (ok && at.getTime() - Date.parse(ok) < c.intervalHours * 3600_000) return false;
-  const failed = get<{ at: string | null }>('SELECT MAX(finished_at) at FROM backup_run WHERE error IS NOT NULL')!.at;
+  const failed = mainGet<{ at: string | null }>('SELECT MAX(finished_at) at FROM backup_run WHERE error IS NOT NULL AND site_code IS ?', siteCodeOf(site))!.at;
   if (failed && (!ok || failed > ok) && at.getTime() - Date.parse(failed) < RETRY_AFTER_FAILURE_MS) return false;
   return true;
 }
@@ -230,25 +262,36 @@ function backupFiles(dir: string) {
     .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
 }
 
-export function backupStatus() {
+/** The last run, last success and next run of one site's store. */
+function storeStatus(site: Site) {
   const c = cfg().backup;
-  const okAt = lastSuccessAt();
-  const dir = backupDirPath(c.targetDir);
-  const last = get('SELECT * FROM backup_run ORDER BY id DESC LIMIT 1');
+  const okAt = lastSuccessAt(site);
+  const last = mainGet('SELECT * FROM backup_run WHERE site_code IS ? ORDER BY id DESC LIMIT 1', siteCodeOf(site));
   return {
-    running: running != null,
     last: last ? camel<BackupRun>(last) : null,
     lastSuccessAt: okAt,
     /** null while enabled means "at the next check, within minutes". */
     nextDueAt: c.enabled && okAt ? new Date(Date.parse(okAt) + c.intervalHours * 3600_000).toISOString() : null,
+  };
+}
+
+/** The main store's status and copies, then the status of each other site's store. */
+export function backupStatus() {
+  const dir = backupDirPath(cfg().backup.targetDir);
+  const [main, ...others] = sites();
+  return {
+    running: running != null,
+    ...storeStatus(main),
     dir,
     files: backupFiles(dir),
+    sites: others.map((s) => ({ code: s.code, name: s.name, ...storeStatus(s) })),
   };
 }
 
 export function initBackup() {
   const check = () => {
-    if (isBackupDue()) void runBackup('auto');
+    const at = new Date();
+    if (sites().some((s) => isBackupDue(at, s))) void runBackup('auto');
   };
   setTimeout(check, 60_000).unref();
   setInterval(check, 10 * 60_000).unref();
@@ -258,6 +301,7 @@ export function registerBackup(app: FastifyInstance) {
   app.get('/api/backups/status', async () => ok(backupStatus()));
   app.post('/api/backups/run', async (req) => {
     requireSudo(req);
-    return ok(await runBackup('manual'));
+    const runs = await runBackup('manual');
+    return ok(runs.find((r) => r.siteCode === null), { runs });
   });
 }

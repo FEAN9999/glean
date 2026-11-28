@@ -301,11 +301,6 @@ const MERGE_ROUTES = new Set([
   'PUT /api/systems/config',
 ]);
 
-/** Shared routes whose tables are still read through the site helpers. */
-const SHARED_IN_MAIN_STORE = [
-  /^\/api\/backups\//, // TEMP(Task 10): backups cover every store
-];
-
 /**
  * Runs each /api/ request in the site its `x-glean-site` header names. `legacyMainFallback` runs a
  * request without the header in the main site, for a web app that does not send it yet.
@@ -315,10 +310,7 @@ export function registerSites(app: FastifyInstance, opts: { legacyMainFallback?:
   app.addHook('onRequest', (req, reply, done) => {
     const url = req.url.split('?')[0].replace(/(.)\/+$/, '$1');
     if (!url.startsWith('/api/')) return done();
-    if (SHARED_ROUTES.some((r) => r.test(url))) {
-      if (opts.legacyMainFallback && SHARED_IN_MAIN_STORE.some((r) => r.test(url))) return runInSite(mainSite(), done);
-      return done();
-    }
+    if (SHARED_ROUTES.some((r) => r.test(url))) return done();
     const code = req.headers['x-glean-site'];
     let site: Site | undefined;
     if (typeof code !== 'string' || !code) {
