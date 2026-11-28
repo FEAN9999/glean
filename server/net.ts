@@ -1,6 +1,6 @@
 import { ProxyAgent, type Dispatcher } from 'undici';
 import { cfg, onSharedConfigChange } from './config.ts';
-import { mainDb, runInSite } from './db.ts';
+import { mainSite, withSite } from './site.ts';
 import { emit, Ev } from './events.ts';
 
 interface ProxyState {
@@ -136,8 +136,7 @@ export function proxyStatus() {
 
 export async function checkProxies() {
   if (!proxies.length) return proxyStatus();
-  // TEMP(Task 4): withSite(mainSite(), …)
-  const target = cfg().proxy.healthCheckUrl || runInSite({ code: 'main', db: mainDb }, () => cfg().source.baseUrl);
+  const target = cfg().proxy.healthCheckUrl || withSite(mainSite(), () => cfg().source.baseUrl);
   const before = proxies.map((p) => p.alive).join();
   await Promise.all(
     proxies.map(async (p) => {

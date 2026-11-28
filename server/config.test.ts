@@ -136,6 +136,6 @@ test('onConfigChange runs in the context of the changed site only', () => {
   assert.equal(sharedCalls, 0);
   seen = [];
   updateConfig({ telegram: { chatId: 'y' } }, 0);
-  assert.deepEqual(seen.sort(), ['b', 'main']);
+  assert.deepEqual(seen.sort(), ['b', 'demo']);
   assert.equal(sharedCalls, 1);
 });

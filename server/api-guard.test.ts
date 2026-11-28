@@ -10,6 +10,7 @@ import { registerSync } from './sync.ts';
 import { registerScraper } from './scraper.ts';
 import { registerSystem } from './system.ts';
 import { registerBackup } from './backup.ts';
+import { registerSites } from './site.ts';
 
 loadConfig(0);
 
@@ -34,6 +35,7 @@ async function appWithEveryRoute() {
     for (const m of [r.method].flat()) if (m !== 'HEAD' && r.url.startsWith('/api/')) routes.push(`${m} ${r.url}`);
   });
   registerApiGuard(app);
+  registerSites(app);
   registerAuth(app);
   registerMedia(app);
   registerSearch(app);

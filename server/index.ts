@@ -14,19 +14,15 @@ import { registerDemoForum } from './demo/forum.ts';
 import { registerWeb } from './web.ts';
 import { initNet } from './net.ts';
 import { addClient, removeClient, joinGroup, leaveGroup } from './events.ts';
-import { mainDb, runInSite, type StoreCtx } from './db.ts';
+import { NoSiteError } from './db.ts';
+import { initSites, mainSite, registerSites, siteRequired, withSite } from './site.ts';
 
 const PORT = Number(process.env.GLEAN_PORT ?? 4318);
 const HOST = process.env.GLEAN_HOST ?? '127.0.0.1';
 
-// TEMP(Task 4): replaced by registerSites/initSites
-const MAIN_CTX: StoreCtx = { code: 'main', db: mainDb };
-
-// TEMP(Task 4): replaced by registerSites/initSites
-runInSite(MAIN_CTX, () => {
-  loadConfig(PORT);
-  initNet();
-});
+loadConfig(PORT);
+initSites();
+initNet();
 
 const app = Fastify({
   logger: { level: process.env.GLEAN_LOG ?? 'warn' },
@@ -35,11 +31,12 @@ const app = Fastify({
 });
 
 registerApiGuard(app);
-// TEMP(Task 4): replaced by registerSites/initSites
-app.addHook('onRequest', (_req, _reply, done) => runInSite(MAIN_CTX, done));
+// TEMP(Task 12): until the web app sends x-glean-site, a request without it runs in the main site.
+registerSites(app, { legacyMainFallback: true });
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ApiError) return sendError(reply, err);
+  if (err instanceof NoSiteError) return sendError(reply, siteRequired());
   const e = err as { statusCode?: number; message: string };
   if (e.statusCode && e.statusCode < 500) return sendError(reply, new ApiError(e.statusCode, 'BAD_REQUEST', e.message, 'toast'));
   app.log.error(err);
@@ -88,9 +85,6 @@ if (fs.existsSync(path.join(webDist, 'index.html'))) await registerWeb(app, webD
 await app.listen({ port: PORT, host: HOST });
 console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 
-// TEMP(Task 4): replaced by registerSites/initSites
-runInSite(MAIN_CTX, () => {
-  initScraper();
-  initAutoSync();
-  initBackup();
-});
+withSite(mainSite(), initScraper); // TEMP(Task 6): each site runs its own sieve queue
+withSite(mainSite(), initAutoSync); // TEMP(Task 7): each site syncs on its own
+withSite(mainSite(), initBackup); // TEMP(Task 10): one backup run copies every store
