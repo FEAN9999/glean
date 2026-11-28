@@ -85,6 +85,6 @@ if (fs.existsSync(path.join(webDist, 'index.html'))) await registerWeb(app, webD
 await app.listen({ port: PORT, host: HOST });
 console.log(`Glean ${APP_VERSION} — http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 
-withSite(mainSite(), initScraper); // TEMP(Task 6): each site runs its own sieve queue
+initScraper();
 withSite(mainSite(), initAutoSync); // TEMP(Task 7): each site syncs on its own
 withSite(mainSite(), initBackup); // TEMP(Task 10): one backup run copies every store

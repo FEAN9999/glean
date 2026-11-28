@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import type { FastifyInstance } from 'fastify';
 import type { SQLInputValue } from 'node:sqlite';
 import { all, get, run, now, tx, camel, camelAll } from './db.ts';
-import { cfg, onConfigChange } from './config.ts';
+import { cfg, forgetSiteConfig, onConfigChange } from './config.ts';
 import { emit, Ev } from './events.ts';
 import { ApiError, assertNotPaused, intParam, ok } from './http.ts';
 import { fetchRaw, pool, proxyStatus, checkProxies, sleep } from './net.ts';
@@ -13,35 +13,67 @@ import { ensureForum, upsertComments } from './sync.ts';
 import { reconcileDeletions } from './archive.ts';
 import { telegram } from './notify.ts';
 import { BiError, biOf, pack, type Bi } from './bilingual.ts';
+import {
+  currentSite,
+  currentSiteOrNull,
+  forEachSite,
+  onSiteAdded,
+  siteByCode,
+  siteForHost,
+  siteInfo,
+  siteMediaPrefix,
+  siteMediaRoot,
+  siteRequired,
+  sites,
+  withSite,
+} from './site.ts';
 
 export const ScrapeStatus = { None: 0, Waiting: 1, Processing: 2, Completed: 3, Failed: 4, NotProcessed: 5 } as const;
 
-const mediaRoot = () => cfg().storage.basePath;
-const scrapeDir = (id: number) => path.join(mediaRoot(), 'scrapes', String(id));
+/** Where the current site keeps a job's files, and the URL they are served under. */
+const scrapeDir = (id: number) => path.join(siteMediaRoot(), 'scrapes', String(id));
+const scrapeUrl = (id: number) => `${siteMediaPrefix()}/scrapes/${id}`;
 
 /* ---------------- queue ---------------- */
 
-let working = false;
-let currentId: number | null = null;
+/** Each site's queue, by site code: one job at a time within a site, the sites side by side. */
+const queues = new Map<string, { working: boolean; currentId: number | null }>();
+let readThread = fetchThreadPage;
 
-function kick() {
-  if (!working) void work();
+function queueOf(code = currentSite().code) {
+  let q = queues.get(code);
+  if (!q) queues.set(code, (q = { working: false, currentId: null }));
+  return q;
 }
 
-async function work() {
-  working = true;
+/** Tests only: the page reader the queue uses. */
+export function setThreadReader(fn: typeof fetchThreadPage): void {
+  readThread = fn;
+}
+
+/** Starts the queue of the current site, unless it is running. */
+export function kick() {
+  const site = currentSite();
+  if (!queueOf(site.code).working) void withSite(site, () => work(site.code));
+}
+
+async function work(code: string) {
+  const q = queueOf(code);
+  q.working = true;
   try {
-    for (;;) {
-      if (cfg().maintenance.scrape.isPaused) break;
+    // A removed site's running job ends in its own store, but no other job is started for it.
+    while (siteByCode(code) && !cfg().maintenance.scrape.isPaused) {
       const next = get<{ id: number }>('SELECT id FROM scrape WHERE status=? AND is_marked_deleted=0 ORDER BY id LIMIT 1', ScrapeStatus.Waiting);
       if (!next) break;
-      currentId = next.id;
-      await runScrape(next.id);
-      currentId = null;
+      q.currentId = next.id;
+      await runScrape(next.id, readThread);
+      q.currentId = null;
     }
   } finally {
-    working = false;
-    currentId = null;
+    q.working = false;
+    q.currentId = null;
+    // Its last job read its settings again; those of a removed site are not kept.
+    if (!siteByCode(code)) forgetSiteConfig(code);
   }
 }
 
@@ -256,20 +288,20 @@ function copyArchive(fromId: number, toId: number) {
   const src = scrapeDir(fromId);
   if (fs.existsSync(src)) {
     fs.cpSync(src, scrapeDir(toId), { recursive: true });
-    const prefix = `/media/scrapes/${fromId}/`;
+    const prefix = `${scrapeUrl(fromId)}/`;
     run(
       `UPDATE scrape_image SET current_url = replace(current_url, ?, ?) WHERE scrape_id=? AND current_url LIKE ?`,
       prefix,
-      `/media/scrapes/${toId}/`,
+      `${scrapeUrl(toId)}/`,
       toId,
       `${prefix}%`,
     );
     run(
       `UPDATE scrape_video SET current_url = replace(current_url, ?, ?), hls_url = replace(hls_url, ?, ?) WHERE scrape_id=?`,
       prefix,
-      `/media/scrapes/${toId}/`,
+      `${scrapeUrl(toId)}/`,
       prefix,
-      `/media/scrapes/${toId}/`,
+      `${scrapeUrl(toId)}/`,
       toId,
     );
   }
@@ -444,6 +476,13 @@ function looksLikeImage(buf: Buffer, type: string) {
   );
 }
 
+let fetchMedia = fetchRaw;
+
+/** Tests only: how images and videos are downloaded. */
+export function setMediaFetch(fn: typeof fetchRaw): void {
+  fetchMedia = fn;
+}
+
 async function downloadImages(id: number) {
   const referer = get<{ thread_url: string }>('SELECT thread_url FROM scrape WHERE id=?', id)?.thread_url;
   const rows = all<{ id: number; origin_url: string }>('SELECT id, origin_url FROM scrape_image WHERE scrape_id=? AND current_url IS NULL AND is_bin=0 ORDER BY id', id);
@@ -460,7 +499,7 @@ async function downloadImages(id: number) {
     try {
       // Send Referer only to the forum itself (its attachments may need it); other hosts often reject foreign referers.
       const sameSite = referer && new URL(url).host === new URL(referer).host;
-      const res = await fetchRaw(url, { retries: 1, referer: sameSite ? referer : undefined });
+      const res = await fetchMedia(url, { retries: 1, referer: sameSite ? referer : undefined });
       if (!res.ok) return { failed: true };
       const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
       const buf = Buffer.from(await res.arrayBuffer());
@@ -481,7 +520,7 @@ async function downloadImages(id: number) {
     const out = await cache.get(r.origin_url)!;
     run(
       'UPDATE scrape_image SET current_url=?, is_bin=?, is_download_failed=?, display_by_origin_url=? WHERE id=?',
-      out.file ? `/media/scrapes/${id}/${out.file}` : null,
+      out.file ? `${scrapeUrl(id)}/${out.file}` : null,
       out.bin ? 1 : 0,
       out.failed ? 1 : 0,
       out.file ? 0 : 1,
@@ -525,9 +564,9 @@ async function downloadVideos(id: number) {
   const maxBytes = cfg().storage.maxFileSizeMb * 1024 * 1024;
   await pool(rows, 2, async (r) => {
     try {
-      let res = await fetchRaw(r.origin_url, { retries: 1, timeoutMs: 120_000 });
+      let res = await fetchMedia(r.origin_url, { retries: 1, timeoutMs: 120_000 });
       const mirror = videoMirror(r.origin_url);
-      if (!res.ok && mirror) res = await fetchRaw(mirror, { retries: 1, timeoutMs: 120_000 });
+      if (!res.ok && mirror) res = await fetchMedia(mirror, { retries: 1, timeoutMs: 120_000 });
       if (!res.ok) return;
       const len = Number(res.headers.get('content-length') ?? 0);
       if (len > maxBytes) return;
@@ -548,9 +587,9 @@ async function downloadVideos(id: number) {
           p.on('error', () => resolve(false));
           p.on('exit', (code) => resolve(code === 0));
         });
-        if (okRun) hls = `/media/scrapes/${id}/v${r.id}-hls/index.m3u8`;
+        if (okRun) hls = `${scrapeUrl(id)}/v${r.id}-hls/index.m3u8`;
       }
-      run('UPDATE scrape_video SET current_url=?, hls_url=? WHERE id=?', `/media/scrapes/${id}/${file}`, hls, r.id);
+      run('UPDATE scrape_video SET current_url=?, hls_url=? WHERE id=?', `${scrapeUrl(id)}/${file}`, hls, r.id);
     } catch {
       /* keep origin url */
     }
@@ -571,11 +610,16 @@ function sweepExpired() {
   }
 }
 
+/** Each site, in its own context, takes up the jobs a stop interrupted, sweeps and starts its queue. */
 export function initScraper() {
-  run('UPDATE scrape SET status=? WHERE status=?', ScrapeStatus.Waiting, ScrapeStatus.Processing);
-  setInterval(sweepExpired, 10 * 60_000).unref();
-  sweepExpired();
-  kick();
+  for (const s of sites())
+    withSite(s, () => {
+      run('UPDATE scrape SET status=? WHERE status=?', ScrapeStatus.Waiting, ScrapeStatus.Processing);
+      sweepExpired();
+      kick();
+    });
+  setInterval(() => void forEachSite(sweepExpired), 10 * 60_000).unref();
+  onSiteAdded((s) => withSite(s, kick));
   onConfigChange(() => kick());
 }
 
@@ -583,34 +627,59 @@ export function initScraper() {
 
 const SOURCES = new Set(['direct', 'search-post', 'search-comment', 'home']);
 
-export function createScrape(input: string, source: string) {
-  const ref = parseThreadRef(String(input ?? ''));
-  if (!ref) throw new ApiError(400, 'INVALID_THREAD', ['Không nhận ra link hoặc ID bài viết. Dán link dạng …/threads/ten-bai.12345/ hoặc chỉ số ID.', 'Not a thread link or ID. Paste a link like …/threads/thread-title.12345/ or just the ID.'], 'inline');
-  if (ref.foreignHost && !ref.knownOldDomain) {
-    const current = new URL(cfg().source.baseUrl);
-    const isDemo = current.pathname.replace(/\/+$/, '').endsWith('/demo-forum');
-    const host = ref.foreignHost;
+/** The host name of a pasted link; null for a thread ID or a link without one. */
+function linkHost(s: string): string | null {
+  if (/^\d+$/.test(s) || s.startsWith('/')) return null;
+  try {
+    return new URL(s.startsWith('http') ? s : `https://${s}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Queues a thread from a pasted link or ID. A link goes to the site of its domain, whichever site is
+ * current; an ID to the current site. `beforeQueue` runs first in that site: the route checks there
+ * that sieving is not paused.
+ */
+export function createScrape(input: string, source: string, beforeQueue = () => {}) {
+  const s = String(input ?? '').trim();
+  // parseThreadRef needs no site to tell a thread link from other text (outside one it skips its domain check).
+  if (!parseThreadRef(s)) throw new ApiError(400, 'INVALID_THREAD', ['Không nhận ra link hoặc ID bài viết. Dán link dạng …/threads/ten-bai.12345/ hoặc chỉ số ID.', 'Not a thread link or ID. Paste a link like …/threads/thread-title.12345/ or just the ID.'], 'inline');
+  const host = linkHost(s);
+  const site = host ? siteForHost(host) : currentSiteOrNull();
+  if (!site && host)
     throw new ApiError(
       409,
-      'SOURCE_MISMATCH',
+      'UNKNOWN_SITE',
       [
-        `Link thuộc ${host}, nhưng Glean đang đọc từ ${isDemo ? 'diễn đàn mẫu' : current.host}. ` +
-          (isDemo
-            ? `Đổi "Địa chỉ diễn đàn" trong Cài đặt → Nguồn dữ liệu thành https://${host} rồi dán lại link.`
-            : `Nếu ${host} là tên miền khác của cùng diễn đàn, thêm https://${host} vào "Tên miền cũ" trong Cài đặt → Nguồn dữ liệu; nếu là diễn đàn khác, đổi "Địa chỉ diễn đàn".`),
-        `The link is on ${host}, but Glean reads from ${isDemo ? 'the sample forum' : current.host}. ` +
-          (isDemo
-            ? `Change "Forum address" in Settings → Source to https://${host}, then paste the link again.`
-            : `If ${host} is another domain of the same forum, add https://${host} to "Previous domains" in Settings → Source; if it is a different forum, change "Forum address".`),
+        `Link thuộc ${host}, nhưng chưa có trang nào trong Glean dùng tên miền này. Thêm trang cho ${host} trong Cài đặt → Trang rồi dán lại link.`,
+        `The link is on ${host}, but no site in Glean uses that domain. Add a site for ${host} in Settings → Sites, then paste the link again.`,
       ],
       'inline',
     );
-  }
+  if (!site) throw siteRequired();
+  return withSite(site, () => {
+    beforeQueue();
+    const ref = parseThreadRef(s)!;
+    return {
+      ...queueThread(ref.threadId, source),
+      // A link on an old domain of the site: the job reads the site's current address.
+      domainWarning:
+        ref.foreignHost && ref.knownOldDomain
+          ? { host: ref.foreignHost, knownOldDomain: true, currentHost: new URL(cfg().source.baseUrl).host }
+          : null,
+      site: siteInfo(site),
+    };
+  });
+}
+
+function queueThread(threadId: number, source: string) {
   // A thread keeps one job: a queued one is left as it is, a finished one runs again (as Retry
   // does), so the Archive lists the thread once and its files are not saved twice.
   const existing = get<{ id: number; status: number }>(
     'SELECT id, status FROM scrape WHERE thread_id=? AND is_marked_deleted=0 ORDER BY id DESC LIMIT 1',
-    ref.threadId,
+    threadId,
   );
   let id: number;
   let reused = false;
@@ -625,13 +694,13 @@ export function createScrape(input: string, source: string) {
       kick();
     }
   } else {
-    const t = get<{ title: string }>('SELECT title FROM thread WHERE id=?', ref.threadId);
+    const t = get<{ title: string }>('SELECT title FROM thread WHERE id=?', threadId);
     id = Number(
       run(
         'INSERT INTO scrape(thread_id, thread_title, thread_url, source, status, created_at) VALUES(?,?,?,?,?,?)',
-        ref.threadId,
+        threadId,
         t?.title ?? null,
-        threadUrl(ref.threadId),
+        threadUrl(threadId),
         SOURCES.has(source) ? source : 'direct',
         ScrapeStatus.Waiting,
         now(),
@@ -640,18 +709,7 @@ export function createScrape(input: string, source: string) {
     emit(Ev.NewScrape, summary(id), undefined, 'scrape');
     kick();
   }
-  return {
-    scrape: summary(id),
-    reused,
-    rerun,
-    domainWarning: ref.foreignHost
-      ? {
-          host: ref.foreignHost,
-          knownOldDomain: ref.knownOldDomain,
-          currentHost: new URL(cfg().source.baseUrl).host,
-        }
-      : null,
-  };
+  return { scrape: summary(id), reused, rerun };
 }
 
 function rank(id: number) {
@@ -679,15 +737,21 @@ function pageOf(table: string, id: number, q: PageQuery, extraWhere = '', extraP
   return { rows: camelAll(rows), total, page, size };
 }
 
+/** The current site, as a job names it. */
+function siteTag() {
+  const s = currentSite();
+  return { code: s.code, name: s.name };
+}
+
 export function registerScraper(app: FastifyInstance) {
-  app.post<{ Body: { url: string; source?: string } }>('/api/scrapes/create-scrape', async (req) => {
-    assertNotPaused(req, 'scrape');
-    return ok(createScrape(req.body?.url, req.body?.source ?? 'direct'));
-  });
+  // A link may queue in another site than the request's: sieving must not be paused there.
+  app.post<{ Body: { url: string; source?: string } }>('/api/scrapes/create-scrape', async (req) =>
+    ok(createScrape(req.body?.url, req.body?.source ?? 'direct', () => assertNotPaused(req, 'scrape'))),
+  );
 
   app.get('/api/scrapes/unprocessed', async () => {
     const rows = all('SELECT * FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0 ORDER BY status DESC, id', ScrapeStatus.Processing, ScrapeStatus.Waiting);
-    return ok(camelAll(rows), { processingId: currentId });
+    return ok(camelAll(rows), { processingId: queueOf().currentId });
   });
 
   app.get<{ Querystring: { cursor?: string; size?: string } }>('/api/scrapes/processed', async (req) => {
@@ -700,9 +764,11 @@ export function registerScraper(app: FastifyInstance) {
       cursor,
       size,
     );
+    const site = siteTag();
     const items = camelAll<{ threadId: number }>(rows).map((s) => ({
       ...s,
       syncedCommentCount: get<{ n: number }>('SELECT COUNT(*) n FROM comment WHERE thread_id=?', s.threadId)!.n,
+      site,
     }));
     const total = get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE status IN (?,?) AND is_marked_deleted=0', ScrapeStatus.Completed, ScrapeStatus.Failed)!.n;
     return ok(items, { nextCursor: rows.length === size ? rows.at(-1)!.id : null, total });
@@ -733,6 +799,7 @@ export function registerScraper(app: FastifyInstance) {
       links: missing('scrape_link'),
       comments: missing('scrape_comment'),
     };
+    sm.site = siteTag();
     return ok(sm);
   });
 
@@ -772,7 +839,7 @@ export function registerScraper(app: FastifyInstance) {
     const id = Number(req.params.id);
     run('UPDATE scrape SET is_marked_deleted=1 WHERE id=?', id);
     // give an in-flight job a moment to notice cancellation before deleting files
-    setTimeout(() => removeMedia(id), id === currentId ? 3000 : 0);
+    setTimeout(() => removeMedia(id), id === queueOf().currentId ? 3000 : 0);
     emit(Ev.UpdateScrape, summary(id), undefined, 'scrape');
     return ok(true);
   });

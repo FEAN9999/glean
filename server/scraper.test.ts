@@ -1,16 +1,38 @@
 import './test/setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import Fastify from 'fastify';
-import { loadConfig, updateConfig } from './config.ts';
-import { all, get, now, run } from './db.ts';
-import { archiveFallback, createScrape, markMissing, prepareRerun, processScrape, registerScraper, retryMany, runScrape, savePageItems, ScrapeStatus, videoMirror } from './scraper.ts';
+import { cfg, loadConfig, onConfigChange, updateConfig } from './config.ts';
+import { all, get, now, run, setTestFallback, siteCtxOrNull } from './db.ts';
+import {
+  archiveFallback,
+  createScrape,
+  kick,
+  markMissing,
+  prepareRerun,
+  processScrape,
+  registerScraper,
+  retryMany,
+  runScrape,
+  savePageItems,
+  ScrapeStatus,
+  setMediaFetch,
+  setThreadReader,
+  videoMirror,
+} from './scraper.ts';
 import { ApiError, sendError } from './http.ts';
+import { addSite, mainSite, registerSites, removeSite, withSite, type Site } from './site.ts';
 import { ThreadGoneError, type ParsedPost, type ParsedThreadPage } from './source/xenforo.ts';
 
 loadConfig(0);
 // No network in tests: pages come from a fake reader and media is never downloaded.
 updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } }, 0);
+// The main site is the demo forum on 127.0.0.1; the other sites use their own hosts.
+const rphang = addSite({ baseUrl: 'https://rphang.land', code: 'rphang', name: 'rphang' });
+const rm2 = addSite({ baseUrl: 'https://rm2.test', code: 'rm2', name: 'rm2' });
+for (const s of [rphang, rm2]) withSite(s, () => updateConfig({ scraper: { downloadImages: false, downloadVideos: false, batchDelayMs: 0 } }, 0));
 
 const A = 'http://x.test/a.jpg';
 const B = 'http://x.test/b.jpg';
@@ -28,22 +50,34 @@ const post = (postId: number, postNo: number, images: string[] = []): ParsedPost
   editedAt: null,
 });
 
-let nextThread = 900;
-function newScrape() {
-  const threadId = nextThread++;
-  const id = Number(
+/** A thread of one page with one post. */
+const onePage = async (): Promise<ParsedThreadPage> => ({ title: 'Chủ đề', forumId: 1, totalPages: 1, posts: [post(1, 1)] });
+// A job queued by a test is read from this fake forum, and its images from nowhere.
+setThreadReader(onePage);
+setMediaFetch(async () => {
+  throw new Error('no network in tests');
+});
+
+/** A job for `threadId` in the current site. */
+function jobFor(threadId: number, status: number = ScrapeStatus.Processing) {
+  return Number(
     run(
       'INSERT INTO scrape(thread_id, thread_title, thread_url, source, status, created_at, total_pages) VALUES(?,?,?,?,?,?,?)',
       threadId,
       `Chủ đề ${threadId}`,
       'http://x.test',
       'direct',
-      ScrapeStatus.Processing,
+      status,
       now(),
       1,
     ).lastInsertRowid,
   );
-  return { id, threadId };
+}
+
+let nextThread = 900;
+function newScrape() {
+  const threadId = nextThread++;
+  return { id: jobFor(threadId), threadId };
 }
 const images = (id: number) =>
   all<{ id: number; origin_url: string; current_url: string | null; missing_since: string | null; post_id: number | null }>(
@@ -432,5 +466,201 @@ test('the retry-many route answers through Fastify and refuses a missing or non-
     });
     assert.equal(bad.statusCode, 400, String(payload));
     assert.equal(bad.json().code, 'INVALID_SELECTION', String(payload));
+  }
+});
+
+/* ---------------- theo trang ---------------- */
+
+/** Waits until `check` is true. */
+async function until(check: () => boolean, what: string) {
+  const end = Date.now() + 5000;
+  while (!check()) {
+    if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+const statusIn = (site: Site | string, id: number) => withSite(site, () => get<{ status: number }>('SELECT status FROM scrape WHERE id=?', id)!.status);
+const jobsOfThread = (threadId: number) => get<{ n: number }>('SELECT COUNT(*) n FROM scrape WHERE thread_id=?', threadId)!.n;
+/** A reader that holds `threadId` until `release()`; other threads are one page. */
+function holding(threadId: number) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const read: number[] = [];
+  const reader = async (id: number) => {
+    read.push(id);
+    if (id === threadId) await gate;
+    return onePage();
+  };
+  return { reader, release, read };
+}
+
+test("the same thread id is sieved into each site's own store", async () => {
+  const say = (text: string) => async (): Promise<ParsedThreadPage> => ({ title: 'Chủ đề', forumId: 1, totalPages: 1, posts: [{ ...post(1, 1), text }] });
+  const idMain = jobFor(4242);
+  const idB = withSite('rphang', () => jobFor(4242));
+  await processScrape(idMain, say('chữ của trang chính'));
+  await withSite('rphang', () => processScrape(idB, say('chữ của rphang')));
+
+  const content = (id: number) => get<{ content: string }>('SELECT content FROM scrape_comment WHERE scrape_id=?', id)!.content;
+  assert.equal(count('scrape_comment', idMain), 1);
+  assert.equal(
+    withSite('rphang', () => count('scrape_comment', idB)),
+    1,
+  );
+  assert.equal(content(idMain), 'chữ của trang chính');
+  assert.equal(
+    withSite('rphang', () => content(idB)),
+    'chữ của rphang',
+  );
+});
+
+test('queues of two sites run at the same time', async () => {
+  const h = holding(5151);
+  setThreadReader(h.reader);
+  try {
+    const idMain = jobFor(5151, ScrapeStatus.Waiting);
+    const idB = withSite('rphang', () => jobFor(5151, ScrapeStatus.Waiting));
+    kick();
+    withSite('rphang', kick);
+    // Both are held by the reader at once: neither queue waits for the other.
+    await until(() => statusIn(mainSite(), idMain) === ScrapeStatus.Processing && statusIn('rphang', idB) === ScrapeStatus.Processing, 'both jobs to run');
+    h.release();
+    await until(() => statusIn(mainSite(), idMain) === ScrapeStatus.Completed && statusIn('rphang', idB) === ScrapeStatus.Completed, 'both jobs to finish');
+  } finally {
+    setThreadReader(onePage);
+  }
+});
+
+test('a link is queued on the site of its domain', async () => {
+  const r = createScrape('https://rphang.land/t/a.77/', 'direct');
+  assert.equal(r.site.code, 'rphang');
+  assert.equal(r.domainWarning, null);
+  assert.equal(
+    withSite('rphang', () => jobsOfThread(77)),
+    1,
+  );
+  assert.equal(jobsOfThread(77), 0);
+  await until(() => statusIn('rphang', Number(r.scrape.id)) === ScrapeStatus.Completed, 'the job to finish');
+});
+
+test('a link on an old domain of a site is queued there with a warning', async () => {
+  withSite('rphang', () => updateConfig({ source: { previousBaseUrls: ['https://old-rphang.test'] } }, 0));
+  const r = createScrape('https://old-rphang.test/threads/b.78/', 'direct');
+  assert.equal(r.site.code, 'rphang');
+  assert.deepEqual(r.domainWarning, { host: 'old-rphang.test', knownOldDomain: true, currentHost: 'rphang.land' });
+  await until(() => statusIn('rphang', Number(r.scrape.id)) === ScrapeStatus.Completed, 'the job to finish');
+});
+
+test('a link of an unknown domain is refused', () => {
+  assert.throws(
+    () => createScrape('https://khong-co.test/threads/1/', 'direct'),
+    (e: unknown) => e instanceof ApiError && e.status === 409 && e.code === 'UNKNOWN_SITE' && e.message.includes('khong-co.test') && e.en.includes('khong-co.test'),
+  );
+  // Text that is no thread link at all is still told apart from a link.
+  assert.throws(
+    () => createScrape('hello', 'direct'),
+    (e: unknown) => e instanceof ApiError && e.code === 'INVALID_THREAD',
+  );
+});
+
+test('with every site chosen, a link finds its site and a bare thread id is refused', async () => {
+  const prev = setTestFallback(null);
+  let id: number;
+  try {
+    assert.equal(siteCtxOrNull(), null);
+    assert.throws(
+      () => createScrape('4242', 'direct'),
+      (e: unknown) => e instanceof ApiError && e.status === 400 && e.code === 'SITE_REQUIRED',
+    );
+    const r = createScrape('https://rphang.land/threads/c.79/', 'direct');
+    assert.equal(r.site.code, 'rphang');
+    id = Number(r.scrape.id);
+  } finally {
+    setTestFallback(prev);
+  }
+  await until(() => statusIn('rphang', id) === ScrapeStatus.Completed, 'the job to finish');
+});
+
+test('create-scrape is refused while the site the link goes to is paused', async () => {
+  const app = Fastify();
+  app.setErrorHandler((e, _req, reply) => (e instanceof ApiError ? sendError(reply, e) : reply.send(e)));
+  registerSites(app);
+  registerScraper(app);
+  withSite('rphang', () => updateConfig({ maintenance: { scrape: { isPaused: true, message: '' } } }, 0));
+  try {
+    for (const header of [mainSite().code, '*']) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/api/scrapes/create-scrape',
+        headers: { 'x-glean-site': header },
+        payload: { url: 'https://rphang.land/threads/d.80/' },
+      });
+      assert.equal(r.statusCode, 503, header);
+      assert.equal(r.json().code, 'FEATURE_PAUSED', header);
+    }
+    assert.equal(
+      withSite('rphang', () => jobsOfThread(80)),
+      0,
+    );
+  } finally {
+    withSite('rphang', () => updateConfig({ maintenance: { scrape: { isPaused: false, message: '' } } }, 0));
+  }
+});
+
+test('a job and the archive list name their site', async () => {
+  const app = Fastify();
+  registerSites(app);
+  registerScraper(app);
+  const id = withSite('rphang', () => jobFor(8181, ScrapeStatus.Completed));
+  const headers = { 'x-glean-site': 'rphang' };
+  const one = (await app.inject({ method: 'GET', url: `/api/scrapes/${id}`, headers })).json().data;
+  assert.deepEqual(one.site, { code: 'rphang', name: 'rphang' });
+  const list: { site: unknown }[] = (await app.inject({ method: 'GET', url: '/api/scrapes/processed', headers })).json().data;
+  assert.ok(list.length > 0);
+  for (const s of list) assert.deepEqual(s.site, { code: 'rphang', name: 'rphang' });
+});
+
+test('media of a non-main site is saved under its own folder and URL', async () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  setMediaFetch(async () => new Response(png, { headers: { 'content-type': 'image/png' } }));
+  withSite('rphang', () => updateConfig({ scraper: { downloadImages: true } }, 0));
+  try {
+    const id = withSite('rphang', () => jobFor(6161));
+    await withSite('rphang', () => processScrape(id, async () => ({ title: 'Ảnh', forumId: 1, totalPages: 1, posts: [post(1, 1, [A])] })));
+    const url = withSite('rphang', () => get<{ current_url: string | null }>('SELECT current_url FROM scrape_image WHERE scrape_id=?', id)!.current_url ?? '');
+    assert.ok(url.startsWith(`/media/sites/rphang/scrapes/${id}/`), url);
+    assert.ok(fs.existsSync(path.join(rphang.dir!, 'media', 'scrapes', String(id), path.basename(url))));
+  } finally {
+    withSite('rphang', () => updateConfig({ scraper: { downloadImages: false } }, 0));
+    setMediaFetch(async () => {
+      throw new Error('no network in tests');
+    });
+  }
+});
+
+test('removing a site stops its queue', async () => {
+  const configured: (string | null)[] = [];
+  onConfigChange(() => configured.push(siteCtxOrNull()?.code ?? null));
+  const h = holding(7171);
+  setThreadReader(h.reader);
+  try {
+    const [first, second] = withSite(rm2, () => [jobFor(7171, ScrapeStatus.Waiting), jobFor(7272, ScrapeStatus.Waiting)]);
+    const mainJobs = get<{ n: number }>('SELECT COUNT(*) n FROM scrape')!.n;
+    withSite(rm2, kick);
+    await until(() => statusIn(rm2, first) === ScrapeStatus.Processing, 'the first job to run');
+    removeSite('rm2');
+    h.release();
+    // The running job ends in its own store; the queue then stops.
+    await until(() => statusIn(rm2, first) === ScrapeStatus.Completed, 'the first job to finish');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(statusIn(rm2, second), ScrapeStatus.Waiting);
+    assert.deepEqual(h.read, [7171]);
+    assert.equal(get<{ n: number }>('SELECT COUNT(*) n FROM scrape')!.n, mainJobs);
+    // Its settings, loaded again by that job, are not kept: a shared change does not reach it.
+    updateConfig({ search: { pageSize: cfg().search.pageSize } }, 0);
+    assert.ok(configured.length > 0);
+    assert.ok(!configured.includes('rm2'), configured.join());
+  } finally {
+    setThreadReader(onePage);
   }
 });
