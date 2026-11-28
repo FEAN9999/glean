@@ -1800,6 +1800,8 @@ a.gtr:hover .gt-title {
   padding: 22px 24px;
   width: min(460px, 100%);
   box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.45);
+  /* a store folder path has few places to break */
+  overflow-wrap: anywhere;
 }
 .dialog h2 {
   font-weight: 500;
@@ -1979,6 +1981,22 @@ a.gtr:hover .gt-title {
   margin: 0 0 14px;
   color: var(--dim);
   font-size: 13px;
+}
+.settings legend .tag {
+  margin-left: 10px;
+  vertical-align: 2px;
+}
+/* "Settings for the site: …" above the sections each site keeps on its own */
+.settings-group {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0 0 22px;
+  overflow-wrap: anywhere;
+}
+.settings-sub {
+  font-size: 14px;
+  font-weight: 400;
+  margin: 10px 0 0;
 }
 .savebar {
   position: sticky;

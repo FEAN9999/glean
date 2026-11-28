@@ -2,40 +2,82 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiErr } from '../lib/api';
 import { unpack, useI18n } from '../lib/i18n';
 import { fmtAgo, fmtBytes, fmtDate, fmtNum } from '../lib/format';
+import { useSites } from '../lib/site';
 import { SudoGate } from '../components/SudoGate';
 import { Status, Switch, useUi } from '../components/ui';
 import type { BackupRun, backupStatus } from '../../../server/backup';
 import type { AppConfig } from '../../../server/config';
 
 type AutoStatus = ReturnType<typeof backupStatus>;
+type SiteStatus = AutoStatus['sites'][number];
 type BackupCfg = AppConfig['backup'];
+
+/** The backup state of a site other than the main one: last success, last error, next run. */
+function SiteBackupRow({ s, enabled }: { s: SiteStatus; enabled: boolean }) {
+  const { t, lang } = useI18n();
+  const next = !enabled
+    ? t('Tự động đang tắt', 'Automatic backup is off')
+    : s.nextDueAt
+      ? t(`Lần tới khoảng ${fmtDate(s.nextDueAt)}`, `Next run around ${fmtDate(s.nextDueAt)}`)
+      : t('Lần tới trong vài phút', 'Next run within minutes');
+  return (
+    <li className="row">
+      <span className="row-title">{s.name}</span>
+      <div className="row-meta">
+        <span>{s.lastSuccessAt ? t(`Thành công gần nhất ${fmtAgo(s.lastSuccessAt)}`, `Last success ${fmtAgo(s.lastSuccessAt)}`) : t('Chưa sao lưu thành công lần nào', 'No successful backup yet')}</span>
+        <span>{next}</span>
+      </div>
+      {s.last?.error && (
+        <p className="error-text" style={{ margin: 0, fontSize: 12.5 }}>
+          {t(`Lỗi gần nhất (${fmtAgo(s.last.finishedAt)}): `, `Last error (${fmtAgo(s.last.finishedAt)}): `) + unpack(s.last.error, lang)}
+        </p>
+      )}
+    </li>
+  );
+}
 
 /** Scheduled backups: last run, next run, settings and "back up now". */
 function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void }) {
   const { t, lang } = useI18n();
   const { toast } = useUi();
+  const { sites, nameOf } = useSites();
   const [form, setForm] = useState<BackupCfg | null>(null);
   const [saved, setSaved] = useState<BackupCfg | null>(null);
   const [busy, setBusy] = useState<'run' | 'save' | null>(null);
   const [error, setError] = useState('');
+  // This page also opens with every site chosen. The backup settings are shared, so read and save
+  // them through the main site: with `*` the server saves them but cannot send the settings back.
+  const mainCode = sites.find((s) => s.isMain)?.code;
 
   useEffect(() => {
     api
-      .get<AppConfig>('/systems/config', { quiet: true })
+      .get<AppConfig>('/systems/config', { quiet: true, site: mainCode })
       .then((r) => {
         setForm(r.data.backup);
         setSaved(r.data.backup);
       })
       .catch((err) => setError((err as ApiErr).message));
-  }, []);
+  }, [mainCode]);
 
   const runNow = async () => {
     setBusy('run');
     setError('');
     try {
       const r = await api.post<BackupRun>('/backups/run', {}, { quiet: true });
-      if (r.data.error) setError(unpack(r.data.error, lang));
-      else toast(t(`Đã sao lưu vào ${r.data.file}.`, `Backed up to ${r.data.file}.`));
+      // One run per store: name each site whose copy failed, not only the main one.
+      const runs = (r.runs as BackupRun[] | undefined) ?? [r.data];
+      const failed = runs.filter((x) => x.error);
+      if (!failed.length) toast(t(`Đã sao lưu vào ${r.data.file}.`, `Backed up to ${r.data.file}.`));
+      else if (runs.length === 1) setError(unpack(failed[0].error!, lang));
+      else
+        setError(
+          failed
+            .map((x) => {
+              const site = nameOf(x.siteCode ?? mainCode ?? '');
+              return t(`Trang ${site} sao lưu lỗi: `, `Backup of the site ${site} failed: `) + unpack(x.error!, lang);
+            })
+            .join('\n'),
+        );
       reload();
     } catch (e) {
       setError((e as ApiErr).message);
@@ -48,7 +90,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
     setBusy('save');
     setError('');
     try {
-      const r = await api.put<AppConfig>('/systems/config', { backup: form }, { quiet: true });
+      const r = await api.put<AppConfig>('/systems/config', { backup: form }, { quiet: true, site: mainCode });
       setForm(r.data.backup);
       setSaved(r.data.backup);
       toast(t('Đã lưu cài đặt sao lưu.', 'Backup settings saved.'));
@@ -91,6 +133,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
       </h2>
       <div className="rule-below stack" style={{ gap: 12, paddingBottom: 26 }}>
         <div className="stack" style={{ gap: 4 }}>
+          {!!st?.sites.length && mainCode && <span className="row-title">{nameOf(mainCode)}</span>}
           <Status tone={tone}>{text}</Status>
           <small className="muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>
             {next} {st && t(`Thư mục: ${st.dir}`, `Folder: ${st.dir}`)}
@@ -101,6 +144,18 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
             </p>
           )}
         </div>
+        {!!st?.sites.length && (
+          <div className="stack" style={{ gap: 0 }}>
+            <ul className="rows" aria-label={t('Sao lưu của các trang khác', 'Backups of the other sites')}>
+              {st.sites.map((s) => (
+                <SiteBackupRow key={s.code} s={s} enabled={!!saved?.enabled} />
+              ))}
+            </ul>
+            <small className="muted" style={{ fontSize: 12.5, paddingTop: 8 }}>
+              {t('Bản sao của mỗi trang khác nằm trong thư mục con sites/<mã trang>/ của thư mục sao lưu.', "Each other site's copies go in the subfolder sites/<site code>/ of the backup folder.")}
+            </small>
+          </div>
+        )}
         {form && (
           <>
             <Switch label={t('Tự động sao lưu', 'Back up automatically')} checked={form.enabled} onChange={(v) => set('enabled', v)} />
@@ -139,7 +194,7 @@ function AutoBackup({ st, reload }: { st: AutoStatus | null; reload: () => void 
           </button>
         </div>
         {error && (
-          <p className="error-text" role="alert" style={{ margin: 0 }}>
+          <p className="error-text" role="alert" style={{ margin: 0, whiteSpace: 'pre-line' }}>
             {error}
           </p>
         )}

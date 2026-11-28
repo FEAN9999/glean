@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { api, ApiErr } from '../lib/api';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api, ApiErr, request } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { fmtBytes } from '../lib/format';
+import { useSites, type SiteInfo } from '../lib/site';
 import { SudoGate } from '../components/SudoGate';
-import { Empty, Switch, useUi } from '../components/ui';
+import { Empty, Switch, useConfirm, useUi } from '../components/ui';
 import type { AppConfig } from '../../../server/config';
 
 type Cfg = AppConfig;
@@ -37,10 +39,19 @@ export function LimitNote({ value, min }: { value: number; min: number }) {
   );
 }
 
-function Section({ id, title, desc, children }: { id: string; title: string; desc?: string; children: ReactNode }) {
+/** A site code as the server takes it (server/site.ts, CODE), so the form can say so while it is typed. */
+export function validSiteCode(s: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(s);
+}
+
+function Section({ id, title, desc, shared, children }: { id: string; title: string; desc?: string; shared?: boolean; children: ReactNode }) {
+  const { t } = useI18n();
   return (
     <fieldset id={id}>
-      <legend>{title}</legend>
+      <legend>
+        {title}
+        {shared && <span className="tag">{t('Chung cho mọi trang', 'Shared by every site')}</span>}
+      </legend>
       {desc && <p>{desc}</p>}
       <div className="stack">{children}</div>
     </fieldset>
@@ -166,9 +177,206 @@ function ForumPicker({
   );
 }
 
+/** The forums Glean reads: add one (then open its settings), rename one, take one off the list. */
+function SitesSection() {
+  const { t } = useI18n();
+  const { toast } = useUi();
+  const { sites, selected, select, reload } = useSites();
+  const { ask, node: confirmNode } = useConfirm();
+  const navigate = useNavigate();
+  const [renaming, setRenaming] = useState<{ code: string; name: string } | null>(null);
+  const [listError, setListError] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  /** The code or name was changed by hand: a new suggestion no longer replaces them. */
+  const [typed, setTyped] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const codeBad = !!code && !validSiteCode(code);
+
+  const suggest = async () => {
+    const url = baseUrl.trim();
+    if (!url || typed) return;
+    try {
+      const r = await api.get<{ code: string; name: string }>(`/sites/suggest?baseUrl=${encodeURIComponent(url)}`, { quiet: true });
+      setCode(r.data.code);
+      setName(r.data.name);
+      setError('');
+    } catch (err) {
+      setError((err as ApiErr).message);
+    }
+  };
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api.post<SiteInfo>('/sites', { baseUrl: baseUrl.trim(), code, name }, { quiet: true });
+      await reload();
+      toast(t(`Đã thêm trang ${r.data.name}. Chọn chuyên mục cần đồng bộ rồi lưu cài đặt.`, `Added the site ${r.data.name}. Choose the sections to sync, then save.`));
+      // Choosing the new site starts this page again for it; the hash makes it scroll to its source.
+      navigate({ hash: '#src' }, { replace: true });
+      select(r.data.code);
+    } catch (err) {
+      setError((err as ApiErr).message);
+      setBusy(false);
+    }
+  };
+
+  const rename = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!renaming) return;
+    setListError('');
+    try {
+      await request(`/sites/${encodeURIComponent(renaming.code)}`, { method: 'PATCH', body: { name: renaming.name }, quiet: true });
+      await reload();
+      setRenaming(null);
+    } catch (err) {
+      setListError((err as ApiErr).message);
+    }
+  };
+
+  const remove = async (s: SiteInfo) => {
+    const yes = await ask(
+      t(`Gỡ trang ${s.name}?`, `Remove the site ${s.name}?`),
+      t(
+        `Glean thôi đồng bộ và không hiện trang này nữa. Kho của trang vẫn nằm trên ổ đĩa ở ${s.dir}. Thêm lại trang với mã "${s.code}" sẽ dùng lại kho đó.`,
+        `Glean stops syncing this site and no longer shows it. Its store stays on disk in ${s.dir}. Adding a site with the code "${s.code}" again brings that store back.`,
+      ),
+      t('Gỡ trang', 'Remove site'),
+      true,
+    );
+    if (!yes) return;
+    setListError('');
+    try {
+      await api.del(`/sites/${encodeURIComponent(s.code)}`, { quiet: true });
+      await reload();
+      toast(t(`Đã gỡ trang ${s.name}. Kho vẫn nằm ở ${s.dir}.`, `Removed the site ${s.name}. Its store is still in ${s.dir}.`));
+      const main = sites.find((x) => x.isMain);
+      if (s.code === selected && main) select(main.code);
+    } catch (err) {
+      setListError((err as ApiErr).message);
+    }
+  };
+
+  return (
+    <Section id="sites" title={t('Trang', 'Sites')} desc={t('Mỗi trang là một diễn đàn, có kho riêng. Ô chọn trang đổi trang đang xem.', 'Each site is one forum with its own store. The site picker switches the site shown.')}>
+      <ul className="rows">
+        {sites.map((s) => (
+          <li key={s.code} className="row">
+            {renaming?.code === s.code ? (
+              <form className="hstack" style={{ gap: 8 }} onSubmit={rename}>
+                <input
+                  className="input"
+                  style={{ maxWidth: 280 }}
+                  aria-label={t(`Tên mới cho trang ${s.name}`, `New name for the site ${s.name}`)}
+                  value={renaming.name}
+                  onChange={(e) => setRenaming({ code: s.code, name: e.target.value })}
+                  autoFocus
+                />
+                <button className="btn btn-sm btn-primary" disabled={!renaming.name.trim() || renaming.name.trim() === s.name}>
+                  {t('Lưu tên', 'Save name')}
+                </button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRenaming(null)}>
+                  {t('Hủy', 'Cancel')}
+                </button>
+              </form>
+            ) : (
+              <div className="hstack" style={{ gap: 8 }}>
+                <span className="row-title">{s.name}</span>
+                {s.isMain && <span className="tag">{t('Trang chính', 'Main site')}</span>}
+              </div>
+            )}
+            <div className="row-meta">
+              <span>{t(`Mã ${s.code}`, `Code ${s.code}`)}</span>
+              <span style={{ overflowWrap: 'anywhere' }}>{s.baseUrl}</span>
+            </div>
+            {renaming?.code !== s.code && (
+              <div className="row-actions">
+                <button type="button" className="link-btn" onClick={() => setRenaming({ code: s.code, name: s.name })}>
+                  {t('Đổi tên', 'Rename')}
+                </button>
+                {!s.isMain && (
+                  <button type="button" className="btn-danger" onClick={() => void remove(s)}>
+                    {t('Gỡ', 'Remove')}
+                  </button>
+                )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {listError && (
+        <p className="error-text" role="alert" style={{ margin: 0 }}>
+          {listError}
+        </p>
+      )}
+
+      <form className="stack" onSubmit={add} aria-labelledby="site-add-title">
+        <h3 id="site-add-title" className="settings-sub">
+          {t('Thêm trang', 'Add a site')}
+        </h3>
+        <label className="field">
+          <span>{t('Địa chỉ diễn đàn', 'Forum address')}</span>
+          <input className="input" value={baseUrl} placeholder="https://ten-mien.com" onChange={(e) => setBaseUrl(e.target.value)} onBlur={() => void suggest()} autoComplete="off" />
+          <small>{t('Glean gợi ý mã và tên từ địa chỉ; bạn sửa được.', 'Glean suggests a code and a name from the address; you can change them.')}</small>
+        </label>
+        <div className="form-grid">
+          <label className="field">
+            <span>{t('Mã trang', 'Site code')}</span>
+            <input
+              className="input"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                setTyped(true);
+              }}
+              aria-invalid={codeBad || undefined}
+              autoComplete="off"
+            />
+            {codeBad ? (
+              <small role="status" style={{ color: 'var(--bad-ink)' }}>
+                {t('Chỉ gồm chữ thường, số và dấu gạch ngang, bắt đầu bằng chữ hoặc số, tối đa 32 ký tự.', 'Lowercase letters, digits and hyphens only, starting with a letter or digit, at most 32 characters.')}
+              </small>
+            ) : (
+              <small>{t('Là tên thư mục kho, không đổi được sau này.', 'Names the store folder; it cannot change later.')}</small>
+            )}
+          </label>
+          <label className="field">
+            <span>{t('Tên trang', 'Site name')}</span>
+            <input
+              className="input"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setTyped(true);
+              }}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+        {error && (
+          <p className="error-text" role="alert" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
+        <div>
+          <button className="btn btn-primary" disabled={busy || !baseUrl.trim() || !validSiteCode(code) || !name.trim()}>
+            {busy ? t('Đang thêm…', 'Adding…') : t('Thêm trang', 'Add site')}
+          </button>
+        </div>
+      </form>
+      {confirmNode}
+    </Section>
+  );
+}
+
 function Inner() {
   const { t } = useI18n();
   const { toast, refreshMaintenance } = useUi();
+  const { selected, nameOf } = useSites();
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [saved, setSaved] = useState<string>('');
   const [error, setError] = useState('');
@@ -276,17 +484,20 @@ function Inner() {
   };
 
   const nav = [
+    ['sites', t('Trang', 'Sites')],
     ['src', t('Nguồn dữ liệu', 'Source')],
     ['sync', t('Đồng bộ', 'Sync')],
     ['sieve', t('Sàng', 'Sieve')],
+    ['suggest', t('Gợi ý liên quan', 'Related suggestions')],
+    ['pause', t('Tạm dừng tính năng', 'Pause features')],
     ['proxy', 'Proxy'],
     ['storage', t('Lưu trữ tệp', 'File storage')],
     ['search', t('Tìm kiếm', 'Search')],
     ['auth', t('Phiên đăng nhập', 'Sessions')],
     ['tg', 'Telegram'],
-    ['pause', t('Tạm dừng tính năng', 'Pause features')],
     ['broadcast', t('Thông báo & phiên bản', 'Notices & version')],
   ];
+  const siteName = nameOf(selected);
 
   return (
     <div className="page">
@@ -303,6 +514,9 @@ function Inner() {
           ))}
         </nav>
         <div className="settings-body">
+          <SitesSection />
+
+          <h2 className="settings-group">{t(`Cài đặt cho trang: ${siteName}`, `Settings for the site: ${siteName}`)}</h2>
           <Section id="src" title={t('Nguồn dữ liệu', 'Source')} desc={t('Diễn đàn kiểu XenForo mà Glean đọc. Mặc định là diễn đàn mẫu chạy sẵn trong máy để thử.', 'The XenForo-style forum Glean reads. By default this is the built-in sample forum.')}>
             {Text({ p: 'source.baseUrl', label: t('Địa chỉ diễn đàn', 'Forum address'), hint: t('Khi đổi tên miền, địa chỉ cũ được ghi nhớ để cảnh báo link cũ.', 'When the domain changes, the old one is remembered to flag old links.') })}
             {Lines({ p: 'source.previousBaseUrls', label: t('Tên miền cũ', 'Previous domains'), hint: t('Mỗi dòng một địa chỉ đầy đủ, ví dụ https://ten-mien-cu.com.', 'One full address per line, for example https://old-domain.com.') })}
@@ -397,7 +611,27 @@ function Inner() {
             {Lines({ p: 'scraper.ignoredDomains', label: t('Bỏ qua ảnh từ các tên miền', 'Ignore images from domains'), hint: t('Mỗi dòng một tên miền, gồm cả tên miền con.', 'One domain per line, subdomains included.') })}
           </Section>
 
-          <Section id="proxy" title="Proxy" desc={t('Xoay vòng proxy khi đọc diễn đàn. Proxy lỗi 3 lần liên tiếp bị tạm ngưng tới lần kiểm tra sau.', 'Rotates proxies when reading the forum. A proxy failing 3 times in a row is parked until the next check.')}>
+          <Section id="suggest" title={t('Gợi ý liên quan', 'Related suggestions')} desc={t('Gợi ý bài liên quan dùng dịch vụ semantic nếu có, nếu không thì so khớp từ. Dịch vụ chỉ biết bài của một diễn đàn nên mỗi trang đặt riêng.', 'Related suggestions use a semantic service when set, else word overlap. A service knows the posts of one forum only, so each site sets its own.')}>
+            {Text({ p: 'search.semanticSearchUrl', label: t('Địa chỉ dịch vụ semantic (tùy chọn)', 'Semantic service URL (optional)'), placeholder: 'http://localhost:8000' })}
+            <div className="form-grid">{Num({ p: 'search.semanticTopK', label: t('Số gợi ý', 'Suggestions'), min: 1 })}</div>
+          </Section>
+
+          <Section id="pause" title={t('Tạm dừng tính năng', 'Pause features')} desc={t('Dùng khi diễn đàn nguồn lỗi hoặc đang đồng bộ lớn. Thông điệp hiện trên trang tương ứng.', 'For when the source forum is down or a large sync is running. The message shows on the affected page.')}>
+            {(
+              [
+                ['scrape', t('Sàng ảnh', 'Sieve')],
+                ['searchPost', t('Tìm bài viết', 'Post search')],
+                ['searchComment', t('Tìm bình luận', 'Comment search')],
+              ] as const
+            ).map(([k, label]) => (
+              <div key={k} className="stack" style={{ gap: 8 }}>
+                {Bool({ p: `maintenance.${k}.isPaused`, label: t(`Tạm dừng ${label.toLowerCase()}`, `Pause ${label.toLowerCase()}`) })}
+                {getPath<boolean>(cfg, `maintenance.${k}.isPaused`) && Text({ p: `maintenance.${k}.message`, label: t('Thông điệp', 'Message') })}
+              </div>
+            ))}
+          </Section>
+
+          <Section id="proxy" title="Proxy" shared desc={t('Xoay vòng proxy khi đọc diễn đàn. Proxy lỗi 3 lần liên tiếp bị tạm ngưng tới lần kiểm tra sau.', 'Rotates proxies when reading the forum. A proxy failing 3 times in a row is parked until the next check.')}>
             {Bool({ p: 'proxy.enabled', label: t('Dùng proxy', 'Use proxies') })}
             {Lines({ p: 'proxy.list', label: t('Danh sách proxy', 'Proxy list'), placeholder: 'host:port:user:pass', hint: t('Mỗi dòng: host:port hoặc host:port:user:pass', 'One per line: host:port or host:port:user:pass') })}
             {Text({ p: 'proxy.healthCheckUrl', label: t('Địa chỉ kiểm tra', 'Health-check URL'), hint: t('Để trống sẽ dùng địa chỉ diễn đàn.', 'Empty uses the forum address.') })}
@@ -417,7 +651,7 @@ function Inner() {
             </div>
           </Section>
 
-          <Section id="storage" title={t('Lưu trữ tệp', 'File storage')}>
+          <Section id="storage" title={t('Lưu trữ tệp', 'File storage')} shared>
             {Text({ p: 'storage.basePath', label: t('Thư mục lưu', 'Base folder') })}
             <div className="form-grid">
               {Num({ p: 'storage.maxFileSizeMb', label: t('Kích thước tối đa (MB)', 'Max size (MB)'), min: 1 })}
@@ -432,16 +666,14 @@ function Inner() {
             )}
           </Section>
 
-          <Section id="search" title={t('Tìm kiếm', 'Search')} desc={t('Kho tìm kiếm là SQLite FTS5 (không phân biệt dấu khi "chứa các từ"). Gợi ý liên quan dùng dịch vụ semantic nếu có, nếu không thì so khớp từ.', 'The archive uses SQLite FTS5 (accent-insensitive for "contains words"). Related suggestions use a semantic service when set, else word overlap.')}>
-            {Text({ p: 'search.semanticSearchUrl', label: t('Địa chỉ dịch vụ semantic (tùy chọn)', 'Semantic service URL (optional)'), placeholder: 'http://localhost:8000' })}
+          <Section id="search" title={t('Tìm kiếm', 'Search')} shared desc={t('Kho tìm kiếm là SQLite FTS5 (không phân biệt dấu khi "chứa các từ").', 'The archive uses SQLite FTS5 (accent-insensitive for "contains words").')}>
             <div className="form-grid">
-              {Num({ p: 'search.semanticTopK', label: t('Số gợi ý', 'Suggestions'), min: 1 })}
               {Num({ p: 'search.pageSize', label: t('Kết quả mỗi trang', 'Results per page'), min: 5 })}
               {Num({ p: 'search.minKeywordLength', label: t('Số ký tự tối thiểu', 'Minimum characters'), min: 1 })}
             </div>
           </Section>
 
-          <Section id="auth" title={t('Phiên đăng nhập', 'Sessions')} desc={t('Đổi khóa bí mật sẽ đăng xuất mọi thiết bị.', 'Changing the secret signs out every device.')}>
+          <Section id="auth" title={t('Phiên đăng nhập', 'Sessions')} shared desc={t('Đổi khóa bí mật sẽ đăng xuất mọi thiết bị.', 'Changing the secret signs out every device.')}>
             <div className="form-grid">
               {Text({ p: 'auth.issuer', label: 'Issuer' })}
               {Text({ p: 'auth.audience', label: 'Audience' })}
@@ -451,7 +683,7 @@ function Inner() {
             {Text({ p: 'auth.secret', label: t('Khóa bí mật JWT', 'JWT secret'), type: 'password' })}
           </Section>
 
-          <Section id="tg" title="Telegram" desc={t('Gửi tin khi một lượt sàng xong hoặc đồng bộ lỗi.', 'Sends a message when a sieve job finishes or a sync fails.')}>
+          <Section id="tg" title="Telegram" shared desc={t('Gửi tin khi một lượt sàng xong hoặc đồng bộ lỗi.', 'Sends a message when a sieve job finishes or a sync fails.')}>
             {Bool({ p: 'telegram.enabled', label: t('Bật thông báo Telegram', 'Enable Telegram notices') })}
             <div className="form-grid">
               {Text({ p: 'telegram.botToken', label: 'Bot token', type: 'password' })}
@@ -475,21 +707,6 @@ function Inner() {
                 {t('Gửi tin thử', 'Send test message')}
               </button>
             </div>
-          </Section>
-
-          <Section id="pause" title={t('Tạm dừng tính năng', 'Pause features')} desc={t('Dùng khi diễn đàn nguồn lỗi hoặc đang đồng bộ lớn. Thông điệp hiện trên trang tương ứng.', 'For when the source forum is down or a large sync is running. The message shows on the affected page.')}>
-            {(
-              [
-                ['scrape', t('Sàng ảnh', 'Sieve')],
-                ['searchPost', t('Tìm bài viết', 'Post search')],
-                ['searchComment', t('Tìm bình luận', 'Comment search')],
-              ] as const
-            ).map(([k, label]) => (
-              <div key={k} className="stack" style={{ gap: 8 }}>
-                {Bool({ p: `maintenance.${k}.isPaused`, label: t(`Tạm dừng ${label.toLowerCase()}`, `Pause ${label.toLowerCase()}`) })}
-                {getPath<boolean>(cfg, `maintenance.${k}.isPaused`) && Text({ p: `maintenance.${k}.message`, label: t('Thông điệp', 'Message') })}
-              </div>
-            ))}
           </Section>
 
           <fieldset id="broadcast">
